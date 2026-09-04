@@ -17,6 +17,7 @@ class DhanExecutor:
         client_id: str = "",
         access_token: str = "",
         dry_run: bool = True,
+        auto_order: Optional[bool] = None,
         capital_per_trade: float = 20000.0,
         max_shares_per_trade: Optional[int] = None,
         max_news_age_seconds: int = 180,
@@ -25,15 +26,18 @@ class DhanExecutor:
         stop_loss_pct: Optional[float] = None,
         trailing_jump_points: Optional[float] = None,
         slippage_buffer_pct: Optional[float] = None,
+        approval_callback=None,
     ):
         self.client_id = client_id
         self.access_token = access_token
         self.dry_run = dry_run
         self.capital_per_trade = capital_per_trade
         self.max_news_age_seconds = max_news_age_seconds
+        self.approval_callback = approval_callback
 
         from news_based_strategy.config import settings
 
+        self.auto_order = settings.auto_order if auto_order is None else auto_order
         self.max_shares_per_trade = (
             settings.max_shares_per_trade if max_shares_per_trade is None else max_shares_per_trade
         )
@@ -75,6 +79,47 @@ class DhanExecutor:
         except ImportError:
             logger.warning("dhanhq package not installed. Running in DRY-RUN mode.")
             self.dry_run = True
+
+    def request_user_approval(
+        self,
+        signal: TradeSignal,
+        quantity: int,
+        effective_sec_id: str,
+        entry_price: float,
+        target_price: float,
+        sl_price: float,
+        ltp: float,
+    ) -> bool:
+        """Prompt user for interactive trade approval when AUTO_ORDER=False."""
+        if self.approval_callback is not None:
+            return bool(
+                self.approval_callback(
+                    signal=signal,
+                    quantity=quantity,
+                    effective_sec_id=effective_sec_id,
+                    entry_price=entry_price,
+                    target_price=target_price,
+                    sl_price=sl_price,
+                    ltp=ltp,
+                )
+            )
+
+        mode_str = "DRY-RUN (Simulated)" if self.dry_run else "LIVE (Real Dhan Order)"
+        print("\n   ┌─ 🔔 User Trade Approval Required (AUTO_ORDER=False) ────────")
+        print(f"   │ • Mode: {mode_str}")
+        print(f"   │ • Proposed Order: {signal.action} {quantity} shares of {signal.symbol} (Dhan SecID: {effective_sec_id})")
+        print(f"   │ • Order Type: Bracket Super Order (INTRADAY)")
+        print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {self.slippage_buffer_pct}% buffer)")
+        print(f"   │ • Target Profit: ₹{target_price:.2f} (+{self.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{self.stop_loss_pct}%)")
+        print(f"   │ • Trailing Jump: {self.trailing_jump_points} pts")
+        print(f"   │ • Catalyst: {signal.catalyst_type} (Confidence: {signal.confidence}%)")
+        print(f"   │ • AI Rationale: \"{signal.summary}\"")
+        print("   └─────────────────────────────────────────────────────────────")
+        try:
+            ans = input(f"   👉 Approve and place this order for {signal.symbol}? [y/N]: ").strip().lower()
+            return ans in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False
 
     def execute_order(self, signal: TradeSignal, ltp: float = 100.0) -> TradeResult:
         """Place an order or simulate execution with staleness circuit breaker, SecID, and Super Orders."""
@@ -132,7 +177,32 @@ class DhanExecutor:
             slippage_buffer_pct=self.slippage_buffer_pct,
         )
 
-        # 3. Simulated Dry-Run Execution
+        # 3. User Approval Gate (if AUTO_ORDER=False)
+        if not self.auto_order:
+            approved = self.request_user_approval(
+                signal=signal,
+                quantity=quantity,
+                effective_sec_id=effective_sec_id,
+                entry_price=entry_price,
+                target_price=target_price,
+                sl_price=sl_price,
+                ltp=ltp,
+            )
+            if not approved:
+                remarks = "ORDER SKIPPED: User declined trade approval (AUTO_ORDER=False)"
+                logger.info("⏸️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=quantity,
+                    product_type="INTRADAY" if self.super_order_enabled else safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=self.dry_run,
+                )
+
+        # 4. Simulated Dry-Run Execution
         if self.dry_run or not self.dhan:
             simulated_order_id = f"DRY_{signal.symbol}_{effective_sec_id}_{int(signal.confidence)}"
             if self.super_order_enabled:

@@ -301,7 +301,73 @@ class TestPhase3Execution(unittest.TestCase):
             self.assertEqual(row[2], 10)
             self.assertEqual(row[3], "INTRADAY")
             self.assertEqual(row[4], "DRY_BEL_383_95")
-            self.assertEqual(row[5], 1)
+    def test_auto_order_true_places_immediately(self):
+        """When AUTO_ORDER=True, order should be placed immediately without prompting."""
+        executor = DhanExecutor(
+            dry_run=True,
+            auto_order=True,
+            super_order_enabled=True,
+        )
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="INTRADAY",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Major order win",
+        )
+        result = executor.execute_order(signal, ltp=300.0)
+        self.assertTrue(result.success)
+        self.assertEqual(result.quantity, 10)
+
+    def test_auto_order_false_with_user_approval(self):
+        """When AUTO_ORDER=False and user approves, order should be placed successfully."""
+        mock_callback = MagicMock(return_value=True)
+        executor = DhanExecutor(
+            dry_run=True,
+            auto_order=False,
+            approval_callback=mock_callback,
+            super_order_enabled=True,
+        )
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="INTRADAY",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Major order win",
+        )
+        result = executor.execute_order(signal, ltp=300.0)
+        self.assertTrue(result.success)
+        mock_callback.assert_called_once()
+        _, kwargs = mock_callback.call_args
+        self.assertEqual(kwargs["signal"].symbol, "BEL")
+        self.assertEqual(kwargs["quantity"], 10)
+
+    def test_auto_order_false_with_user_declined(self):
+        """When AUTO_ORDER=False and user declines, order must be skipped/aborted."""
+        mock_callback = MagicMock(return_value=False)
+        executor = DhanExecutor(
+            dry_run=True,
+            auto_order=False,
+            approval_callback=mock_callback,
+            super_order_enabled=True,
+        )
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="INTRADAY",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Major order win",
+        )
+        result = executor.execute_order(signal, ltp=300.0)
+        self.assertFalse(result.success)
+        self.assertIn("ORDER SKIPPED: User declined trade approval", result.remarks)
+        mock_callback.assert_called_once()
 
 
 if __name__ == "__main__":

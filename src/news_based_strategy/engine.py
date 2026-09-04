@@ -26,6 +26,7 @@ class StrategyEngine:
         analyzer: Optional[FilingAnalyzer] = None,
         executor: Optional[DhanExecutor] = None,
         dry_run: bool = True,
+        auto_order: Optional[bool] = None,
         fno_only: bool = True,
         filter_noise: bool = True,
         extract_pdf: bool = True,
@@ -44,6 +45,7 @@ class StrategyEngine:
             client_id=settings.dhan_client_id,
             access_token=settings.dhan_access_token,
             dry_run=dry_run,
+            auto_order=settings.auto_order if auto_order is None else auto_order,
             capital_per_trade=settings.capital_per_trade,
             max_shares_per_trade=settings.max_shares_per_trade,
         )

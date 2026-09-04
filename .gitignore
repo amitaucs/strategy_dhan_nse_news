@@ -72,3 +72,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Databases & Runtime Data
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+

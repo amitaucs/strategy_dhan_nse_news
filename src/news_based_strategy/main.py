@@ -164,30 +164,36 @@ def print_announcement(
                 if storage:
                     storage.save_trade(trade_res)
 
-                entry_price, tp_price, sl_price = RiskManager.calculate_super_order_levels(
-                    ltp=ltp,
-                    action="BUY",
-                    target_pct=executor.target_profit_pct,
-                    sl_pct=executor.stop_loss_pct,
-                    slippage_buffer_pct=executor.slippage_buffer_pct,
-                )
+                if trade_res.success:
+                    entry_price, tp_price, sl_price = RiskManager.calculate_super_order_levels(
+                        ltp=ltp,
+                        action="BUY",
+                        target_pct=executor.target_profit_pct,
+                        sl_pct=executor.stop_loss_pct,
+                        slippage_buffer_pct=executor.slippage_buffer_pct,
+                    )
 
-                mode_label = "DRY-RUN (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
-                status_icon = "✅ SUCCESS" if trade_res.success else "❌ REJECTED"
-                db_name = "MySQL 'trade_executions'" if (storage and storage.is_mysql_active) else "SQLite 'trade_executions'"
+                    mode_label = "DRY-RUN (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
+                    db_name = "MySQL 'trade_executions'" if (storage and storage.is_mysql_active) else "SQLite 'trade_executions'"
 
-                print(f"\n   ┌─ 🚀 DhanHQ Super Order Placed (Mode: {mode_label}) ──────────")
-                print(f"   │ • Ticker: {trade_res.symbol} (Dhan SecID: {effective_sec_id} | Exchange: NSE_EQ)")
-                print(f"   │ • Action: {trade_res.action} | Product: {trade_res.product_type} (Bracket Super Order)")
-                print(f"   │ • Quantity: {trade_res.quantity} shares (Max Cap: {executor.max_shares_per_trade} shares | Capital: ₹{executor.capital_per_trade:,.2f})")
-                print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {executor.slippage_buffer_pct}% buffer)")
-                print(f"   │ • Target Profit: ₹{tp_price:.2f} (+{executor.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{executor.stop_loss_pct}%)")
-                print(f"   │ • Trailing Jump: {executor.trailing_jump_points} pts")
-                print(f"   │ • Order ID: {trade_res.order_id}")
-                print(f"   │ • Execution Status: {status_icon}")
-                print(f"   │ • Remarks: {trade_res.remarks}")
-                print(f"   │ • Persistence: Recorded in {db_name}")
-                print("   └───────────────────────────────────────────────────────────────")
+                    print(f"\n   ┌─ 🚀 DhanHQ Super Order Placed (Mode: {mode_label}) ──────────")
+                    print(f"   │ • Ticker: {trade_res.symbol} (Dhan SecID: {effective_sec_id} | Exchange: NSE_EQ)")
+                    print(f"   │ • Action: {trade_res.action} | Product: {trade_res.product_type} (Bracket Super Order)")
+                    print(f"   │ • Quantity: {trade_res.quantity} shares (Max Cap: {executor.max_shares_per_trade} shares | Capital: ₹{executor.capital_per_trade:,.2f})")
+                    print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {executor.slippage_buffer_pct}% buffer)")
+                    print(f"   │ • Target Profit: ₹{tp_price:.2f} (+{executor.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{executor.stop_loss_pct}%)")
+                    print(f"   │ • Trailing Jump: {executor.trailing_jump_points} pts")
+                    print(f"   │ • Order ID: {trade_res.order_id}")
+                    print(f"   │ • Execution Status: ✅ SUCCESS")
+                    print(f"   │ • Remarks: {trade_res.remarks}")
+                    print(f"   │ • Persistence: Recorded in {db_name}")
+                    print("   └───────────────────────────────────────────────────────────────")
+                else:
+                    print(f"\n   ┌─ ⏸️ DhanHQ Order Not Placed / Skipped ──────────────────────")
+                    print(f"   │ • Ticker: {trade_res.symbol} (Dhan SecID: {effective_sec_id})")
+                    print(f"   │ • Action: {trade_res.action} | Quantity: {trade_res.quantity} shares")
+                    print(f"   │ • Reason: {trade_res.remarks}")
+                    print("   └─────────────────────────────────────────────────────────────")
         else:
             print("   ⚠️  [AI Reasoning Error]: Unable to obtain structured verdict from Gemini.")
 
@@ -249,6 +255,7 @@ def run_poller(
     max_age_seconds: int = 180,
     enable_ai: bool = True,
     simulate: bool = False,
+    auto_order: Optional[bool] = None,
 ) -> int:
     """Poll announcements, filter F&O stocks & noise, extract PDF text, and analyze sentiment with Gemini."""
     if fno_only:
@@ -257,6 +264,7 @@ def run_poller(
         except Exception:
             pass
 
+    effective_auto_order = settings.auto_order if auto_order is None else auto_order
     fno_count = len(get_fno_symbols())
     sec_count = len(get_security_id_map())
     universe_desc = f"DhanHQ Active F&O Universe ({fno_count} tickers | {sec_count} mapped SecIDs)" if fno_only else f"All NSE Stocks ({sec_count} mapped SecIDs)"
@@ -274,6 +282,7 @@ def run_poller(
         client_id=settings.dhan_client_id,
         access_token=settings.dhan_access_token,
         dry_run=settings.dry_run,
+        auto_order=effective_auto_order,
         capital_per_trade=settings.capital_per_trade,
         max_shares_per_trade=settings.max_shares_per_trade,
         max_news_age_seconds=max_age_seconds,
@@ -291,8 +300,9 @@ def run_poller(
     )
 
     exec_mode = "DRY-RUN (Simulated)" if settings.dry_run else "LIVE (Real Orders on Dhan)"
+    auto_label = "Auto (Autonomous)" if effective_auto_order else "Manual (Prompt Approval)"
     broker_desc = (
-        f"Active ({exec_mode} | Max Cap: {settings.max_shares_per_trade} shares/trade | Min Confidence: >={settings.confidence_threshold}%)"
+        f"Active ({exec_mode} | Order Mode: {auto_label} | Max Cap: {settings.max_shares_per_trade} shares/trade | Min Confidence: >={settings.confidence_threshold}%)"
     )
 
     order_style = (
@@ -443,6 +453,18 @@ def main() -> int:
         help="Print raw JSON fields returned by NSE for debugging schema variations",
     )
     parser.add_argument(
+        "--auto-order",
+        action="store_true",
+        default=False,
+        help="Automatically place orders without prompting for approval (overrides AUTO_ORDER in .env)",
+    )
+    parser.add_argument(
+        "--require-approval",
+        action="store_true",
+        default=False,
+        help="Prompt for user approval before placing each order (overrides AUTO_ORDER in .env)",
+    )
+    parser.add_argument(
         "--max-age-seconds",
         type=int,
         default=180,
@@ -450,6 +472,13 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    auto_order_override = None
+    if args.auto_order:
+        auto_order_override = True
+    elif args.require_approval:
+        auto_order_override = False
+
     return run_poller(
         interval_seconds=args.interval,
         once=args.once or args.simulate,
@@ -462,6 +491,7 @@ def main() -> int:
         max_age_seconds=args.max_age_seconds,
         enable_ai=not args.no_ai,
         simulate=args.simulate,
+        auto_order=auto_order_override,
     )
 
 

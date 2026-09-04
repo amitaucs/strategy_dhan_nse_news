@@ -69,6 +69,7 @@ class Settings:
     dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
     dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+    auto_order: bool = os.getenv("AUTO_ORDER", "true").lower() in ("true", "1", "yes")
     capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "20000.0"))
     max_shares_per_trade: int = int(os.getenv("MAX_SHARES_PER_TRADE", "10"))
 
