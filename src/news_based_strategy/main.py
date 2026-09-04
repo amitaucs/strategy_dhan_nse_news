@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 import sys
 import time
+from typing import Optional
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement
 from news_based_strategy.ingestion.extractor import is_pypdf_available
@@ -15,6 +16,7 @@ from news_based_strategy.ingestion.universe import (
     resolve_security_id,
     sync_dhan_fno_symbols,
 )
+from news_based_strategy.intelligence.analyzer import FilingAnalyzer
 from news_based_strategy.storage.repository import StrategyStorage
 
 
@@ -27,8 +29,15 @@ def get_five_word_brief(announcement: Announcement) -> str:
     return " ".join(words[:5])
 
 
-def print_announcement(announcement: Announcement, debug: bool = False, max_age_seconds: int = 180) -> None:
-    """Pretty-print an individual announcement to the console with extracted text and LLM payload."""
+def print_announcement(
+    announcement: Announcement,
+    analyzer: Optional[FilingAnalyzer] = None,
+    storage: Optional[StrategyStorage] = None,
+    debug: bool = False,
+    max_age_seconds: int = 180,
+    enable_ai: bool = True,
+) -> None:
+    """Pretty-print an individual announcement to the console with extracted text and AI sentiment reasoning."""
     if NoiseFilter.is_noise(announcement.desc, announcement.details):
         reason = NoiseFilter.explain_noise(announcement.desc, announcement.details) or "Routine Compliance Noise"
         brief = get_five_word_brief(announcement)
@@ -36,15 +45,13 @@ def print_announcement(announcement: Announcement, debug: bool = False, max_age_
         print(f"\n  ↳ [{announcement.symbol}{fno_badge}] 🔇 Filtered out & rejected ({reason}) — {brief}")
         return
 
-
     ts = datetime.now().strftime("%H:%M:%S")
     fno_badge = " [F&O]" if announcement.is_fno else ""
     sec_id = resolve_security_id(announcement.symbol)
     sec_badge = f" [Dhan ID: {sec_id}]" if sec_id else ""
     header = f"[{ts}] [{announcement.symbol}{fno_badge}{sec_badge}]"
     print(f"\n{header} 📢 {announcement.desc}")
-    print("   ↳ Status: 🟢 PASSED ALL FILTERS ➔ Prepared for AI Catalyst Evaluation (LLM Execution Paused in Phase 1)")
-
+    print("   ↳ Status: 🟢 PASSED ALL FILTERS ➔ Sent to AI Reasoning Engine")
 
     if announcement.details:
         print(f"   ↳ Filed Details: {announcement.details}")
@@ -56,7 +63,6 @@ def print_announcement(announcement: Announcement, debug: bool = False, max_age_
         badge = announcement.freshness_badge(max_age_seconds=max_age_seconds)
         badge_str = f" {badge}" if badge else ""
         print(f"   ↳ Exchange Time: {announcement.an_dt}{badge_str}")
-
 
     # Check and warn if pypdf is missing
     if not is_pypdf_available():
@@ -72,6 +78,48 @@ def print_announcement(announcement: Announcement, debug: bool = False, max_age_
     for line in announcement.llm_payload.split("\n"):
         print(f"   │ {line}")
     print("   └───────────────────────────────────────────────────────────────")
+
+    # AI Reasoning via Gemini
+    if enable_ai and analyzer:
+        print("   ⏳ Evaluating catalyst impact via Google Gemini...", flush=True)
+        audit = analyzer.audit(
+            symbol=announcement.symbol,
+            headline=announcement.desc,
+            details=announcement.clean_content,
+        )
+        if audit:
+            sentiment_upper = audit.sentiment.upper()
+            if sentiment_upper in ("BULLISH", "BUY"):
+                sent_badge = "BULLISH 🟢"
+            elif sentiment_upper in ("BEARISH", "SELL"):
+                sent_badge = "BEARISH 🔴"
+            else:
+                sent_badge = "NEUTRAL ⚪"
+
+            is_conviction = (
+                audit.material_impact
+                and audit.confidence >= settings.confidence_threshold
+                and sentiment_upper in ("BULLISH", "BUY", "BEARISH", "SELL")
+            )
+            conviction_badge = (
+                "🟢 HIGH CONVICTION (Trade Trigger in Phase 3)"
+                if is_conviction
+                else "⚪ STANDARD (Below conviction threshold)"
+            )
+
+            print(f"\n   ┌─ 🧠 AI Sentiment & Catalyst Verdict ({analyzer.model_name}) ─────")
+            print(f"   │ • Sentiment: {sent_badge} (Confidence: {audit.confidence}% | Threshold: >= {settings.confidence_threshold}%)")
+            print(f"   │ • Catalyst Category: {audit.catalyst_type}")
+            print(f"   │ • Material Price Impact: {audit.material_impact} (Expected rapid price movement >= 1.5%)")
+            print(f"   │ • Conviction Gate: {conviction_badge}")
+            print(f"   │ • AI Rationale: \"{audit.summary}\"")
+            print("   │ • Broker Execution: ⏸️ Strictly Paused (Phase 2 Reasoning Mode)")
+            print("   └───────────────────────────────────────────────────────────────")
+
+            if storage:
+                storage.save_audit(announcement.seq_id, announcement.symbol, audit)
+        else:
+            print("   ⚠️  [AI Reasoning Error]: Unable to obtain structured verdict from Gemini.")
 
     if debug and announcement.raw_data:
         print("\n   🔍 [DEBUG Raw Item from NSE]:")
@@ -89,8 +137,9 @@ def run_poller(
     skip_initial: bool = False,
     debug: bool = False,
     max_age_seconds: int = 180,
+    enable_ai: bool = True,
 ) -> int:
-    """Poll announcements, filter F&O stocks & noise, extract PDF text, and print to console."""
+    """Poll announcements, filter F&O stocks & noise, extract PDF text, and analyze sentiment with Gemini."""
     if fno_only:
         try:
             sync_dhan_fno_symbols()
@@ -104,6 +153,18 @@ def run_poller(
     storage = StrategyStorage()
     db_desc = storage.get_status_description()
 
+    analyzer = (
+        FilingAnalyzer(api_key=settings.gemini_api_key, model_name=settings.gemini_model)
+        if enable_ai
+        else None
+    )
+
+    ai_desc = (
+        f"Active (Google Gemini: {settings.gemini_model} | Conviction Threshold: >= {settings.confidence_threshold}%)"
+        if enable_ai
+        else "Disabled (--no-ai)"
+    )
+
     order_style = (
         f"Bracket Super Order (TP: +{settings.target_profit_pct}% | SL: -{settings.stop_loss_pct}% | Trail: {settings.trailing_jump_points} pts | Slippage: {settings.slippage_buffer_pct}%)"
         if settings.super_order_enabled
@@ -116,10 +177,11 @@ def run_poller(
     print(f"   Universe: {universe_desc}")
     print(f"   Persistence: {db_desc}")
     print(f"   Order Style: {order_style}")
+    print(f"   AI Intelligence: {ai_desc}")
     print(f"   Noise Rejection: {'Active (Trading window, share certs, etc. suppressed)' if filter_noise else 'Disabled'}")
     print(f"   Max News Age: {max_age_seconds}s (Stale news circuit breaker)" if max_age_seconds > 0 else "   Max News Age: Disabled")
     print(f"   PDF Extractor: {pypdf_status}")
-    print("   AI / Broker Execution: Strictly Disabled (Phase 1: Ingestion & Filter Verification)")
+    print("   Broker Execution: Strictly Paused (Phase 2: Sentiment & Catalyst Reasoning)")
     if symbol:
         print(f"   Symbol Filter: {symbol.upper()}")
     print("   Press Ctrl+C to stop.")
@@ -155,10 +217,16 @@ def run_poller(
             if new_items:
                 print(f"found {len(new_items)} tradeable catalyst filing(s):")
                 for item in new_items:
-                    print_announcement(item, debug=debug, max_age_seconds=max_age_seconds)
+                    print_announcement(
+                        item,
+                        analyzer=analyzer,
+                        storage=storage,
+                        debug=debug,
+                        max_age_seconds=max_age_seconds,
+                        enable_ai=enable_ai,
+                    )
             else:
                 print("found 0 tradeable catalyst filing(s).")
-
 
             if once:
                 print("\n✅ Single poll complete (--once). Exiting.")
@@ -223,6 +291,11 @@ def main() -> int:
         help="Skip printing historical filings on the first poll, only print new arrivals",
     )
     parser.add_argument(
+        "--no-ai",
+        action="store_true",
+        help="Disable Gemini AI sentiment reasoning (run in pure Phase 1 monitoring mode)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Print raw JSON fields returned by NSE for debugging schema variations",
@@ -245,8 +318,8 @@ def main() -> int:
         skip_initial=args.skip_initial,
         debug=args.debug,
         max_age_seconds=args.max_age_seconds,
+        enable_ai=not args.no_ai,
     )
-
 
 
 if __name__ == "__main__":

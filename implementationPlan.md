@@ -1,6 +1,6 @@
 # Implementation Plan: Event-Driven News-Based Trading Strategy
 
-A complete technical blueprint and flow architecture for an event-driven news-arbitrage trading system for Indian equities (**NSE Equities & DhanHQ Broker**), using **Google Gemini 2.5 Flash** for sub-second corporate disclosure evaluation.
+A complete technical blueprint and flow architecture for an event-driven news-arbitrage trading system for Indian equities (**NSE Equities & DhanHQ Broker**), using **Google Gemini 3.7 Flash** for sub-second corporate disclosure evaluation.
 
 ---
 
@@ -19,7 +19,7 @@ flowchart TD
 
     subgraph AI Reasoning Engine
         Filter -->|New Watchlist Filing| GeminiPrompt[Prompt Builder]
-        GeminiPrompt -->|gemini-2.5-flash + Pydantic Schema| Gemini[Gemini API]
+        GeminiPrompt -->|gemini-3.7-flash + Pydantic Schema| Gemini[Gemini API]
         Gemini -->|FilingAudit JSON| DecisionGate{High Conviction?}
     end
 
@@ -52,7 +52,7 @@ sequenceDiagram
     autonumber
     participant Mon as NSE Filing Monitor
     participant DB as SQLite Storage
-    participant AI as Gemini 2.5 Flash
+    participant AI as Gemini 3.7 Flash
     participant Risk as Risk & Sizing Manager
     participant Dhan as DhanHQ / Broker
 
@@ -110,7 +110,7 @@ News_Based_Strategy/
 │       ├── config.py                 # Configuration loader and risk parameters
 │       ├── models.py                 # Pydantic schemas (FilingAudit, Announcement, etc.)
 │       ├── monitor.py                # Resilient NSE corporate announcements poller
-│       ├── analyzer.py               # Gemini 2.5 Flash structured reasoning client
+│       ├── analyzer.py               # Gemini 3.7 Flash structured reasoning client
 │       ├── storage.py                # SQLite persistence (deduplication & trade logs)
 │       ├── executor.py               # Dhan order execution, margin check, & dry-run simulator
 │       ├── engine.py                 # Strategy orchestrator & polling event loop
@@ -134,7 +134,7 @@ News_Based_Strategy/
 * **Payload Normalization**: Maps raw NSE payload fields (`seq_id`, `symbol`, `desc`, `attmntText`, `an_dt`, `attmntFile`) into an internal `Announcement` data model.
 
 ### Component 2: AI Reasoning Layer (`analyzer.py`)
-* **Model**: `gemini-2.5-flash` for latency minimization (<1 second response time).
+* **Model**: `gemini-3.7-flash` for latency minimization (<1 second response time).
 * **Strict Schema Enforcement**: Uses `response_mime_type="application/json"` and `response_schema=FilingAudit` with `temperature=0.0`.
 * **Prompt Directives**:
   - Filter out compliance noise: Trading window closures, secretarial audits, routine share transfers, AGM intimations $\to$ classify as `NEUTRAL`, `material_impact=False`.
@@ -190,7 +190,7 @@ class FilingAudit(BaseModel):
 - Implement `NSEFilingMonitor` with cookie priming and rate-limit backoff.
 
 ### Phase 3: Gemini Analysis Engine
-- Connect `google.genai` client using `gemini-2.5-flash` with zero temperature.
+- Connect `google.genai` client using `gemini-3.7-flash` with zero temperature.
 - Benchmark latency and accuracy across sample historical announcements.
 
 ### Phase 4: Risk & DhanHQ Execution

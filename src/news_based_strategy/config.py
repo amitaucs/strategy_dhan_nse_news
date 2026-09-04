@@ -63,6 +63,7 @@ class Settings:
     # AI Reasoning
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
     confidence_threshold: int = int(os.getenv("CONFIDENCE_THRESHOLD", "80"))
 
     # Execution & Risk Parameters

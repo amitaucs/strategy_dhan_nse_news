@@ -21,9 +21,9 @@ Guidelines:
 
 
 class FilingAnalyzer:
-    """Classifies corporate announcements using Gemini 3.6 Flash."""
+    """Classifies corporate announcements using Gemini 3.7 Flash."""
 
-    def __init__(self, api_key: str = "", model_name: str = "gemini-3.6-flash"):
+    def __init__(self, api_key: str = "", model_name: str = "gemini-3.7-flash"):
         self.api_key = api_key
         self.model_name = model_name
         self.client = None
@@ -77,6 +77,26 @@ FILING TEXT / DETAILS: {details}
                 return response.parsed
             return FilingAudit.model_validate_json(response.text)
         except Exception as e:
+            err_str = str(e)
+            if "404" in err_str and "is no longer available" in err_str and self.model_name != "gemini-flash-latest":
+                logger.warning("Model %s unavailable on this API key. Retrying with gemini-flash-latest...", self.model_name)
+                try:
+                    response = self.client.models.generate_content(
+                        model="gemini-flash-latest",
+                        contents=[prompt],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=FilingAudit,
+                            temperature=0.0,
+                        ),
+                    )
+                    if hasattr(response, "parsed") and response.parsed:
+                        return response.parsed
+                    return FilingAudit.model_validate_json(response.text)
+                except Exception as inner_e:
+                    logger.error("Fallback Gemini classification failed for %s: %s", symbol, inner_e)
+                    return None
+
             logger.error("Gemini classification failed for %s: %s", symbol, e)
             return None
 
