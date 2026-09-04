@@ -54,6 +54,12 @@ class ToggleAutoOrderRequest(BaseModel):
     auto_order: bool
 
 
+class UpdateTokenRequest(BaseModel):
+    access_token: str
+    client_id: Optional[str] = None
+    dry_run: Optional[bool] = None
+
+
 class DashboardState:
     """In-memory state manager for live feed and SSE broadcast."""
 
@@ -260,6 +266,8 @@ def get_dashboard_html() -> str:
             <span>•</span>
             <span>Broker: <span id="mode-text" class="text-amber-400 font-mono font-semibold">DRY-RUN</span></span>
             <span>•</span>
+            <span>Token: <span id="telemetry-token-status" class="text-emerald-400 font-mono font-semibold">Checking...</span></span>
+            <span>•</span>
             <span id="db-status" class="text-emerald-400 font-mono">MySQL Primary</span>
           </div>
         </div>
@@ -276,6 +284,13 @@ def get_dashboard_html() -> str:
             <span id="auto-status-label">LOADING...</span>
           </button>
         </div>
+
+        <!-- Dhan Token Update Modal Button -->
+        <button onclick="openTokenModal()" id="token-btn" class="bg-[#1e293b]/90 hover:bg-[#334155] border border-amber-500/30 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center gap-1.5" title="Update Dhan Access Token">
+          <span>🔑</span>
+          <span>Dhan Token</span>
+          <span id="token-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+        </button>
 
         <!-- Simulation Button -->
         <button onclick="triggerSimulation()" id="sim-btn" class="bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition border border-indigo-400/40 shadow-md flex items-center gap-1.5">
@@ -389,6 +404,83 @@ def get_dashboard_html() -> str:
     </div>
   </main>
 
+  <!-- DHAN TOKEN UPDATE MODAL -->
+  <div id="token-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+    <div class="bg-[#111827] border border-gray-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300" id="token-modal-card">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-sm">
+            🔑
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wide">Update Dhan Broker Token</h3>
+            <p class="text-[11px] text-gray-400">Instantly refresh your daily access token for live execution</p>
+          </div>
+        </div>
+        <button onclick="closeTokenModal()" class="text-gray-400 hover:text-white text-lg font-bold p-1 rounded transition">✕</button>
+      </div>
+
+      <!-- Quick Guidance -->
+      <div class="bg-indigo-950/40 border border-indigo-500/20 rounded-lg p-3 text-[11px] text-indigo-200 flex items-start gap-2.5">
+        <span class="text-base">💡</span>
+        <div>
+          <span>Generate from </span>
+          <a href="https://web.dhan.co" target="_blank" class="text-emerald-400 underline font-semibold hover:text-emerald-300">web.dhan.co</a>
+          <span> &rarr; Profile &rarr; DhanHQ API Access. Token takes effect immediately without server restart.</span>
+        </div>
+      </div>
+
+      <!-- Input Fields -->
+      <div class="space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Dhan Client ID</label>
+          <input type="text" id="input-client-id" placeholder="e.g. 1000000001" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500 font-mono">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-xs font-semibold text-gray-300">DhanHQ Access Token (JWT)</label>
+            <span id="current-token-badge" class="text-[10px] font-mono text-gray-400">Current: Loading...</span>
+          </div>
+          <div class="relative">
+            <input type="password" id="input-access-token" placeholder="Paste eyJhbGciOiJIUzI1NiIs... here" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg pl-3 pr-10 py-2 focus:outline-none focus:border-amber-500 font-mono">
+            <button type="button" onclick="toggleTokenVisibility()" class="absolute right-2.5 top-2 text-gray-400 hover:text-gray-200 text-xs">
+              <span id="toggle-vis-icon">👁️</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mode Toggle in Modal -->
+        <div class="bg-[#1e293b]/50 border border-gray-800 rounded-lg p-3 flex items-center justify-between">
+          <div>
+            <div class="text-xs font-semibold text-gray-200">Execution Mode</div>
+            <div class="text-[10px] text-gray-400">Uncheck to enable live real-money order placement</div>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="modal-dry-run-chk" onchange="updateModalDryRunLabel()" class="w-4 h-4 rounded text-amber-500 focus:ring-0">
+            <span class="text-xs font-mono font-bold text-amber-400" id="modal-dry-run-label">DRY-RUN (Simulated)</span>
+          </label>
+        </div>
+
+        <!-- Modal Status Feedback -->
+        <div id="modal-feedback" class="hidden text-xs p-2.5 rounded-lg"></div>
+      </div>
+
+      <!-- Modal Actions -->
+      <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-800">
+        <button onclick="closeTokenModal()" class="px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white rounded-lg transition">
+          Cancel
+        </button>
+        <button onclick="saveTokenModal()" id="btn-save-token" class="bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-lg shadow-amber-600/20 flex items-center gap-2">
+          <span>💾 Validate & Save Token</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
   <!-- TOAST NOTIFICATION -->
   <div id="toast" class="fixed bottom-5 right-5 bg-gray-900 border border-gray-700 text-white text-xs px-4 py-3 rounded-lg shadow-2xl transition-all duration-300 opacity-0 translate-y-4 pointer-events-none z-50 flex items-center gap-2">
     <span id="toast-icon">ℹ️</span>
@@ -412,6 +504,138 @@ def get_dashboard_html() -> str:
         toast.classList.add('opacity-0', 'translate-y-4', 'pointer-events-none');
         toast.classList.remove('opacity-100', 'translate-y-0');
       }, 3500);
+    }
+
+    async function fetchTokenStatus() {
+      try {
+        const res = await fetch('/api/settings/token');
+        if (res.ok) {
+          const data = await res.json();
+          const badge = document.getElementById('telemetry-token-status');
+          const dot = document.getElementById('token-indicator-dot');
+          const currentBadge = document.getElementById('current-token-badge');
+          
+          if (data.is_configured) {
+            badge.textContent = data.masked_token;
+            badge.className = 'text-emerald-400 font-mono font-semibold';
+            dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+            if (currentBadge) currentBadge.textContent = `Current: ${data.masked_token}`;
+          } else {
+            badge.textContent = 'NOT CONFIGURED';
+            badge.className = 'text-amber-400 font-mono font-semibold';
+            dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+            if (currentBadge) currentBadge.textContent = 'Current: None';
+          }
+          if (document.getElementById('input-client-id') && data.client_id) {
+            if (!document.getElementById('input-client-id').value) {
+              document.getElementById('input-client-id').value = data.client_id;
+            }
+          }
+          if (document.getElementById('modal-dry-run-chk')) {
+            document.getElementById('modal-dry-run-chk').checked = data.dry_run;
+            updateModalDryRunLabel();
+          }
+        }
+      } catch (e) {
+        console.error('Failed fetching token status:', e);
+      }
+    }
+
+    function openTokenModal() {
+      const modal = document.getElementById('token-modal');
+      const card = document.getElementById('token-modal-card');
+      const feedback = document.getElementById('modal-feedback');
+      if (feedback) feedback.className = 'hidden text-xs p-2.5 rounded-lg';
+      fetchTokenStatus();
+      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.classList.add('opacity-100');
+      card.classList.remove('scale-95');
+      card.classList.add('scale-100');
+    }
+
+    function closeTokenModal() {
+      const modal = document.getElementById('token-modal');
+      const card = document.getElementById('token-modal-card');
+      modal.classList.add('opacity-0', 'pointer-events-none');
+      modal.classList.remove('opacity-100');
+      card.classList.add('scale-95');
+      card.classList.remove('scale-100');
+    }
+
+    function toggleTokenVisibility() {
+      const input = document.getElementById('input-access-token');
+      const icon = document.getElementById('toggle-vis-icon');
+      if (input.type === 'password') {
+        input.type = 'text';
+        icon.textContent = '🙈';
+      } else {
+        input.type = 'password';
+        icon.textContent = '👁️';
+      }
+    }
+
+    function updateModalDryRunLabel() {
+      const chk = document.getElementById('modal-dry-run-chk');
+      const lbl = document.getElementById('modal-dry-run-label');
+      if (chk.checked) {
+        lbl.textContent = 'DRY-RUN (Simulated)';
+        lbl.className = 'text-xs font-mono font-bold text-amber-400';
+      } else {
+        lbl.textContent = 'LIVE (Real Dhan Execution)';
+        lbl.className = 'text-xs font-mono font-bold text-emerald-400';
+      }
+    }
+
+    async function saveTokenModal() {
+      const clientId = (document.getElementById('input-client-id').value || '').trim();
+      const accessToken = (document.getElementById('input-access-token').value || '').trim();
+      const dryRun = document.getElementById('modal-dry-run-chk').checked;
+      const feedback = document.getElementById('modal-feedback');
+      const btn = document.getElementById('btn-save-token');
+
+      if (!accessToken) {
+        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+        feedback.textContent = '⚠️ Please paste a valid Dhan Access Token.';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      btn.innerHTML = '<span>⏳ Validating...</span>';
+
+      try {
+        const res = await fetch('/api/settings/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: clientId,
+            access_token: accessToken,
+            dry_run: dryRun
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          feedback.className = 'block bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs p-2.5 rounded-lg';
+          feedback.textContent = `✅ ${data.message} (Mask: ${data.masked_token})`;
+          showToast('Dhan Access Token updated & validated!', '🔑');
+          fetchStatus();
+          fetchTokenStatus();
+          document.getElementById('input-access-token').value = '';
+          setTimeout(() => {
+            closeTokenModal();
+          }, 1200);
+        } else {
+          feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+          feedback.textContent = `❌ ${data.message || data.detail || 'Validation failed'}`;
+        }
+      } catch (err) {
+        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+        feedback.textContent = '❌ Request failed to connect to strategy server.';
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+        btn.innerHTML = '<span>💾 Validate & Save Token</span>';
+      }
     }
 
     async function fetchStatus() {
@@ -765,8 +989,10 @@ def get_dashboard_html() -> str:
       evtSource.onmessage = function(event) {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE') {
+          if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED') {
             fetchFeed();
+            fetchTokenStatus();
+            fetchStatus();
           }
         } catch (e) {}
       };
@@ -777,9 +1003,11 @@ def get_dashboard_html() -> str:
 
     window.onload = function() {
       fetchStatus();
+      fetchTokenStatus();
       fetchFeed();
       connectSSE();
       setInterval(fetchFeed, 4000);
+      setInterval(fetchTokenStatus, 30000);
     };
   </script>
 </body>
@@ -801,7 +1029,7 @@ def create_app() -> FastAPI:
     async def get_status():
         stored_count = state.storage.get_processed_count()
         return {
-            "dry_run": settings.dry_run,
+            "dry_run": state.executor.dry_run,
             "auto_order": state.auto_order,
             "super_order_enabled": settings.super_order_enabled,
             "max_shares_per_trade": settings.max_shares_per_trade,
@@ -810,6 +1038,39 @@ def create_app() -> FastAPI:
             "db_description": state.storage.get_status_description(),
             "stored_filings_count": stored_count,
             "active_feed_count": len(state.feed_items),
+            "masked_token": state.executor.get_masked_token(),
+            "client_id": state.executor.client_id,
+        }
+
+    @app.get("/api/settings/token")
+    async def get_token_settings():
+        return {
+            "is_configured": bool(state.executor.access_token),
+            "masked_token": state.executor.get_masked_token(),
+            "client_id": state.executor.client_id,
+            "dry_run": state.executor.dry_run,
+        }
+
+    @app.post("/api/settings/token")
+    async def update_token_settings(req: UpdateTokenRequest):
+        res = state.executor.update_credentials(
+            client_id=req.client_id,
+            access_token=req.access_token,
+            dry_run=req.dry_run,
+        )
+
+        await state.broadcast_event("TOKEN_UPDATED", {
+            "masked_token": state.executor.get_masked_token(),
+            "dry_run": state.executor.dry_run,
+            "valid": res.get("valid", True),
+        })
+
+        return {
+            "success": res.get("valid", True),
+            "message": res.get("message", "Token updated successfully"),
+            "masked_token": state.executor.get_masked_token(),
+            "client_id": state.executor.client_id,
+            "dry_run": state.executor.dry_run,
         }
 
     @app.get("/api/feed")

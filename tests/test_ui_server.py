@@ -116,7 +116,40 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(bi_item["sentiment"], "BEARISH")
         self.assertFalse(bi_item["order"]["placed"])
 
+    def test_get_and_update_token_api(self):
+        """Test token retrieval and runtime update endpoints."""
+        # 1. GET token status
+        res = self.client.get("/api/settings/token")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("is_configured", data)
+        self.assertIn("masked_token", data)
+        self.assertIn("dry_run", data)
+
+        # 2. POST token update with sample token
+        update_res = self.client.post(
+            "/api/settings/token",
+            json={
+                "client_id": "1100223344",
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiMTIzNDU2In0.sample_signature_xyz",
+                "dry_run": True,
+            },
+        )
+        self.assertEqual(update_res.status_code, 200)
+        up_data = update_res.json()
+        self.assertTrue(up_data["success"])
+        self.assertEqual(up_data["client_id"], "1100223344")
+        self.assertIn("eyJhbGci...", up_data["masked_token"])
+        self.assertTrue(up_data["dry_run"])
+
+        # 3. Verify status endpoint reflects new state
+        status_res = self.client.get("/api/status")
+        self.assertEqual(status_res.status_code, 200)
+        self.assertEqual(status_res.json()["client_id"], "1100223344")
+        self.assertIn("eyJhbGci...", status_res.json()["masked_token"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -80,6 +80,91 @@ class DhanExecutor:
             logger.warning("dhanhq package not installed. Running in DRY-RUN mode.")
             self.dry_run = True
 
+    def get_masked_token(self) -> str:
+        """Return a safely masked version of the access token."""
+        if not self.access_token:
+            return "NOT_CONFIGURED"
+        if len(self.access_token) <= 12:
+            return f"{self.access_token[:3]}...{self.access_token[-2:]}"
+        return f"{self.access_token[:8]}...{self.access_token[-6:]}"
+
+    def update_credentials(
+        self,
+        client_id: Optional[str] = None,
+        access_token: Optional[str] = None,
+        dry_run: Optional[bool] = None,
+    ) -> dict:
+        """Update DhanHQ credentials at runtime and reinitialize client."""
+        if client_id is not None:
+            self.client_id = client_id.strip()
+        if access_token is not None:
+            self.access_token = access_token.strip()
+        if dry_run is not None:
+            self.dry_run = dry_run
+
+        self._init_client()
+        return self.validate_token()
+
+    def validate_token(self) -> dict:
+        """Validate token format or test connection against Dhan API if available."""
+        if not self.access_token:
+            return {
+                "valid": False,
+                "message": "Access token is empty",
+                "client_id": self.client_id,
+                "dry_run": self.dry_run,
+                "masked_token": "NOT_CONFIGURED",
+            }
+
+        if self.dry_run:
+            return {
+                "valid": True,
+                "message": "Token updated successfully (Running in DRY-RUN mode)",
+                "client_id": self.client_id,
+                "dry_run": True,
+                "masked_token": self.get_masked_token(),
+            }
+
+        if self.dhan:
+            try:
+                funds = self.dhan.get_fund_limits()
+                if isinstance(funds, dict) and funds.get("status") == "success":
+                    avail = funds.get("data", {}).get("availabelBalance", "N/A")
+                    return {
+                        "valid": True,
+                        "message": f"DhanHQ connected successfully (Available Margin: ₹{avail})",
+                        "client_id": self.client_id,
+                        "dry_run": False,
+                        "masked_token": self.get_masked_token(),
+                        "fund_data": funds.get("data"),
+                    }
+                else:
+                    err_msg = funds.get("remarks") if isinstance(funds, dict) else str(funds)
+                    return {
+                        "valid": False,
+                        "message": f"Dhan API rejected token: {err_msg}",
+                        "client_id": self.client_id,
+                        "dry_run": False,
+                        "masked_token": self.get_masked_token(),
+                    }
+            except Exception as e:
+                logger.warning("Failed validating Dhan token against API: %s", e)
+                return {
+                    "valid": False,
+                    "message": f"Dhan API error: {str(e)}",
+                    "client_id": self.client_id,
+                    "dry_run": False,
+                    "masked_token": self.get_masked_token(),
+                }
+
+        return {
+            "valid": True,
+            "message": "Token format accepted (dhanhq SDK not installed, using simulated execution)",
+            "client_id": self.client_id,
+            "dry_run": self.dry_run,
+            "masked_token": self.get_masked_token(),
+        }
+
     def request_user_approval(
         self,
         signal: TradeSignal,
