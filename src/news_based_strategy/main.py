@@ -127,6 +127,46 @@ def print_announcement(
             print(f"      • {k}: {v}")
 
 
+def get_simulated_nse_payload() -> list[dict]:
+    """Generate realistic live market announcements for simulation."""
+    now_ts = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
+    t_int = int(time.time())
+    return [
+        # 1. Non-F&O stock (fails F&O gate)
+        {
+            "seq_id": f"SIM_NONFNO_{t_int}",
+            "symbol": "SBC",
+            "desc": "Receipt of Domestic Order",
+            "attmntText": "SBC Exports has received an order worth INR 5 Crore.",
+            "an_dt": now_ts,
+        },
+        # 2. F&O stock with routine noise (fails Noise gate)
+        {
+            "seq_id": f"SIM_NOISE_{t_int}",
+            "symbol": "TATASTEEL",
+            "desc": "Closure of Trading Window",
+            "attmntText": "Intimation of trading window closure for designated persons pursuant to SEBI regulations.",
+            "an_dt": now_ts,
+        },
+        # 3. Eligible F&O stock with BULLISH catalyst (passes all gates -> triggers Gemini 3.7 Flash)
+        {
+            "seq_id": f"SIM_BULLISH_{t_int}",
+            "symbol": "BEL",
+            "desc": "Bharat Electronics secures major export defense contract worth INR 3,850 Crore",
+            "attmntText": "Bharat Electronics Limited (BEL) has signed an export contract with the Ministry of Defence of a friendly nation for the supply of state-of-the-art radar and electronic warfare systems. The contract value is INR 3,850 Crore and execution will take place over 24 months.",
+            "an_dt": now_ts,
+        },
+        # 4. Eligible F&O stock with BEARISH catalyst (passes all gates -> triggers Gemini 3.7 Flash)
+        {
+            "seq_id": f"SIM_BEARISH_{t_int}",
+            "symbol": "BANKINDIA",
+            "desc": "RBI imposes severe monetary penalty and business restrictions",
+            "attmntText": "The Reserve Bank of India (RBI) has issued a regulatory order imposing a penalty of INR 120 Crore and halting new digital credit card issuance due to material deficiencies in IT and risk governance framework.",
+            "an_dt": now_ts,
+        },
+    ]
+
+
 def run_poller(
     interval_seconds: int = 60,
     once: bool = False,
@@ -138,6 +178,7 @@ def run_poller(
     debug: bool = False,
     max_age_seconds: int = 180,
     enable_ai: bool = True,
+    simulate: bool = False,
 ) -> int:
     """Poll announcements, filter F&O stocks & noise, extract PDF text, and analyze sentiment with Gemini."""
     if fno_only:
@@ -171,9 +212,11 @@ def run_poller(
         else "Standard Order"
     )
 
+    mode_str = "Simulated Feed (--simulate)" if simulate else ("Single Shot (--once)" if once else f"Continuous (every {interval_seconds}s)")
+
     print("=" * 70)
     print("⚡ Real-Time NSE Corporate Announcements Poller (Console Mode)")
-    print(f"   Mode: {'Single Shot (--once)' if once else f'Continuous (every {interval_seconds}s)'}")
+    print(f"   Mode: {mode_str}")
     print(f"   Universe: {universe_desc}")
     print(f"   Persistence: {db_desc}")
     print(f"   Order Style: {order_style}")
@@ -193,6 +236,10 @@ def run_poller(
         headers=settings.headers,
         storage=storage,
     )
+
+    if simulate:
+        import json
+        monitor._do_get = lambda url: (200, json.dumps(get_simulated_nse_payload()))
 
     def on_filtered(item: Announcement, reason: str) -> None:
         brief = get_five_word_brief(item)
@@ -296,6 +343,11 @@ def main() -> int:
         help="Disable Gemini AI sentiment reasoning (run in pure Phase 1 monitoring mode)",
     )
     parser.add_argument(
+        "--simulate",
+        action="store_true",
+        help="Simulate realistic live corporate filings to test the full pipeline end-to-end",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Print raw JSON fields returned by NSE for debugging schema variations",
@@ -310,7 +362,7 @@ def main() -> int:
     args = parser.parse_args()
     return run_poller(
         interval_seconds=args.interval,
-        once=args.once,
+        once=args.once or args.simulate,
         symbol=args.symbol,
         fno_only=not args.all_stocks,
         filter_noise=not args.include_noise,
@@ -319,6 +371,7 @@ def main() -> int:
         debug=args.debug,
         max_age_seconds=args.max_age_seconds,
         enable_ai=not args.no_ai,
+        simulate=args.simulate,
     )
 
 
