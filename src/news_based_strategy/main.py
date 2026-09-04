@@ -465,6 +465,23 @@ def main() -> int:
         help="Prompt for user approval before placing each order (overrides AUTO_ORDER in .env)",
     )
     parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the interactive Web GUI Dashboard",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host address for GUI server (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port number for GUI server (default: 8000)",
+    )
+    parser.add_argument(
         "--max-age-seconds",
         type=int,
         default=180,
@@ -472,6 +489,11 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    if args.gui:
+        from news_based_strategy.ui.server import run_server
+        run_server(host=args.host, port=args.port)
+        return 0
 
     auto_order_override = None
     if args.auto_order:
