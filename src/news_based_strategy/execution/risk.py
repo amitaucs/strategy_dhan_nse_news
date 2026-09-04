@@ -29,16 +29,16 @@ class RiskManager:
         return market_open <= current_time <= market_close
 
     @staticmethod
-    def calculate_position_size(capital: float, ltp: float, max_quantity: int = 1000) -> int:
+    def calculate_position_size(capital: float, ltp: float, max_quantity: int = 10) -> int:
         """Calculate number of shares based on allocated capital and current price.
         
         Args:
-            capital: Allocated INR capital for this trade (e.g. 25,000).
+            capital: Allocated INR capital for this trade (e.g. 20,000).
             ltp: Last Traded Price of the stock.
-            max_quantity: Safety ceiling for quantity.
+            max_quantity: Safety ceiling for quantity (default: 10).
         """
         if ltp <= 0 or capital <= 0:
-            return 1
+            return min(1, max_quantity)
 
         qty = math.floor(capital / ltp)
         qty = max(1, min(qty, max_quantity))

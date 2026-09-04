@@ -10,36 +10,37 @@ A complete technical blueprint and flow architecture for an event-driven news-ar
 flowchart TD
     subgraph Data Ingestion
         NSE[NSE Corporate Announcements API] -->|GET /api/corporate-announcements| Session[Session & Cookie Manager]
-        Session -->|Parse JSON & Attachments| Filter[Watchlist & Deduplication Filter]
+        Session -->|Parse JSON, PDF & Attachments| FNOFilter[F&O Universe Gate]
+        FNOFilter -->|Passes F&O List| NoiseFilter[Noise Rejection Gate]
     end
 
     subgraph Persistence Layer
-        Filter <-->|Check if seq_id exists| DB[(SQLite Database)]
+        NoiseFilter <-->|Check if seq_id exists| DB[(MySQL / MariaDB + SQLite)]
     end
 
     subgraph AI Reasoning Engine
-        Filter -->|New Watchlist Filing| GeminiPrompt[Prompt Builder]
+        NoiseFilter -->|New Watchlist Filing| GeminiPrompt[Prompt Builder]
         GeminiPrompt -->|gemini-3.7-flash + Pydantic Schema| Gemini[Gemini API]
         Gemini -->|FilingAudit JSON| DecisionGate{High Conviction?}
     end
 
     subgraph Risk & Execution
-        DecisionGate -->|No / Low Conviction| LogSkip[Save Audit & Skip]
-        DecisionGate -->|Yes: >= 80% & Material| MarketGate{Market Open?}
+        DecisionGate -->|No / Low Conviction / Bearish| LogSkip[Save Audit & Skip Execution]
+        DecisionGate -->|Yes: Bullish, >= 70% Conf, Material Impact| StaleGate{News Fresh <= 180s?}
         
-        MarketGate -->|Closed / Weekend| QueueAMO[Log Off-Hours / Queue AMO]
-        MarketGate -->|Open: 09:15-15:30 IST| RiskEngine[Risk & Sizing Engine]
+        StaleGate -->|Stale News > 180s| RejectStale[Reject Order: Stale Alpha]
+        StaleGate -->|Fresh News <= 180s| RiskEngine[Risk & Sizing Engine]
         
-        RiskEngine --> Sizing[Calculate Qty = Capital / LTP]
-        Sizing --> ProdCheck{Action Type?}
-        ProdCheck -->|BULLISH| BuyOrder[BUY: INTRADAY or CNC]
-        ProdCheck -->|BEARISH| ShortOrder[SELL: Strictly INTRADAY]
+        RiskEngine --> Sizing[Calculate Qty = min max_shares, Capital / LTP]
+        Sizing --> SuperOrder[Super Order Levels: Entry Limit, TP +3%, SL -1%, Trail 5pts]
         
-        BuyOrder --> DhanAPI[DhanHQ Order API / Dry-Run Log]
-        ShortOrder --> DhanAPI
-        DhanAPI --> DB
-        LogSkip --> DB
-        QueueAMO --> DB
+        SuperOrder --> DryRunCheck{DRY_RUN Mode?}
+        DryRunCheck -->|DRY_RUN=True| PaperLog[Simulate Super Order & Log]
+        DryRunCheck -->|DRY_RUN=False| DhanAPI[DhanHQ place_super_order API]
+        
+        DhanAPI --> DBTrades[Save to trade_executions table]
+        PaperLog --> DBTrades
+        LogSkip --> DBAudit[Save to audit_logs table]
     end
 ```
 
@@ -51,39 +52,41 @@ flowchart TD
 sequenceDiagram
     autonumber
     participant Mon as NSE Filing Monitor
-    participant DB as SQLite Storage
+    participant DB as MySQL / SQLite
     participant AI as Gemini 3.7 Flash
     participant Risk as Risk & Sizing Manager
     participant Dhan as DhanHQ / Broker
 
-    loop Every 25-30 Seconds
-        Mon->>Mon: Hit nseindia.com (refresh cookies if 401/403)
+    loop Every Polling Cycle (e.g. 60s or WebSocket)
+        Mon->>Mon: Hit nseindia.com (refresh session cookies)
         Mon->>Mon: Poll /api/corporate-announcements?index=equities
+        Mon->>Mon: Filter: In F&O universe? (Exclude non-F&O)
+        Mon->>Mon: Filter: Routine compliance noise? (Exclude trading window, etc.)
         Mon->>DB: Query: Is seq_id already processed?
         alt Already in DB
             DB-->>Mon: Skip filing
-        else New filing in Watchlist
+        else New tradeable catalyst filing
             DB-->>Mon: Proceed
-            Mon->>DB: Record seq_id (prevent duplicate checks)
-            Mon->>AI: Send prompt (Title, Description, Details)
-            AI-->>Mon: Return FilingAudit (sentiment, confidence, catalyst)
-            Mon->>DB: Save audit record
+            Mon->>DB: Record seq_id in processed_filings
+            Mon->>AI: Send payload (Ticker, Headline, Details, Extracted PDF)
+            AI-->>Mon: Return FilingAudit (sentiment, confidence, catalyst, material_impact)
+            Mon->>DB: Save audit record in audit_logs
             
-            alt material_impact == True and confidence >= 80
-                Mon->>Risk: Request trade parameters (Symbol, Action)
-                Risk->>Risk: Check Market Hours (09:15 - 15:30 IST)
-                Risk->>Risk: Position size = floor(Capital / LTP)
-                Risk->>Risk: Determine product: BUY -> CNC/INTRA, SELL -> INTRA only
+            alt Bullish == True, material_impact == True, confidence >= 70%
+                Mon->>Risk: Request Super Order sizing & bracket levels
+                Risk->>Risk: Staleness Check (an_dt <= 180s)
+                Risk->>Risk: Position size = min(10, floor(Capital / LTP))
+                Risk->>Risk: Entry Limit = LTP * 1.002, TP = LTP * 1.03, SL = LTP * 0.99
                 
-                alt Dry-Run Mode == True
-                    Risk->>Risk: Log paper trade simulation
-                else Live Mode == True
-                    Risk->>Dhan: place_order(SecurityID, TransactionType, ProductType, Qty)
+                alt DRY_RUN == True
+                    Risk->>Risk: Format simulated Super Order execution
+                else Live Execution (DRY_RUN == False)
+                    Risk->>Dhan: place_super_order(SecID, NSE_EQ, BUY, LIMIT, INTRA, Entry, TP, SL, Trail)
                     Dhan-->>Risk: Order response (OrderID, Status)
                 end
-                Risk->>DB: Save trade execution log
-            else Low Impact / Noise
-                Mon->>Mon: Log skipped reason
+                Risk->>DB: Save trade log in trade_executions
+            else Bearish, Neutral, or Low Conviction (<70%)
+                Mon->>Mon: Log skip reason (No order placed)
             end
         end
     end
@@ -95,109 +98,94 @@ sequenceDiagram
 
 ```text
 News_Based_Strategy/
-├── .env                              # Credentials and runtime flags (ignored by git)
-├── .env.example                      # Template with variable explanations
-├── .gitignore                        # Python, SQLite, virtualenv, and secrets rules
-├── implementationPlan.md             # This document
+├── .env                              # Credentials and runtime flags
+├── .gitignore                        # Git ignore rules
+├── implementationPlan.md             # System blueprint and technical design
 ├── pyproject.toml                    # Build metadata and dependencies
-├── requirements.txt                  # Core runtime dependencies
-├── README.md                         # Quickstart and operational guidelines
+├── README.md                         # Operational and quickstart guide
 ├── data/
-│   └── strategy.db                   # SQLite database for deduplication and audit trail
+│   └── strategy.db                   # SQLite database fallback
 ├── src/
 │   └── news_based_strategy/
-│       ├── __init__.py               # Package metadata and exports
-│       ├── config.py                 # Configuration loader and risk parameters
-│       ├── models.py                 # Pydantic schemas (FilingAudit, Announcement, etc.)
-│       ├── monitor.py                # Resilient NSE corporate announcements poller
-│       ├── analyzer.py               # Gemini 3.7 Flash structured reasoning client
-│       ├── storage.py                # SQLite persistence (deduplication & trade logs)
-│       ├── executor.py               # Dhan order execution, margin check, & dry-run simulator
-│       ├── engine.py                 # Strategy orchestrator & polling event loop
-│       └── main.py                   # Application entry point & CLI commands
+│       ├── __init__.py               # Package metadata and public exports
+│       ├── config.py                 # Configuration loader and settings
+│       ├── engine.py                 # Strategy orchestrator & cycle manager
+│       ├── main.py                   # Application entry point & CLI commands
+│       ├── core/
+│       │   ├── __init__.py
+│       │   └── models.py             # FilingAudit, Announcement, TradeSignal, TradeResult
+│       ├── execution/
+│       │   ├── __init__.py
+│       │   ├── executor.py           # DhanHQ Super Order & regular executor
+│       │   └── risk.py               # Position sizing (max 10 shares), Super Order levels
+│       ├── ingestion/
+│       │   ├── __init__.py
+│       │   ├── extractor.py          # Bounded PDF extraction (2 MB / 2 pgs / 3s timeout)
+│       │   ├── filter.py             # Noise rejection engine (30+ patterns)
+│       │   ├── monitor.py            # NSE poller with cookie priming
+│       │   └── universe.py           # Dhan F&O universe sync & SecID resolver
+│       ├── intelligence/
+│       │   ├── __init__.py
+│       │   ├── analyzer.py           # Gemini 3.7 Flash AI reasoning engine
+│       │   └── prompts/
+│       │       ├── __init__.py
+│       │       └── catalyst_prompt.py# Structured prompt template
+│       └── storage/
+│           ├── __init__.py
+│           ├── database.py           # Low-level SQLite helper
+│           └── repository.py         # MySQL primary with SQLite fallback
 └── tests/
-    ├── __init__.py
-    ├── test_models.py                # Model validation and schema parsing tests
-    ├── test_storage.py               # SQLite deduplication and query tests
-    ├── test_executor.py              # Position sizing and product-type safety tests
-    └── test_monitor.py               # Mock HTTP response parsing tests
+    ├── test_basic.py
+    ├── test_core/
+    ├── test_execution/
+    │   ├── test_executor.py
+    │   ├── test_risk.py
+    │   └── test_phase3_execution.py
+    ├── test_ingestion/
+    ├── test_intelligence/
+    └── test_storage/
 ```
 
 ---
 
 ## 4. Component Responsibilities & Specifications
 
-### Component 1: Ingestion Layer (`monitor.py`)
-* **Cookie Priming**: NSE blocks direct calls to `/api/...` without initial session cookies. The monitor first sends a request to `https://www.nseindia.com` to collect Akamai/session cookies, then accesses the API.
-* **Header Spoofing**: Mimics realistic browser headers (`User-Agent`, `Referer`, `Accept`, `Accept-Language`).
-* **Auto-Reconnection**: If an HTTP `401` or `403` occurs, the session flushes cookies, applies exponential backoff (2s, 5s, 10s), and reconnects.
-* **Payload Normalization**: Maps raw NSE payload fields (`seq_id`, `symbol`, `desc`, `attmntText`, `an_dt`, `attmntFile`) into an internal `Announcement` data model.
+### Component 1: Ingestion Layer (`monitor.py`, `filter.py`, `extractor.py`, `universe.py`)
+* **Cookie Priming & Anti-Scraping**: NSE blocks direct calls to `/api/...`. Session cookies are primed against `https://www.nseindia.com`.
+* **F&O Gate**: Rejects non-F&O stocks at zero-cost to ensure all traded tickers have liquid cash and derivative contracts.
+* **Noise Filter**: Over 30 deterministic regex patterns reject trading window closures, secretarial audits, investor meetings, loss of share certificates, and credit ratings.
+* **Bounded PDF Extractor**: Safely extracts the first 2 pages (max 2 MB) with a 3.0s timeout using `pypdf`.
 
-### Component 2: AI Reasoning Layer (`analyzer.py`)
-* **Model**: `gemini-3.7-flash` for latency minimization (<1 second response time).
-* **Strict Schema Enforcement**: Uses `response_mime_type="application/json"` and `response_schema=FilingAudit` with `temperature=0.0`.
-* **Prompt Directives**:
-  - Filter out compliance noise: Trading window closures, secretarial audits, routine share transfers, AGM intimations $\to$ classify as `NEUTRAL`, `material_impact=False`.
-  - Identify market-moving catalysts: Major contract wins ($>10\%$ of annual revenue), earnings beats/misses, auditor resignations, forensic investigations, regulatory bans, unexpected senior executive departures.
+### Component 2: AI Reasoning Layer (`analyzer.py`, `prompts/catalyst_prompt.py`)
+* **Model**: `gemini-3.7-flash` with zero temperature (`temperature=0.0`) for sub-second deterministic responses.
+* **Structured Schema**: Enforces strict `FilingAudit` Pydantic schema:
+  - `sentiment`: `"BULLISH"`, `"BEARISH"`, or `"NEUTRAL"`
+  - `confidence`: Integer between `0` and `100` (Gate: $\ge 70\%$)
+  - `catalyst_type`: e.g. `ORDER_WIN`, `EARNINGS_BEAT`, `RESIGNATION`, `PENALTY`
+  - `material_impact`: Boolean (True if expected rapid movement $\ge 1.5\%$)
+  - `summary`: 1-sentence plain English rationale
 
-```python
-class FilingAudit(BaseModel):
-    sentiment: str = Field(description="'BULLISH', 'BEARISH', or 'NEUTRAL'")
-    confidence: int = Field(description="Score between 0 and 100")
-    catalyst_type: str = Field(description="e.g. ORDER_WIN, EARNINGS_BEAT, RESIGNATION, PENALTY, BOARD_OUTCOME")
-    material_impact: bool = Field(description="True if this is likely to move the price by >= 1.5% rapidly")
-    summary: str = Field(description="1-sentence plain English reason")
-```
+### Component 3: Storage & State Persistence (`repository.py`)
+* **MySQL Primary** (`mysql.gb.stackcp.com:44677`):
+  1. `processed_filings`: Stores `(seq_id, symbol, an_dt, processed_at)` for durable deduplication across restarts.
+  2. `audit_logs`: Stores all AI audits (`sentiment`, `confidence`, `catalyst_type`, `material_impact`, `summary`).
+  3. `trade_executions`: Stores all trade attempts (`symbol`, `action`, `quantity`, `product_type`, `order_id`, `remarks`, `dry_run`).
+* **SQLite Fallback**: Automatically activates if MySQL connection is unavailable.
 
-### Component 3: Storage & State Persistence (`storage.py`)
-* **SQLite Database** (`data/strategy.db`):
-  1. `processed_filings`: Stores `(seq_id, symbol, an_dt, processed_at)` to prevent re-trading past filings across bot restarts.
-  2. `audit_logs`: Stores every LLM response (catalyst type, sentiment, confidence, summary).
-  3. `trade_executions`: Stores actual or simulated order submissions (order ID, price, quantity, product type).
+### Component 4: Risk & Execution Layer (`risk.py`, `executor.py`)
+* **Trigger Condition**:
+  $$\text{Trigger} = (\text{sentiment} \in \{\text{BULLISH}, \text{BUY}\}) \land (\text{confidence} \ge 70) \land (\text{material\_impact} = \text{True})$$
+* **Sizing Formula (Max 10 shares)**:
+  $$\text{Quantity} = \min\left(\text{max\_shares\_per\_trade}, \max\left(1, \left\lfloor \frac{\text{Capital}}{\text{LTP}} \right\rfloor\right)\right)$$
+* **Super Order (Bracket Order) Mechanics**:
+  - **Product**: `INTRADAY` (Strictly enforced by Dhan for Super Orders)
+  - **Order Type**: `LIMIT`
+  - **Entry Limit**: $\text{round}(\text{LTP} \times (1 + \text{slippage\_buffer\_pct} / 100), 1)$ (0.2% buffer)
+  - **Profit Target**: $\text{round}(\text{LTP} \times (1 + \text{target\_profit\_pct} / 100), 1)$ (+3.0%)
+  - **Stop Loss**: $\text{round}(\text{LTP} \times (1 - \text{stop\_loss\_pct} / 100), 1)$ (-1.0%)
+  - **Trailing Jump**: `5.0 points`
+* **Staleness Circuit Breaker**: Rejects filings whose exchange timestamp is older than `180s`.
 
-### Component 4: Risk & Execution Layer (`executor.py`)
-* **Market Hours Gate**: Indian equity markets trade between `09:15` and `15:30` IST (Monday–Friday). Market orders placed outside these hours are rejected by the exchange. Off-hour filings are recorded as pending/off-hours signals.
-* **Product Type Safety**:
-  - `BULLISH`: Places `product_type=dhan.CNC` (Delivery) or `dhan.INTRA` (Intraday).
-  - `BEARISH`: **Must strictly use `product_type=dhan.INTRA`**. In the Indian cash equity segment (`NSE_EQ`), naked short delivery (`CNC`) is disallowed and triggers heavy auction penalties.
-* **Dynamic Position Sizing**:
-  $$\text{Quantity} = \max\left(1, \left\lfloor \frac{\text{Capital Per Trade}}{\text{LTP}} \right\rfloor\right)$$
-* **Dry-Run Mode**: When `DRY_RUN=true`, orders are simulated and logged with full parameter inspection without calling Dhan live order endpoints.
-
----
-
-## 5. Edge Cases, Risks & Mitigations
-
-| Risk / Failure Mode | Impact | Mitigation Strategy |
-| :--- | :--- | :--- |
-| **Short-Selling Delivery Shares** | Dhan rejection or short-delivery auction penalty | Force `product_type = INTRA` on all SELL trades. Never allow `CNC` on sell orders unless stock is held in demat. |
-| **Duplicate Orders on Restart** | Re-executing old news after script crash | Persistent SQLite storage for sequence IDs (`seq_id`). Query database before passing text to Gemini. |
-| **NSE Akamai IP Ban** | 403 Forbidden / bot blockage | Maintain persistent cookies via `requests.Session`, random jitter in polling interval, residential IP proxy support. |
-| **Off-Market Filings** | Orders rejected by Dhan API | Verify system time is between 09:15 and 15:15 IST before firing `MARKET` orders. |
-| **Dhan Static IP Restriction** | API calls fail with authorization error | Whitelist public IP in the Dhan developer console prior to live deployment. |
-| **Market Orders Slippage** | Sudden price jumps on breaking news | Dhan converts market orders into limit orders with Market Price Protection (MPP). Use limit orders pegged to LTP $\pm 0.5\%$. |
-
----
-
-## 6. Phased Implementation Roadmap
-
-### Phase 1: Foundation & Data Models
-- Configure `.env` and `config.py` with watchlist and Dhan/Gemini credentials.
-- Define `FilingAudit`, `Announcement`, `TradeSignal`, and `TradeResult` data models.
-
-### Phase 2: Storage & Ingestion
-- Build SQLite persistence with table migrations for deduplication.
-- Implement `NSEFilingMonitor` with cookie priming and rate-limit backoff.
-
-### Phase 3: Gemini Analysis Engine
-- Connect `google.genai` client using `gemini-3.7-flash` with zero temperature.
-- Benchmark latency and accuracy across sample historical announcements.
-
-### Phase 4: Risk & DhanHQ Execution
-- Implement market hours check and dynamic position sizing formula.
-- Implement dry-run mode and real Dhan order placement with `INTRA` product type for shorts.
-
-### Phase 5: CLI Orchestrator & Tests
 - Build `StrategyEngine` event loop with graceful interrupt handling (`Ctrl+C`).
 - Add unit tests for models, storage, monitor parsers, and mock order executions.
 

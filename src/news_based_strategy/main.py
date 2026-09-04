@@ -6,7 +6,9 @@ import sys
 import time
 from typing import Optional
 from news_based_strategy.config import settings
-from news_based_strategy.core.models import Announcement
+from news_based_strategy.core.models import Announcement, TradeSignal
+from news_based_strategy.execution.executor import DhanExecutor
+from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
 from news_based_strategy.ingestion.monitor import NSEFilingMonitor
@@ -29,15 +31,30 @@ def get_five_word_brief(announcement: Announcement) -> str:
     return " ".join(words[:5])
 
 
+SIMULATED_LTPS: dict[str, float] = {
+    "BEL": 300.0,
+    "BANKINDIA": 120.0,
+    "TATASTEEL": 150.0,
+    "INFY": 1850.0,
+    "RELIANCE": 2950.0,
+    "HDFCBANK": 1650.0,
+    "TATAMOTORS": 1050.0,
+    "SBIN": 820.0,
+    "HAL": 4700.0,
+    "BHEL": 280.0,
+}
+
+
 def print_announcement(
     announcement: Announcement,
     analyzer: Optional[FilingAnalyzer] = None,
     storage: Optional[StrategyStorage] = None,
+    executor: Optional[DhanExecutor] = None,
     debug: bool = False,
     max_age_seconds: int = 180,
     enable_ai: bool = True,
 ) -> None:
-    """Pretty-print an individual announcement to the console with extracted text and AI sentiment reasoning."""
+    """Pretty-print an individual announcement to the console with extracted text, AI reasoning, and order execution."""
     if NoiseFilter.is_noise(announcement.desc, announcement.details):
         reason = NoiseFilter.explain_noise(announcement.desc, announcement.details) or "Routine Compliance Noise"
         brief = get_five_word_brief(announcement)
@@ -89,7 +106,8 @@ def print_announcement(
         )
         if audit:
             sentiment_upper = audit.sentiment.upper()
-            if sentiment_upper in ("BULLISH", "BUY"):
+            is_bullish = sentiment_upper in ("BULLISH", "BUY")
+            if is_bullish:
                 sent_badge = "BULLISH 🟢"
             elif sentiment_upper in ("BEARISH", "SELL"):
                 sent_badge = "BEARISH 🔴"
@@ -99,13 +117,20 @@ def print_announcement(
             is_conviction = (
                 audit.material_impact
                 and audit.confidence >= settings.confidence_threshold
-                and sentiment_upper in ("BULLISH", "BUY", "BEARISH", "SELL")
+                and is_bullish
             )
             conviction_badge = (
-                "🟢 HIGH CONVICTION (Trade Trigger in Phase 3)"
+                "🟢 HIGH CONVICTION (Phase 3 Super Order Trigger)"
                 if is_conviction
                 else "⚪ STANDARD (Below conviction threshold)"
             )
+
+            if is_conviction:
+                exec_status_line = "🟢 Triggered (Submitting DhanHQ Super Order)"
+            elif sentiment_upper in ("BEARISH", "SELL"):
+                exec_status_line = "⏸️ Skipped (Bearish filing — Bullish Super Orders enabled)"
+            else:
+                exec_status_line = f"⏸️ Skipped (Below conviction or confidence threshold < {settings.confidence_threshold}%)"
 
             print(f"\n   ┌─ 🧠 AI Sentiment & Catalyst Verdict ({analyzer.model_name}) ─────")
             print(f"   │ • Sentiment: {sent_badge} (Confidence: {audit.confidence}% | Threshold: >= {settings.confidence_threshold}%)")
@@ -113,11 +138,56 @@ def print_announcement(
             print(f"   │ • Material Price Impact: {audit.material_impact} (Expected rapid price movement >= 1.5%)")
             print(f"   │ • Conviction Gate: {conviction_badge}")
             print(f"   │ • AI Rationale: \"{audit.summary}\"")
-            print("   │ • Broker Execution: ⏸️ Strictly Paused (Phase 2 Reasoning Mode)")
+            print(f"   │ • Broker Execution: {exec_status_line}")
             print("   └───────────────────────────────────────────────────────────────")
 
             if storage:
                 storage.save_audit(announcement.seq_id, announcement.symbol, audit)
+
+            # Phase 3: Super Order Execution for High-Conviction Bullish Filings
+            if is_conviction and executor:
+                effective_sec_id = resolve_security_id(announcement.symbol) or "0"
+                ltp = SIMULATED_LTPS.get(announcement.symbol.upper(), 300.0)
+
+                signal = TradeSignal(
+                    symbol=announcement.symbol,
+                    security_id=effective_sec_id,
+                    action="BUY",
+                    product_type="INTRADAY",
+                    confidence=audit.confidence,
+                    catalyst_type=audit.catalyst_type,
+                    summary=audit.summary,
+                    exchange_time=announcement.an_dt,
+                )
+
+                trade_res = executor.execute_order(signal, ltp=ltp)
+                if storage:
+                    storage.save_trade(trade_res)
+
+                entry_price, tp_price, sl_price = RiskManager.calculate_super_order_levels(
+                    ltp=ltp,
+                    action="BUY",
+                    target_pct=executor.target_profit_pct,
+                    sl_pct=executor.stop_loss_pct,
+                    slippage_buffer_pct=executor.slippage_buffer_pct,
+                )
+
+                mode_label = "DRY-RUN (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
+                status_icon = "✅ SUCCESS" if trade_res.success else "❌ REJECTED"
+                db_name = "MySQL 'trade_executions'" if (storage and storage.is_mysql_active) else "SQLite 'trade_executions'"
+
+                print(f"\n   ┌─ 🚀 DhanHQ Super Order Placed (Mode: {mode_label}) ──────────")
+                print(f"   │ • Ticker: {trade_res.symbol} (Dhan SecID: {effective_sec_id} | Exchange: NSE_EQ)")
+                print(f"   │ • Action: {trade_res.action} | Product: {trade_res.product_type} (Bracket Super Order)")
+                print(f"   │ • Quantity: {trade_res.quantity} shares (Max Cap: {executor.max_shares_per_trade} shares | Capital: ₹{executor.capital_per_trade:,.2f})")
+                print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {executor.slippage_buffer_pct}% buffer)")
+                print(f"   │ • Target Profit: ₹{tp_price:.2f} (+{executor.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{executor.stop_loss_pct}%)")
+                print(f"   │ • Trailing Jump: {executor.trailing_jump_points} pts")
+                print(f"   │ • Order ID: {trade_res.order_id}")
+                print(f"   │ • Execution Status: {status_icon}")
+                print(f"   │ • Remarks: {trade_res.remarks}")
+                print(f"   │ • Persistence: Recorded in {db_name}")
+                print("   └───────────────────────────────────────────────────────────────")
         else:
             print("   ⚠️  [AI Reasoning Error]: Unable to obtain structured verdict from Gemini.")
 
@@ -200,10 +270,29 @@ def run_poller(
         else None
     )
 
+    executor = DhanExecutor(
+        client_id=settings.dhan_client_id,
+        access_token=settings.dhan_access_token,
+        dry_run=settings.dry_run,
+        capital_per_trade=settings.capital_per_trade,
+        max_shares_per_trade=settings.max_shares_per_trade,
+        max_news_age_seconds=max_age_seconds,
+        super_order_enabled=settings.super_order_enabled,
+        target_profit_pct=settings.target_profit_pct,
+        stop_loss_pct=settings.stop_loss_pct,
+        trailing_jump_points=settings.trailing_jump_points,
+        slippage_buffer_pct=settings.slippage_buffer_pct,
+    )
+
     ai_desc = (
         f"Active (Google Gemini: {settings.gemini_model} | Conviction Threshold: >= {settings.confidence_threshold}%)"
         if enable_ai
         else "Disabled (--no-ai)"
+    )
+
+    exec_mode = "DRY-RUN (Simulated)" if settings.dry_run else "LIVE (Real Orders on Dhan)"
+    broker_desc = (
+        f"Active ({exec_mode} | Max Cap: {settings.max_shares_per_trade} shares/trade | Min Confidence: >={settings.confidence_threshold}%)"
     )
 
     order_style = (
@@ -224,7 +313,7 @@ def run_poller(
     print(f"   Noise Rejection: {'Active (Trading window, share certs, etc. suppressed)' if filter_noise else 'Disabled'}")
     print(f"   Max News Age: {max_age_seconds}s (Stale news circuit breaker)" if max_age_seconds > 0 else "   Max News Age: Disabled")
     print(f"   PDF Extractor: {pypdf_status}")
-    print("   Broker Execution: Strictly Paused (Phase 2: Sentiment & Catalyst Reasoning)")
+    print(f"   Broker Execution: {broker_desc}")
     if symbol:
         print(f"   Symbol Filter: {symbol.upper()}")
     print("   Press Ctrl+C to stop.")
@@ -268,6 +357,7 @@ def run_poller(
                         item,
                         analyzer=analyzer,
                         storage=storage,
+                        executor=executor,
                         debug=debug,
                         max_age_seconds=max_age_seconds,
                         enable_ai=enable_ai,

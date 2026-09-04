@@ -45,6 +45,7 @@ class StrategyEngine:
             access_token=settings.dhan_access_token,
             dry_run=dry_run,
             capital_per_trade=settings.capital_per_trade,
+            max_shares_per_trade=settings.max_shares_per_trade,
         )
         self.fno_only = fno_only
         self.filter_noise = filter_noise
@@ -52,7 +53,7 @@ class StrategyEngine:
 
     def process_announcement(self, item: Announcement) -> Optional[TradeSignal]:
         """Process a single announcement through deduplication, AI analysis, and execution."""
-        # 1. Deduplication check via persistent SQLite storage
+        # 1. Deduplication check via persistent storage
         if self.storage.is_processed(item.seq_id):
             return None
 
@@ -77,28 +78,31 @@ class StrategyEngine:
                 audit.material_impact,
             )
 
-            # 3. High-Conviction Filter
-            if audit.material_impact and audit.confidence >= settings.confidence_threshold:
-                if audit.sentiment in ("BULLISH", "BEARISH"):
-                    action = "BUY" if audit.sentiment == "BULLISH" else "SELL"
-                    product = RiskManager.get_safe_product_type(action)
+            # 3. Phase 3 High-Conviction Bullish Filter (>=70% confidence, material impact)
+            if (
+                audit.material_impact
+                and audit.confidence >= settings.confidence_threshold
+                and audit.sentiment.upper() in ("BULLISH", "BUY")
+            ):
+                action = "BUY"
+                product = RiskManager.get_safe_product_type(action)
 
-                    sec_id = resolve_security_id(item.symbol) or "0"
-                    signal = TradeSignal(
-                        symbol=item.symbol,
-                        security_id=sec_id,
-                        action=action,
-                        product_type=product,
-                        confidence=audit.confidence,
-                        catalyst_type=audit.catalyst_type,
-                        summary=audit.summary,
-                        exchange_time=item.an_dt,
-                    )
+                sec_id = resolve_security_id(item.symbol) or "0"
+                signal = TradeSignal(
+                    symbol=item.symbol,
+                    security_id=sec_id,
+                    action=action,
+                    product_type=product,
+                    confidence=audit.confidence,
+                    catalyst_type=audit.catalyst_type,
+                    summary=audit.summary,
+                    exchange_time=item.an_dt,
+                )
 
-                    # 4. Execution
-                    result = self.executor.execute_order(signal)
-                    self.storage.save_trade(result)
-                    return signal
+                # 4. Super Order Execution (Max 10 shares cap)
+                result = self.executor.execute_order(signal)
+                self.storage.save_trade(result)
+                return signal
 
         return None
 

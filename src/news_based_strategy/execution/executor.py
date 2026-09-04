@@ -18,6 +18,7 @@ class DhanExecutor:
         access_token: str = "",
         dry_run: bool = True,
         capital_per_trade: float = 20000.0,
+        max_shares_per_trade: Optional[int] = None,
         max_news_age_seconds: int = 180,
         super_order_enabled: Optional[bool] = None,
         target_profit_pct: Optional[float] = None,
@@ -33,6 +34,9 @@ class DhanExecutor:
 
         from news_based_strategy.config import settings
 
+        self.max_shares_per_trade = (
+            settings.max_shares_per_trade if max_shares_per_trade is None else max_shares_per_trade
+        )
         self.super_order_enabled = (
             settings.super_order_enabled if super_order_enabled is None else super_order_enabled
         )
@@ -115,7 +119,9 @@ class DhanExecutor:
                     dry_run=False,
                 )
 
-        quantity = RiskManager.calculate_position_size(self.capital_per_trade, ltp)
+        quantity = RiskManager.calculate_position_size(
+            self.capital_per_trade, ltp, max_quantity=self.max_shares_per_trade
+        )
 
         # Compute Super Order levels
         entry_price, target_price, sl_price = RiskManager.calculate_super_order_levels(

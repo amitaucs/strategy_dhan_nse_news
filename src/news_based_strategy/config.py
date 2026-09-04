@@ -62,15 +62,15 @@ class Settings:
 
     # AI Reasoning
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
-    confidence_threshold: int = int(os.getenv("CONFIDENCE_THRESHOLD", "80"))
+    confidence_threshold: int = int(os.getenv("CONFIDENCE_THRESHOLD", "70"))
 
     # Execution & Risk Parameters
     dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
     dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "20000.0"))
+    max_shares_per_trade: int = int(os.getenv("MAX_SHARES_PER_TRADE", "10"))
 
     # Super Order (Bracket Order with TP, SL, Trailing Jump)
     super_order_enabled: bool = os.getenv("SUPER_ORDER_ENABLED", "true").lower() in ("true", "1", "yes")
