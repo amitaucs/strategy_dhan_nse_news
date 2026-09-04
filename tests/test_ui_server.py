@@ -148,8 +148,57 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(status_res.json()["client_id"], "1100223344")
         self.assertIn("eyJhbGci...", status_res.json()["masked_token"])
 
+    @patch("news_based_strategy.ui.server.requests.post")
+    def test_dhan_oauth_endpoints(self, mock_post):
+        """Test OAuth login initiation and callback consent exchange."""
+        # 1. Missing credentials returns 400
+        res_fail = self.client.get("/api/auth/dhan/login")
+        self.assertEqual(res_fail.status_code, 400)
+        self.assertFalse(res_fail.json()["success"])
+
+        # 2. Save OAuth Keys
+        save_res = self.client.post(
+            "/api/settings/oauth-keys",
+            json={
+                "client_id": "1000998877",
+                "app_id": "app_sample_123",
+                "app_secret": "secret_sample_456",
+            },
+        )
+        self.assertEqual(save_res.status_code, 200)
+        self.assertTrue(save_res.json()["has_app_keys"])
+
+        # 3. Initiate Login (Mock Dhan generate-consent)
+        mock_resp_gen = MagicMock()
+        mock_resp_gen.json.return_value = {"consentAppId": "CONSENT_APP_ID_9999"}
+        mock_post.return_value = mock_resp_gen
+
+        res_login = self.client.get("/api/auth/dhan/login")
+        self.assertEqual(res_login.status_code, 200)
+        login_data = res_login.json()
+        self.assertTrue(login_data["success"])
+        self.assertIn("https://auth.dhan.co/app/login?consentAppId=CONSENT_APP_ID_9999", login_data["login_url"])
+
+        # 4. Callback (Mock Dhan consume-consent)
+        mock_resp_consume = MagicMock()
+        mock_resp_consume.json.return_value = {
+            "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dhan_oauth_live_session_token.sig"
+        }
+        mock_post.return_value = mock_resp_consume
+
+        res_cb = self.client.get("/api/auth/dhan/callback?tokenId=DHAN_TOKEN_ID_12345", follow_redirects=False)
+        self.assertEqual(res_cb.status_code, 307)
+        self.assertIn("/?auth_success=true", res_cb.headers["location"])
+
+        # 5. Verify executor in-memory token updated
+        token_status = self.client.get("/api/settings/token").json()
+        self.assertTrue(token_status["is_configured"])
+        self.assertIn("eyJhbGci...", token_status["masked_token"])
+        self.assertEqual(token_status["client_id"], "1000998877")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

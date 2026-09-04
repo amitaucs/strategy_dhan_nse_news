@@ -68,6 +68,10 @@ class Settings:
     # Execution & Risk Parameters
     dhan_client_id: str = os.getenv("DHAN_CLIENT_ID", "")
     dhan_access_token: str = os.getenv("DHAN_ACCESS_TOKEN", "")
+    dhan_app_id: str = os.getenv("DHAN_APP_ID", "")
+    dhan_app_secret: str = os.getenv("DHAN_APP_SECRET", "")
+    dhan_auth_url: str = os.getenv("DHAN_AUTH_URL", "https://auth.dhan.co")
+    dhan_redirect_url: str = os.getenv("DHAN_REDIRECT_URL", "http://localhost:8000/api/auth/dhan/callback")
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     auto_order: bool = os.getenv("AUTO_ORDER", "true").lower() in ("true", "1", "yes")
     capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "20000.0"))

@@ -6,7 +6,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+import requests
 from pydantic import BaseModel
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
@@ -60,6 +61,64 @@ class UpdateTokenRequest(BaseModel):
     dry_run: Optional[bool] = None
 
 
+class SaveApiKeysRequest(BaseModel):
+    client_id: Optional[str] = None
+    app_id: str
+    app_secret: str
+
+
+def generate_dhan_consent_url(
+    client_id: str,
+    app_id: str,
+    app_secret: str,
+    auth_url: str = "https://auth.dhan.co",
+) -> tuple[bool, str]:
+    """Call Dhan /app/generate-consent to obtain the consentAppId and login redirect URL."""
+    try:
+        url = f"{auth_url.rstrip('/')}/app/generate-consent?client_id={client_id}"
+        headers = {
+            "app_id": app_id,
+            "app_secret": app_secret,
+            "Accept": "application/json",
+        }
+        resp = requests.post(url, headers=headers, timeout=10)
+        data = resp.json()
+        consent_id = data.get("consentAppId") or (data.get("data", {}) if isinstance(data.get("data"), dict) else {}).get("consentAppId")
+        if consent_id:
+            login_url = f"{auth_url.rstrip('/')}/app/login?consentAppId={consent_id}"
+            return True, login_url
+        error_msg = data.get("remarks") or data.get("message") or str(data)
+        return False, f"Dhan Consent generation failed: {error_msg}"
+    except Exception as e:
+        return False, f"Dhan Auth connection error: {str(e)}"
+
+
+def consume_dhan_consent(
+    token_id: str,
+    app_id: str,
+    app_secret: str,
+    auth_url: str = "https://auth.dhan.co",
+) -> tuple[bool, str, dict]:
+    """Exchange tokenId for accessToken via Dhan /app/consume-consent."""
+    try:
+        url = f"{auth_url.rstrip('/')}/app/consume-consent"
+        headers = {
+            "app_id": app_id,
+            "app_secret": app_secret,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        resp = requests.post(url, headers=headers, json={"tokenId": token_id}, timeout=10)
+        data = resp.json()
+        access_token = data.get("accessToken") or (data.get("data", {}) if isinstance(data.get("data"), dict) else {}).get("accessToken")
+        if access_token:
+            return True, access_token, data
+        error_msg = data.get("remarks") or data.get("message") or str(data)
+        return False, f"Dhan token exchange failed: {error_msg}", data
+    except Exception as e:
+        return False, f"Dhan Auth connection error: {str(e)}", {}
+
+
 class DashboardState:
     """In-memory state manager for live feed and SSE broadcast."""
 
@@ -82,6 +141,10 @@ class DashboardState:
             trailing_jump_points=settings.trailing_jump_points,
             slippage_buffer_pct=settings.slippage_buffer_pct,
         )
+        self.app_id = settings.dhan_app_id
+        self.app_secret = settings.dhan_app_secret
+        self.auth_url = settings.dhan_auth_url
+        self.redirect_url = settings.dhan_redirect_url
         self.feed_items: List[Dict[str, Any]] = []
         self.subscribers: List[asyncio.Queue] = []
         self.auto_order = settings.auto_order
@@ -404,9 +467,9 @@ def get_dashboard_html() -> str:
     </div>
   </main>
 
-  <!-- DHAN TOKEN UPDATE MODAL -->
+  <!-- DHAN TOKEN UPDATE & OAUTH MODAL -->
   <div id="token-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
-    <div class="bg-[#111827] border border-gray-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300" id="token-modal-card">
+    <div class="bg-[#111827] border border-gray-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar" id="token-modal-card">
       
       <!-- Modal Header -->
       <div class="flex items-center justify-between border-b border-gray-800 pb-3">
@@ -415,33 +478,69 @@ def get_dashboard_html() -> str:
             🔑
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white uppercase tracking-wide">Update Dhan Broker Token</h3>
-            <p class="text-[11px] text-gray-400">Instantly refresh your daily access token for live execution</p>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wide">Dhan Authentication & Token</h3>
+            <p class="text-[11px] text-gray-400">1-Click OAuth Login or Manual Token Refresh</p>
           </div>
         </div>
         <button onclick="closeTokenModal()" class="text-gray-400 hover:text-white text-lg font-bold p-1 rounded transition">✕</button>
       </div>
 
-      <!-- Quick Guidance -->
-      <div class="bg-indigo-950/40 border border-indigo-500/20 rounded-lg p-3 text-[11px] text-indigo-200 flex items-start gap-2.5">
-        <span class="text-base">💡</span>
-        <div>
-          <span>Generate from </span>
-          <a href="https://web.dhan.co" target="_blank" class="text-emerald-400 underline font-semibold hover:text-emerald-300">web.dhan.co</a>
-          <span> &rarr; Profile &rarr; DhanHQ API Access. Token takes effect immediately without server restart.</span>
+      <!-- Option 1: 1-Click Login with Dhan (OAuth) -->
+      <div class="bg-gradient-to-r from-emerald-950/40 via-teal-950/30 to-slate-900 border border-emerald-500/30 rounded-xl p-4 space-y-3 shadow-inner">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-base">⚡</span>
+            <h4 class="text-xs font-bold text-emerald-300 uppercase tracking-wide">1-Click Login with Dhan (Recommended)</h4>
+          </div>
+          <span class="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-mono">OAuth 2.0</span>
+        </div>
+        <p class="text-[11px] text-gray-300 leading-relaxed">
+          Redirects to Dhan to log in with Mobile + OTP/TOTP. Token is automatically fetched & loaded with zero copy-pasting.
+        </p>
+
+        <div class="pt-1 flex items-center gap-2">
+          <button onclick="launchDhanOAuth()" id="btn-oauth-login" class="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center justify-center gap-2 transition active:scale-95">
+            <span>🚀 Authenticate on Dhan</span>
+          </button>
+          <button onclick="toggleOAuthSettings()" class="px-2.5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs border border-gray-700 transition" title="Configure App ID & Secret">
+            ⚙️ Keys
+          </button>
+        </div>
+
+        <!-- Collapsible OAuth Keys Config -->
+        <div id="oauth-keys-drawer" class="hidden pt-3 space-y-2 border-t border-emerald-500/20 text-xs">
+          <div>
+            <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan Client ID</label>
+            <input type="text" id="input-client-id" placeholder="e.g. 100028912" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan App ID (API Key)</label>
+              <input type="text" id="input-app-id" placeholder="App ID" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan App Secret</label>
+              <input type="password" id="input-app-secret" placeholder="App Secret" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
+            </div>
+          </div>
+          <div class="flex justify-end pt-1">
+            <button onclick="saveOAuthKeys()" class="text-[11px] bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-3 py-1 rounded transition">Save Keys</button>
+          </div>
         </div>
       </div>
 
-      <!-- Input Fields -->
-      <div class="space-y-3.5">
-        <div>
-          <label class="block text-xs font-semibold text-gray-300 mb-1">Dhan Client ID</label>
-          <input type="text" id="input-client-id" placeholder="e.g. 1000000001" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500 font-mono">
-        </div>
+      <!-- DIVIDER -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1 h-px bg-gray-800"></div>
+        <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">OR MANUAL JWT TOKEN</span>
+        <div class="flex-1 h-px bg-gray-800"></div>
+      </div>
 
+      <!-- Option 2: Manual Token Paste -->
+      <div class="space-y-3">
         <div>
           <div class="flex items-center justify-between mb-1">
-            <label class="block text-xs font-semibold text-gray-300">DhanHQ Access Token (JWT)</label>
+            <label class="block text-xs font-semibold text-gray-300">Paste DhanHQ Access Token (JWT)</label>
             <span id="current-token-badge" class="text-[10px] font-mono text-gray-400">Current: Loading...</span>
           </div>
           <div class="relative">
@@ -471,10 +570,10 @@ def get_dashboard_html() -> str:
       <!-- Modal Actions -->
       <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-800">
         <button onclick="closeTokenModal()" class="px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white rounded-lg transition">
-          Cancel
+          Close
         </button>
         <button onclick="saveTokenModal()" id="btn-save-token" class="bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-lg shadow-amber-600/20 flex items-center gap-2">
-          <span>💾 Validate & Save Token</span>
+          <span>💾 Save & Apply Token</span>
         </button>
       </div>
 
@@ -506,6 +605,89 @@ def get_dashboard_html() -> str:
       }, 3500);
     }
 
+    function toggleOAuthSettings() {
+      const drawer = document.getElementById('oauth-keys-drawer');
+      drawer.classList.toggle('hidden');
+    }
+
+    async function saveOAuthKeys() {
+      const clientId = (document.getElementById('input-client-id').value || '').trim();
+      const appId = (document.getElementById('input-app-id').value || '').trim();
+      const appSecret = (document.getElementById('input-app-secret').value || '').trim();
+      const feedback = document.getElementById('modal-feedback');
+
+      if (!appId || !appSecret) {
+        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+        feedback.textContent = '⚠️ Please enter both Dhan App ID and App Secret.';
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/settings/oauth-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, app_id: appId, app_secret: appSecret })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          feedback.className = 'block bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs p-2.5 rounded-lg';
+          feedback.textContent = '✅ App ID & Secret saved. Ready for 1-Click Login.';
+          showToast('OAuth App credentials saved!', '🔑');
+          document.getElementById('oauth-keys-drawer').classList.add('hidden');
+        } else {
+          feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+          feedback.textContent = `❌ ${data.message || 'Failed saving keys'}`;
+        }
+      } catch (err) {
+        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+        feedback.textContent = '❌ Request failed to connect.';
+      }
+    }
+
+    async function launchDhanOAuth() {
+      const clientId = (document.getElementById('input-client-id').value || '').trim();
+      const appId = (document.getElementById('input-app-id').value || '').trim();
+      const appSecret = (document.getElementById('input-app-secret').value || '').trim();
+      const feedback = document.getElementById('modal-feedback');
+      const btn = document.getElementById('btn-oauth-login');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50');
+      btn.innerHTML = '<span>⏳ Connecting to Dhan...</span>';
+
+      try {
+        let qs = '';
+        if (clientId || appId || appSecret) {
+          const params = new URLSearchParams();
+          if (clientId) params.append('client_id', clientId);
+          if (appId) params.append('app_id', appId);
+          if (appSecret) params.append('app_secret', appSecret);
+          qs = '?' + params.toString();
+        }
+
+        const res = await fetch(`/api/auth/dhan/login${qs}`);
+        const data = await res.json();
+
+        if (res.ok && data.success && data.login_url) {
+          showToast('Redirecting to official Dhan login portal...', '⚡');
+          setTimeout(() => {
+            window.location.href = data.login_url;
+          }, 400);
+        } else {
+          feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+          feedback.textContent = `❌ ${data.message || 'Failed to initiate login. Please check App ID & Secret.'}`;
+          document.getElementById('oauth-keys-drawer').classList.remove('hidden');
+        }
+      } catch (err) {
+        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
+        feedback.textContent = '❌ Failed connecting to Dhan login service.';
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50');
+        btn.innerHTML = '<span>🚀 Authenticate on Dhan</span>';
+      }
+    }
+
     async function fetchTokenStatus() {
       try {
         const res = await fetch('/api/settings/token');
@@ -529,6 +711,11 @@ def get_dashboard_html() -> str:
           if (document.getElementById('input-client-id') && data.client_id) {
             if (!document.getElementById('input-client-id').value) {
               document.getElementById('input-client-id').value = data.client_id;
+            }
+          }
+          if (document.getElementById('input-app-id') && data.app_id) {
+            if (!document.getElementById('input-app-id').value) {
+              document.getElementById('input-app-id').value = data.app_id;
             }
           }
           if (document.getElementById('modal-dry-run-chk')) {
@@ -1002,6 +1189,16 @@ def get_dashboard_html() -> str:
     }
 
     window.onload = function() {
+      // Check OAuth redirect return query params
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('auth_success') === 'true') {
+        showToast('🎉 Dhan Login Successful! Active trading session connected.', '⚡');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } else if (urlParams.get('auth_error')) {
+        showToast(`Dhan Login Failed: ${urlParams.get('auth_error')}`, '❌');
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
       fetchStatus();
       fetchTokenStatus();
       fetchFeed();
@@ -1049,6 +1246,8 @@ def create_app() -> FastAPI:
             "masked_token": state.executor.get_masked_token(),
             "client_id": state.executor.client_id,
             "dry_run": state.executor.dry_run,
+            "has_app_keys": bool(state.app_id and state.app_secret),
+            "app_id": state.app_id,
         }
 
     @app.post("/api/settings/token")
@@ -1071,6 +1270,94 @@ def create_app() -> FastAPI:
             "masked_token": state.executor.get_masked_token(),
             "client_id": state.executor.client_id,
             "dry_run": state.executor.dry_run,
+        }
+
+    @app.get("/api/auth/dhan/login")
+    async def dhan_oauth_login(
+        client_id: Optional[str] = None,
+        app_id: Optional[str] = None,
+        app_secret: Optional[str] = None,
+    ):
+        eff_client_id = (client_id or state.executor.client_id or settings.dhan_client_id or "").strip()
+        eff_app_id = (app_id or state.app_id or settings.dhan_app_id or "").strip()
+        eff_app_secret = (app_secret or state.app_secret or settings.dhan_app_secret or "").strip()
+
+        if not (eff_client_id and eff_app_id and eff_app_secret):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Missing Dhan credentials. Please configure Client ID, App ID, and App Secret in the modal or .env.",
+                },
+            )
+
+        # Update in-memory state
+        state.app_id = eff_app_id
+        state.app_secret = eff_app_secret
+        if eff_client_id:
+            state.executor.client_id = eff_client_id
+
+        success, result = generate_dhan_consent_url(
+            client_id=eff_client_id,
+            app_id=eff_app_id,
+            app_secret=eff_app_secret,
+            auth_url=state.auth_url,
+        )
+        if not success:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": result},
+            )
+
+        return JSONResponse(content={"success": True, "login_url": result})
+
+    @app.get("/api/auth/dhan/callback")
+    async def dhan_oauth_callback(
+        tokenId: Optional[str] = None,
+        error: Optional[str] = None,
+        error_description: Optional[str] = None,
+    ):
+        if error or not tokenId:
+            err_text = error_description or error or "Authentication cancelled or no tokenId received from Dhan"
+            return RedirectResponse(url=f"/?auth_error={err_text}")
+
+        eff_app_id = state.app_id or settings.dhan_app_id
+        eff_app_secret = state.app_secret or settings.dhan_app_secret
+
+        if not (eff_app_id and eff_app_secret):
+            return RedirectResponse(url="/?auth_error=Dhan+App+ID+and+Secret+not+configured")
+
+        success, token_or_err, _ = consume_dhan_consent(
+            token_id=tokenId,
+            app_id=eff_app_id,
+            app_secret=eff_app_secret,
+            auth_url=state.auth_url,
+        )
+
+        if not success:
+            return RedirectResponse(url=f"/?auth_error={token_or_err}")
+
+        # Update live executor credentials
+        state.executor.update_credentials(access_token=token_or_err, dry_run=False)
+        await state.broadcast_event("TOKEN_UPDATED", {
+            "masked_token": state.executor.get_masked_token(),
+            "dry_run": False,
+            "valid": True,
+        })
+
+        return RedirectResponse(url="/?auth_success=true")
+
+    @app.post("/api/settings/oauth-keys")
+    async def save_oauth_keys(req: SaveApiKeysRequest):
+        if req.client_id:
+            state.executor.client_id = req.client_id.strip()
+        state.app_id = req.app_id.strip()
+        state.app_secret = req.app_secret.strip()
+        return {
+            "success": True,
+            "message": "Dhan App ID and Secret saved for 1-Click Login",
+            "has_app_keys": bool(state.app_id and state.app_secret),
+            "client_id": state.executor.client_id,
         }
 
     @app.get("/api/feed")
