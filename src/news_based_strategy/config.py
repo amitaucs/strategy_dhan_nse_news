@@ -59,6 +59,7 @@ class Settings:
     fno_only: bool = os.getenv("FNO_ONLY", "true").lower() in ("true", "1", "yes")
     filter_noise: bool = os.getenv("FILTER_NOISE", "true").lower() in ("true", "1", "yes")
     extract_pdf: bool = os.getenv("EXTRACT_PDF", "true").lower() in ("true", "1", "yes")
+    is_simulate_feed: bool = os.getenv("IS_SIMULATE_FEED", "false").lower() in ("true", "1", "yes")
 
     # AI Reasoning
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")

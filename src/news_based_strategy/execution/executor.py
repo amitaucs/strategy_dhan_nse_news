@@ -53,6 +53,18 @@ def check_token_expiry(token: str) -> Tuple[bool, str, Optional[int]]:
         return False, f"Valid until {exp_str} ({time_left_str})", exp
 
 
+def mask_client_id(client_id: Optional[str]) -> Optional[str]:
+    """
+    Mask a client ID showing only the last 4 digits (e.g. ••••2040).
+    """
+    if not client_id:
+        return None
+    cid = str(client_id).strip()
+    if len(cid) <= 4:
+        return cid
+    return f"••••{cid[-4:]}"
+
+
 class DhanExecutor:
     """Executes trade orders on DhanHQ or in simulated dry-run mode."""
 
@@ -135,12 +147,19 @@ class DhanExecutor:
             return
 
         try:
-            from dhanhq import dhanhq
-
-            self.dhan = dhanhq(self.client_id, self.access_token)
+            try:
+                from dhanhq import DhanContext, dhanhq
+                ctx = DhanContext(self.client_id, self.access_token)
+                self.dhan = dhanhq(ctx)
+            except (TypeError, ImportError, AttributeError):
+                from dhanhq import dhanhq
+                self.dhan = dhanhq(self.client_id, self.access_token)
             logger.info("DhanHQ client successfully initialized for live execution.")
         except ImportError:
             logger.warning("dhanhq package not installed. Live orders will fail until installed.")
+            self.dhan = None
+        except Exception as e:
+            logger.warning("Could not initialize DhanHQ client: %s", e)
             self.dhan = None
 
     def get_masked_token(self) -> str:
@@ -150,6 +169,12 @@ class DhanExecutor:
         if len(self.access_token) <= 12:
             return f"{self.access_token[:3]}...{self.access_token[-2:]}"
         return f"{self.access_token[:8]}...{self.access_token[-6:]}"
+
+    def get_masked_client_id(self) -> str:
+        """Return masked client ID showing last 4 digits (e.g. ••••2040)."""
+        if not self.client_id:
+            return ""
+        return mask_client_id(self.client_id) or ""
 
     def update_credentials(
         self,
@@ -186,6 +211,7 @@ class DhanExecutor:
                 "is_expired": False,
                 "message": "Access token is empty",
                 "client_id": self.client_id,
+                "masked_client_id": self.get_masked_client_id(),
                 "dry_run": self.dry_run,
                 "masked_token": "NOT_CONFIGURED",
                 "expiry_info": self.get_token_expiry_info(),
@@ -198,6 +224,7 @@ class DhanExecutor:
                 "is_expired": True,
                 "message": f"Dhan Access Token is EXPIRED ({exp_msg})",
                 "client_id": self.client_id,
+                "masked_client_id": self.get_masked_client_id(),
                 "dry_run": self.dry_run,
                 "masked_token": self.get_masked_token(),
                 "expiry_ts": exp_ts,
@@ -210,6 +237,7 @@ class DhanExecutor:
                 "is_expired": False,
                 "message": f"Token updated successfully ({exp_msg} | Running in VIRTUAL mode)",
                 "client_id": self.client_id,
+                "masked_client_id": self.get_masked_client_id(),
                 "dry_run": True,
                 "masked_token": self.get_masked_token(),
                 "expiry_ts": exp_ts,
@@ -226,6 +254,7 @@ class DhanExecutor:
                         "is_expired": False,
                         "message": f"DhanHQ connected successfully (Available Margin: ₹{avail} | {exp_msg})",
                         "client_id": self.client_id,
+                        "masked_client_id": self.get_masked_client_id(),
                         "dry_run": False,
                         "masked_token": self.get_masked_token(),
                         "fund_data": funds.get("data"),
@@ -238,6 +267,7 @@ class DhanExecutor:
                         "is_expired": False,
                         "message": f"Dhan API rejected token: {err_msg}",
                         "client_id": self.client_id,
+                        "masked_client_id": self.get_masked_client_id(),
                         "dry_run": False,
                         "masked_token": self.get_masked_token(),
                         "expiry_info": self.get_token_expiry_info(),
@@ -249,6 +279,7 @@ class DhanExecutor:
                     "is_expired": False,
                     "message": f"Dhan API error: {str(e)}",
                     "client_id": self.client_id,
+                    "masked_client_id": self.get_masked_client_id(),
                     "dry_run": False,
                     "masked_token": self.get_masked_token(),
                     "expiry_info": self.get_token_expiry_info(),
@@ -259,6 +290,7 @@ class DhanExecutor:
             "is_expired": False,
             "message": f"Token format accepted ({exp_msg})",
             "client_id": self.client_id,
+            "masked_client_id": self.get_masked_client_id(),
             "dry_run": self.dry_run,
             "masked_token": self.get_masked_token(),
             "expiry_info": self.get_token_expiry_info(),

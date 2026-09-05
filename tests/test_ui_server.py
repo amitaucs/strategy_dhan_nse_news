@@ -1,7 +1,9 @@
+import dataclasses
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
+from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, FilingAudit
 from news_based_strategy.storage.repository import StrategyStorage
 from news_based_strategy.ui.server import create_app
@@ -13,33 +15,56 @@ class TestUIServer(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.test_db = f"{self.temp_dir.name}/test_gui.db"
+        self.storage = StrategyStorage(db_path=self.test_db)
+        self.session_token = self.storage.create_session("amit")
         self.storage_patcher = patch(
             "news_based_strategy.ui.server.StrategyStorage",
             lambda *args, **kwargs: StrategyStorage(db_path=self.test_db),
         )
         self.storage_patcher.start()
         self.app = create_app()
-        self.client = TestClient(self.app)
+        self.client = TestClient(self.app, cookies={"app_session_token": self.session_token})
 
     def tearDown(self):
         self.storage_patcher.stop()
+        self.storage.close()
         self.temp_dir.cleanup()
 
     def test_get_index_html(self):
-        """Root GET request should serve the full HTML dashboard."""
-        res = self.client.get("/")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("NSE Catalyst Trading Terminal", res.text)
-        self.assertIn("AUTO ORDER", res.text)
-        self.assertIn("Simulate Feed", res.text)
+        """Root GET request with active session should serve dashboard with market status indicator and filter dropdown."""
+        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
+            res = self.client.get("/")
+            self.assertEqual(res.status_code, 200)
+            self.assertIn("NSE Catalyst Trading Terminal", res.text)
+            self.assertIn("market-status-badge", res.text)
+            self.assertIn("feed-filter-select", res.text)
+            self.assertIn("All Passed", res.text)
+            self.assertIn("AUTO ORDER", res.text)
+            self.assertIn("Show All Signals", res.text)
+            self.assertIn("Simulate Feed", res.text)
+            self.assertIn("Test / Simulate Sample Catalyst Feed", res.text)
+
+        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=False)):
+            res_no_sim = self.client.get("/")
+            self.assertEqual(res_no_sim.status_code, 200)
+            self.assertIn("NSE Catalyst Trading Terminal", res_no_sim.text)
+            self.assertIn("market-status-badge", res_no_sim.text)
+            self.assertIn("feed-filter-select", res_no_sim.text)
+            self.assertIn("All Passed", res_no_sim.text)
+            self.assertIn("AUTO ORDER", res_no_sim.text)
+            self.assertIn("Show All Signals", res_no_sim.text)
+            self.assertNotIn("Simulate Feed", res_no_sim.text)
+            self.assertNotIn("Test / Simulate Sample Catalyst Feed", res_no_sim.text)
 
     def test_get_status_api(self):
-        """API status endpoint returns system state."""
+        """API status endpoint returns system state including market open/closed status."""
         res = self.client.get("/api/status")
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertIn("dry_run", data)
         self.assertIn("auto_order", data)
+        self.assertIn("is_market_open", data)
+        self.assertIn("market_status_label", data)
         self.assertIn("max_shares_per_trade", data)
         self.assertEqual(data["max_orders_per_day"], 3)
         self.assertIn("today_orders_count", data)
@@ -76,6 +101,30 @@ class TestUIServer(unittest.TestCase):
             self.assertTrue(self.app.state.dashboard.executor.dry_run)
             self.assertEqual(self.app.state.dashboard.storage.get_setting("dry_run"), "true")
 
+    def test_load_feed_history_api(self):
+        """Load history endpoint hydrates past audit records into feed_items on demand."""
+        self.storage.save_audit(
+            seq_id="TEST_HIST_001",
+            symbol="BEL",
+            audit=FilingAudit(
+                sentiment="BULLISH",
+                confidence=92,
+                catalyst_type="ORDER_WIN",
+                material_impact=True,
+                summary="Past contract win",
+            ),
+        )
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 0)
+
+        res = self.client.post("/api/feed/load-history")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["success"])
+        self.assertEqual(res.json()["count"], 1)
+
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 1)
+        self.assertEqual(self.app.state.dashboard.feed_items[0]["symbol"], "BEL")
+        self.assertEqual(self.app.state.dashboard.feed_items[0]["order"]["status"], "RECORDED")
+
     def test_place_order_api(self):
         """Place order endpoint creates trade execution record and returns order details."""
         res = self.client.post(
@@ -98,8 +147,39 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(data["quantity"], 10)
         self.assertIsNotNone(data["order_id"])
 
+    def test_place_order_api_stale_rejected(self):
+        """Place order endpoint rejects stale announcements older than 180s."""
+        self.app.state.dashboard.feed_items.append({
+            "seq_id": "TEST_STALE_001",
+            "symbol": "BEL",
+            "an_dt": "01-Jan-2020 10:00:00",
+            "order": {"placed": False, "status": "PENDING_APPROVAL"},
+        })
+        res = self.client.post(
+            "/api/orders/place",
+            json={
+                "seq_id": "TEST_STALE_001",
+                "symbol": "BEL",
+                "action": "BUY",
+                "product_type": "INTRADAY",
+                "confidence": 95,
+                "catalyst_type": "ORDER_WIN",
+                "summary": "Stale defense contract win",
+                "ltp": 300.0,
+            },
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Catalyst too stale", res.json()["detail"])
+
+    def test_simulate_api_forbidden_when_disabled(self):
+        """Simulation endpoint returns 403 Forbidden when IS_SIMULATE_FEED is false."""
+        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=False)):
+            res = self.client.post("/api/simulate")
+            self.assertEqual(res.status_code, 403)
+            self.assertIn("Simulated feed is disabled", res.json()["detail"])
+
     def test_simulate_api_with_mocked_gemini(self):
-        """Simulation endpoint runs full pipeline, filtering noise and returning Bullish/Bearish items."""
+        """Simulation endpoint runs full pipeline when enabled, filtering noise and returning Bullish/Bearish items."""
         mock_analyzer = self.app.state.dashboard.analyzer
         mock_analyzer.audit = MagicMock()
 
@@ -125,29 +205,30 @@ class TestUIServer(unittest.TestCase):
 
         mock_analyzer.audit.side_effect = side_effect
 
-        res = self.client.post("/api/simulate")
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data["status"], "success")
-        self.assertEqual(data["processed_count"], 2)  # BEL and BANKINDIA (SBC & TATASTEEL filtered)
+        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
+            res = self.client.post("/api/simulate")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["processed_count"], 2)  # BEL and BANKINDIA (SBC & TATASTEEL filtered)
 
-        # Check feed items
-        symbols = [item["symbol"] for item in data["items"]]
-        self.assertIn("BEL", symbols)
-        self.assertIn("BANKINDIA", symbols)
-        self.assertNotIn("SBC", symbols)  # Non-F&O filtered
-        self.assertNotIn("TATASTEEL", symbols)  # Noise filtered
+            # Check feed items
+            symbols = [item["symbol"] for item in data["items"]]
+            self.assertIn("BEL", symbols)
+            self.assertIn("BANKINDIA", symbols)
+            self.assertNotIn("SBC", symbols)  # Non-F&O filtered
+            self.assertNotIn("TATASTEEL", symbols)  # Noise filtered
 
-        # Check order status on BEL
-        bel_item = next(item for item in data["items"] if item["symbol"] == "BEL")
-        self.assertEqual(bel_item["sentiment"], "BULLISH")
-        self.assertEqual(bel_item["order"]["quantity"], 10)
-        self.assertTrue(bel_item["order"]["placed"])
+            # Check order status on BEL
+            bel_item = next(item for item in data["items"] if item["symbol"] == "BEL")
+            self.assertEqual(bel_item["sentiment"], "BULLISH")
+            self.assertEqual(bel_item["order"]["quantity"], 10)
+            self.assertTrue(bel_item["order"]["placed"])
 
-        # Check order status on BANKINDIA
-        bi_item = next(item for item in data["items"] if item["symbol"] == "BANKINDIA")
-        self.assertEqual(bi_item["sentiment"], "BEARISH")
-        self.assertFalse(bi_item["order"]["placed"])
+            # Check order status on BANKINDIA
+            bi_item = next(item for item in data["items"] if item["symbol"] == "BANKINDIA")
+            self.assertEqual(bi_item["sentiment"], "BEARISH")
+            self.assertFalse(bi_item["order"]["placed"])
 
     def test_clear_feed_api_preserves_db_records(self):
         """Verify that clearing the UI feed list clears in-memory items but preserves all DB audit logs and trade executions."""
@@ -382,6 +463,45 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(res_me_post_logout.status_code, 200)
         self.assertFalse(res_me_post_logout.json()["authenticated"])
         self.assertEqual(self.app.state.dashboard.storage.get_setting("dhan_access_token"), "")
+
+    def test_client_id_masking_and_client_name(self):
+        """Verify client ID masking (last 4 digits) and client name in auth/status endpoints."""
+        from news_based_strategy.execution.executor import mask_client_id
+
+        # 1. Direct helper tests
+        self.assertIsNone(mask_client_id(None))
+        self.assertIsNone(mask_client_id(""))
+        self.assertEqual(mask_client_id("2040"), "2040")
+        self.assertEqual(mask_client_id("1104872040"), "••••2040")
+
+        # 2. Configure credentials
+        self.app.state.dashboard.executor.update_credentials(
+            client_id="1104872040",
+            access_token="valid.sample.token",
+            dry_run=True,
+        )
+        self.app.state.dashboard.storage.set_setting("dhan_client_name", "Amit Datta")
+
+        # 3. Check /api/status
+        status_res = self.client.get("/api/status")
+        self.assertEqual(status_res.status_code, 200)
+        sdata = status_res.json()
+        self.assertEqual(sdata["masked_client_id"], "••••2040")
+        self.assertEqual(sdata["client_name"], "Amit Datta")
+
+        # 4. Check /api/settings/token
+        token_res = self.client.get("/api/settings/token")
+        self.assertEqual(token_res.status_code, 200)
+        tdata = token_res.json()
+        self.assertEqual(tdata["masked_client_id"], "••••2040")
+        self.assertEqual(tdata["client_name"], "Amit Datta")
+
+        # 5. Check /api/auth/me
+        me_res = self.client.get("/api/auth/me")
+        self.assertEqual(me_res.status_code, 200)
+        mdata = me_res.json()
+        self.assertEqual(mdata["masked_client_id"], "••••2040")
+        self.assertEqual(mdata["client_name"], "Amit Datta")
 
 
 if __name__ == "__main__":

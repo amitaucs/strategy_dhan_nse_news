@@ -49,6 +49,13 @@ class TestNoiseFilter(unittest.TestCase):
     def test_analyst_schedule_noise(self):
         self.assertTrue(NoiseFilter.is_noise("Schedule of Analyst / Institutional Investor Meeting"))
         self.assertTrue(NoiseFilter.is_noise("Intimation of Investor Meet"))
+        self.assertTrue(
+            NoiseFilter.is_noise(
+                "Analysts/Institutional Investor Meet/Con. Call Updates",
+                "Hindalco Industries Limited has informed the Exchange about Schedule of meet",
+            )
+        )
+        self.assertTrue(NoiseFilter.is_noise("Investor Presentation on Q1 Results"))
 
     def test_material_overrides_not_noise(self):
         # Contract / Order win must NOT be noise

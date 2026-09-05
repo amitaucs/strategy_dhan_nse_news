@@ -132,8 +132,15 @@ def print_announcement(
             else:
                 exec_status_line = f"⏸️ Skipped (Below conviction or confidence threshold < {settings.confidence_threshold}%)"
 
+            actionability_badge = (
+                "🟢 ACTIONABLE (Directional Market Catalyst)"
+                if sentiment_upper in ("BULLISH", "BUY", "BEARISH", "SELL")
+                else "⚪ NON-ACTIONABLE / NEUTRAL (Routine filing — skipped)"
+            )
+
             print(f"\n   ┌─ 🧠 AI Sentiment & Catalyst Verdict ({analyzer.model_name}) ─────")
             print(f"   │ • Sentiment: {sent_badge} (Confidence: {audit.confidence}% | Threshold: >= {settings.confidence_threshold}%)")
+            print(f"   │ • Actionability: {actionability_badge}")
             print(f"   │ • Catalyst Category: {audit.catalyst_type}")
             print(f"   │ • Material Price Impact: {audit.material_impact} (Expected rapid price movement >= 1.5%)")
             print(f"   │ • Conviction Gate: {conviction_badge}")
@@ -143,6 +150,7 @@ def print_announcement(
 
             if storage:
                 storage.save_audit(announcement.seq_id, announcement.symbol, audit)
+                storage.mark_processed(announcement.seq_id, announcement.symbol, announcement.an_dt or "")
 
             # Phase 3: Super Order Execution for High-Conviction Bullish Filings
             if is_conviction and executor:

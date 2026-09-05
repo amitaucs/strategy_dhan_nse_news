@@ -35,10 +35,14 @@ CATEGORIZED_NOISE_PATTERNS: List[tuple[str, List[Pattern]]] = [
     (
         "Analyst Meet / Earnings Call Schedule",
         [
-            re.compile(r"schedule\s+of\s+(analyst|institutional\s+investor|investor\s+meet)", re.IGNORECASE),
-            re.compile(r"intimation\s+of\s+(analyst|investor\s+meet)", re.IGNORECASE),
+            re.compile(r"schedule\s+of\s+(analyst|institutional\s+investor|investor\s+meet|meet)", re.IGNORECASE),
+            re.compile(r"intimation\s+of\s+(analyst|investor\s+meet|schedule\s+of\s+meet)", re.IGNORECASE),
+            re.compile(r"analysts?(\s*/\s*institutional\s+investor)?\s+meet", re.IGNORECASE),
+            re.compile(r"investor\s+meet(\s*/\s*con\.\s*call)?\s+updates", re.IGNORECASE),
+            re.compile(r"con(\.|\s+)?call\s+updates", re.IGNORECASE),
             re.compile(r"audio\s+recording\s+of\s+investor", re.IGNORECASE),
             re.compile(r"transcript\s+of\s+(earnings|conference|analyst)", re.IGNORECASE),
+            re.compile(r"investor\s+(presentation|meet)", re.IGNORECASE),
         ],
     ),
     (
@@ -51,6 +55,42 @@ CATEGORIZED_NOISE_PATTERNS: List[tuple[str, List[Pattern]]] = [
             re.compile(r"shareholders\s+meeting", re.IGNORECASE),
             re.compile(r"intimation\s+of\s+agm", re.IGNORECASE),
             re.compile(r"notice\s+of\s+(the\s+)?agm", re.IGNORECASE),
+            re.compile(r"postal\s+ballot\s+notice", re.IGNORECASE),
+            re.compile(r"e-?voting\s+results", re.IGNORECASE),
+            re.compile(r"scrutinizer('?s)?\s+report", re.IGNORECASE),
+            re.compile(r"regulation\s+44", re.IGNORECASE),
+        ],
+    ),
+    (
+        "Routine Periodic Compliance / Secretarial",
+        [
+            re.compile(r"corporate\s+governance\s+report", re.IGNORECASE),
+            re.compile(r"regulation\s+27\s*\(\s*2\s*\)", re.IGNORECASE),
+            re.compile(r"shareholding\s+pattern", re.IGNORECASE),
+            re.compile(r"regulation\s+31", re.IGNORECASE),
+            re.compile(r"secretarial\s+compliance\s+report", re.IGNORECASE),
+            re.compile(r"regulation\s+24a", re.IGNORECASE),
+            re.compile(r"reconciliation\s+of\s+share\s+capital\s+audit", re.IGNORECASE),
+            re.compile(r"regulation\s+76", re.IGNORECASE),
+            re.compile(r"statement\s+of\s+deviation", re.IGNORECASE),
+            re.compile(r"regulation\s+32", re.IGNORECASE),
+        ],
+    ),
+    (
+        "Board Meeting Schedule (Without Outcome)",
+        [
+            re.compile(r"(prior\s+)?intimation\s+of\s+board\s+meeting", re.IGNORECASE),
+            re.compile(r"reschedul(e|ing)\s+of\s+board\s+meeting", re.IGNORECASE),
+            re.compile(r"postponement\s+of\s+board\s+meeting", re.IGNORECASE),
+            re.compile(r"regulation\s+29", re.IGNORECASE),
+        ],
+    ),
+    (
+        "ESOP / Option Allotment",
+        [
+            re.compile(r"allotment\s+of\s+(equity\s+)?shares\s+under\s+esop", re.IGNORECASE),
+            re.compile(r"grant\s+of\s+(stock\s+)?options\s+under\s+esop", re.IGNORECASE),
+            re.compile(r"esos\s+allotment", re.IGNORECASE),
         ],
     ),
 ]
@@ -66,9 +106,11 @@ HIGH_VALUE_OVERRIDES: List[Pattern] = [
     re.compile(r"\b(awarded|bagged|secured)\s+(order|contract|project)\b", re.IGNORECASE),
     re.compile(r"\b(dividend|bonus|split|buyback)\b", re.IGNORECASE),
     re.compile(r"\b(financial\s+results|q[1-4]\s+results|net\s+profit)\b", re.IGNORECASE),
-    re.compile(r"\b(resignation|removed|suspended)\b", re.IGNORECASE),
-    re.compile(r"\b(acquisition|merger|demerger|takeover|amalgamation)\b", re.IGNORECASE),
+    re.compile(r"\b(outcome\s+of\s+board\s+meeting|board\s+meeting\s+outcome)\b", re.IGNORECASE),
+    re.compile(r"\b(resignation|removed|suspended|appointment\s+of\s+(ceo|cfo|director|md))\b", re.IGNORECASE),
+    re.compile(r"\b(acquisition|merger|demerger|takeover|amalgamation|joint\s+venture)\b", re.IGNORECASE),
     re.compile(r"\b(fda|approval|sanction|penalty|fine|probe|raid|search)\b", re.IGNORECASE),
+    re.compile(r"\b(credit\s+rating\s+(downgrade|upgrade))\b", re.IGNORECASE),
 ]
 
 

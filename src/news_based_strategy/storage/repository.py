@@ -3,16 +3,32 @@
 Supports remote MySQL (MariaDB) with transparent local SQLite fallback.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
 import logging
 import os
 from pathlib import Path
+import secrets
 import sqlite3
-from typing import Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import FilingAudit, TradeResult
 
 logger = logging.getLogger(__name__)
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    """Hash password using PBKDF2-HMAC-SHA256 with random salt."""
+    if not salt:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return key.hex(), salt
+
+
+def verify_password(password: str, salt: str, expected_hash: str) -> bool:
+    """Verify password against stored salt and expected hash using constant-time comparison."""
+    computed_hash, _ = hash_password(password, salt)
+    return secrets.compare_digest(computed_hash, expected_hash)
 
 
 class StrategyStorage:
@@ -52,6 +68,7 @@ class StrategyStorage:
             self._init_sqlite()
 
         self._init_tables()
+        self.seed_default_user()
 
     @property
     def conn(self):
@@ -167,6 +184,29 @@ class StrategyStorage:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS users (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            username VARCHAR(64) UNIQUE NOT NULL,
+                            password_hash VARCHAR(256) NOT NULL,
+                            salt VARCHAR(64) NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS user_sessions (
+                            session_token VARCHAR(128) PRIMARY KEY,
+                            username VARCHAR(64) NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            expires_at TIMESTAMP NOT NULL,
+                            INDEX idx_username (username),
+                            INDEX idx_expires_at (expires_at)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 return
             except Exception as e:
                 logger.warning("Failed creating MySQL tables: %s. Reverting to SQLite.", e)
@@ -221,6 +261,27 @@ class StrategyStorage:
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        salt TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_sessions (
+                        session_token TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TEXT NOT NULL
                     )
                     """
                 )
@@ -323,6 +384,59 @@ class StrategyStorage:
                         audit.summary,
                     ),
                 )
+
+    def get_recent_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieve recent AI audits from the database."""
+        self._ensure_connection()
+        results: List[Dict[str, Any]] = []
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                        FROM audit_logs
+                        ORDER BY id DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                    for row in cursor.fetchall():
+                        results.append({
+                            "seq_id": str(row[0]),
+                            "symbol": str(row[1]),
+                            "sentiment": str(row[2]),
+                            "confidence": int(row[3]),
+                            "catalyst_type": str(row[4]),
+                            "material_impact": bool(row[5]),
+                            "summary": str(row[6]),
+                            "created_at": str(row[7]),
+                        })
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                    FROM audit_logs
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+                for row in cursor.fetchall():
+                    results.append({
+                        "seq_id": str(row[0]),
+                        "symbol": str(row[1]),
+                        "sentiment": str(row[2]),
+                        "confidence": int(row[3]),
+                        "catalyst_type": str(row[4]),
+                        "material_impact": bool(row[5]),
+                        "summary": str(row[6]),
+                        "created_at": str(row[7]),
+                    })
+        except Exception as e:
+            logger.warning("Error fetching recent audits: %s", e)
+        return results
 
     def save_trade(self, result: TradeResult) -> None:
         """Log a trade execution attempt."""
@@ -492,6 +606,171 @@ class StrategyStorage:
                     return cursor.rowcount > 0
         except Exception as e:
             logger.warning("Error deleting setting '%s': %s", key, e)
+    # -------------------------------------------------------------------------
+    # User Authentication & Session Management
+    # -------------------------------------------------------------------------
+
+    def get_user(self, username: str) -> Optional[dict]:
+        """Fetch user record by username."""
+        if not username:
+            return None
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT id, username, password_hash, salt, created_at FROM users WHERE username = %s",
+                        (username.strip(),),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "id": row[0],
+                            "username": str(row[1]),
+                            "password_hash": str(row[2]),
+                            "salt": str(row[3]),
+                            "created_at": str(row[4]),
+                        }
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    "SELECT id, username, password_hash, salt, created_at FROM users WHERE username = ?",
+                    (username.strip(),),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "id": row[0],
+                        "username": str(row[1]),
+                        "password_hash": str(row[2]),
+                        "salt": str(row[3]),
+                        "created_at": str(row[4]),
+                    }
+        except Exception as e:
+            logger.warning("Error fetching user '%s': %s", username, e)
+        return None
+
+    def create_user(self, username: str, password_hash: str, salt: str) -> bool:
+        """Insert or update a user record."""
+        if not username or not password_hash or not salt:
+            return False
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO users (username, password_hash, salt)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), salt = VALUES(salt)
+                        """,
+                        (username.strip(), password_hash, salt),
+                    )
+                    return True
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO users (username, password_hash, salt)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, salt = excluded.salt
+                        """,
+                        (username.strip(), password_hash, salt),
+                    )
+                    return True
+        except Exception as e:
+            logger.warning("Error creating user '%s': %s", username, e)
+        return False
+
+    def seed_default_user(self, username: str = "amit", password: str = "Kls@1982") -> None:
+        """Seed default user if not already present in the database."""
+        try:
+            existing = self.get_user(username)
+            if not existing:
+                pwd_hash, salt = hash_password(password)
+                self.create_user(username, pwd_hash, salt)
+                logger.info("Seeded default application user '%s' in database.", username)
+        except Exception as e:
+            logger.warning("Could not seed default user '%s': %s", username, e)
+
+    def verify_user_credentials(self, username: str, plain_password: str) -> bool:
+        """Verify plain password against stored user hash."""
+        if not username or not plain_password:
+            return False
+        user = self.get_user(username)
+        if not user:
+            return False
+        return verify_password(plain_password, user["salt"], user["password_hash"])
+
+    def create_session(self, username: str, max_age_days: int = 7) -> str:
+        """Create a new user session token in the database."""
+        if not username:
+            return ""
+        self._ensure_connection()
+        session_token = secrets.token_urlsafe(48)
+        expires_at = (datetime.now() + timedelta(days=max_age_days)).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO user_sessions (session_token, username, expires_at) VALUES (%s, %s, %s)",
+                        (session_token, username.strip(), expires_at),
+                    )
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        "INSERT INTO user_sessions (session_token, username, expires_at) VALUES (?, ?, ?)",
+                        (session_token, username.strip(), expires_at),
+                    )
+            return session_token
+        except Exception as e:
+            logger.warning("Error creating session for user '%s': %s", username, e)
+            return ""
+
+    def validate_session(self, session_token: str) -> Optional[str]:
+        """Validate session token and return username if active and not expired."""
+        if not session_token:
+            return None
+        self._ensure_connection()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT username FROM user_sessions WHERE session_token = %s AND expires_at > %s",
+                        (session_token.strip(), now_str),
+                    )
+                    row = cursor.fetchone()
+                    return str(row[0]) if row else None
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    "SELECT username FROM user_sessions WHERE session_token = ? AND expires_at > ?",
+                    (session_token.strip(), now_str),
+                )
+                row = cursor.fetchone()
+                return str(row[0]) if row else None
+        except Exception as e:
+            logger.warning("Error validating session: %s", e)
+        return None
+
+    def delete_session(self, session_token: str) -> bool:
+        """Delete session token on logout."""
+        if not session_token:
+            return False
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM user_sessions WHERE session_token = %s", (session_token.strip(),))
+                    return cursor.rowcount > 0
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    cursor = self._sqlite_conn.cursor()
+                    cursor.execute("DELETE FROM user_sessions WHERE session_token = ?", (session_token.strip(),))
+                    return cursor.rowcount > 0
+        except Exception as e:
+            logger.warning("Error deleting session: %s", key if 'key' in locals() else session_token, e)
         return False
 
     def get_status_description(self) -> str:
@@ -525,4 +804,4 @@ class StrategyStorage:
         self.close()
 
 
-__all__ = ["StrategyStorage"]
+__all__ = ["StrategyStorage", "hash_password", "verify_password"]
