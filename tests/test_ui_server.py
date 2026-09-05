@@ -390,10 +390,11 @@ class TestUIServer(unittest.TestCase):
 
             # Create new server instance pointing to the same DB
             with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
-                new_app = create_app()
-                new_client = TestClient(new_app)
+                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="", dhan_access_token="")):
+                    new_app = create_app()
+                    new_client = TestClient(new_app)
 
-                token_res = new_client.get("/api/settings/token")
+                    token_res = new_client.get("/api/settings/token")
                 self.assertEqual(token_res.status_code, 200)
                 data = token_res.json()
 
@@ -402,6 +403,31 @@ class TestUIServer(unittest.TestCase):
                 self.assertEqual(data["app_id"], "PERSISTED_APP_999")
                 self.assertEqual(data["client_id"], "PERSISTED_CLIENT_777")
                 self.assertIn("eyJhbGci...", data["masked_token"])
+
+    def test_env_credentials_override_db(self):
+        """Verify that .env credentials take precedence over database credentials."""
+        from news_based_strategy.storage.repository import StrategyStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_db = f"{tmpdir}/persisted.db"
+            storage = StrategyStorage(db_path=test_db)
+            storage.set_setting("dhan_app_id", "OLD_DB_APP_ID")
+            storage.set_setting("dhan_app_secret", "OLD_DB_SECRET")
+            storage.set_setting("dhan_client_id", "OLD_DB_CLIENT_ID")
+            storage.close()
+
+            with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
+                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="ENV_CLIENT_ID", dhan_app_id="ENV_APP_ID", dhan_app_secret="ENV_APP_SECRET")):
+                    new_app = create_app()
+                    new_client = TestClient(new_app)
+
+                    token_res = new_client.get("/api/settings/token")
+                    self.assertEqual(token_res.status_code, 200)
+                    data = token_res.json()
+
+                    self.assertTrue(data["has_app_keys"])
+                    self.assertEqual(data["app_id"], "ENV_APP_ID")
+                    self.assertEqual(data["client_id"], "ENV_CLIENT_ID")
 
 
     def test_token_expiry_detected_on_ui_start(self):
