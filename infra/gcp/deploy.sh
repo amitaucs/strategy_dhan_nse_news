@@ -71,8 +71,10 @@ REMOTE_DIR="/opt/nse_trading_terminal"
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" ${PROJECT_ID:+--project="$PROJECT_ID"} --command="sudo mkdir -p $REMOTE_DIR && sudo chown -R \$USER:\$USER $REMOTE_DIR"
 
 # Copy project files (excluding .venv, git, etc.)
+# Copy project files (excluding .venv, git, database, and terraform cache)
 cd "$PROJECT_ROOT"
 tar --exclude='.venv' --exclude='.git' --exclude='data/*.db*' --exclude='.terraform' -czf /tmp/nse_app_bundle.tar.gz .
+tar --exclude='.venv' --exclude='.git' --exclude='data/*.db*' --exclude='*terraform*' -czf /tmp/nse_app_bundle.tar.gz .
 gcloud compute scp /tmp/nse_app_bundle.tar.gz "${INSTANCE_NAME}:/tmp/nse_app_bundle.tar.gz" --zone="$ZONE" ${PROJECT_ID:+--project="$PROJECT_ID"}
 rm -f /tmp/nse_app_bundle.tar.gz
 
