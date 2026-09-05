@@ -180,6 +180,7 @@ class DashboardState:
         self.poll_cycles_count: int = 0
         self.last_polled_at: Optional[datetime] = datetime.now()
         self.suppressed_noise_count: int = 0
+        self._last_square_off_date = None
 
     def load_recent_audits_from_db(self) -> None:
         """Load recent actionable audits from database into feed_items on startup."""
@@ -252,6 +253,18 @@ class DashboardState:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
+                # ⏰ Check for automated 3:00 PM IST Square-Off
+                now = datetime.now()
+                today_date = now.date()
+                if (
+                    RiskManager.is_square_off_time(now, square_off_str=self.executor.square_off_time)
+                    and self._last_square_off_date != today_date
+                ):
+                    self._last_square_off_date = today_date
+                    sq_res = await asyncio.to_thread(self.executor.square_off_all_positions)
+                    print(f"[{now.strftime('%H:%M:%S')}] ⏰ [3:00 PM AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
+                    await self.broadcast_event("AUTO_SQUARE_OFF", sq_res)
+
                 self.poll_cycles_count += 1
                 self.last_polled_at = datetime.now()
 
@@ -520,7 +533,7 @@ def get_login_html() -> str:
       <!-- Footer: Don't have an account? Create One -->
       <div class="pt-2 text-center text-xs text-gray-400">
         <span>Don't have an account?</span>
-        <a href="https://invite.dhan.co" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline font-semibold ml-1">Create One</a>
+        <a href="https://join.dhan.co/?invite=VEVQU13117" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline font-semibold ml-1">Create One</a>
       </div>
 
     </div>
@@ -699,6 +712,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <span id="market-status-dot" class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
               <span id="market-status-text">MARKET CLOSED</span>
             </span>
+            <!-- Dynamic Cutoff Status Badge -->
+            <span id="cutoff-status-badge" class="px-2.5 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full flex items-center gap-1.5 shadow-sm transition-all duration-300" title="New Trades Cutoff: 14:45 IST | Intraday Square-Off: 15:00 IST">
+              <span id="cutoff-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span id="cutoff-status-text">CUTOFF 14:45</span>
+            </span>
           </div>
           <div class="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
             <span>Model: <span class="text-indigo-400 font-mono font-semibold">gemini-3.7-flash</span></span>
@@ -732,6 +750,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <span id="auto-status-label">LOADING...</span>
             </button>
           </div>
+
+          <!-- Emergency Square-Off Button -->
+          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Auto-scheduled for 3:00 PM IST)">
+            <span>🛑</span>
+            <span>Square Off (3 PM)</span>
+          </button>
 
           __SIM_HEADER_BTN__
 
@@ -1467,6 +1491,25 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    function renderCutoffUI(isAllowed, cutoffTime, reason) {
+      const badge = document.getElementById('cutoff-status-badge');
+      const dot = document.getElementById('cutoff-status-dot');
+      const text = document.getElementById('cutoff-status-text');
+      if (!badge || !dot || !text) return;
+
+      if (isAllowed) {
+        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1.5 shadow-sm';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+        text.textContent = `CUTOFF ${cutoffTime || '14:45'}`;
+        badge.title = `Trades allowed until ${cutoffTime || '14:45'} IST. Auto Square-off at 15:00 IST.`;
+      } else {
+        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full flex items-center gap-1.5 shadow-sm';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+        text.textContent = 'TRADES CUTOFF (14:45)';
+        badge.title = reason || `Trades blocked past ${cutoffTime || '14:45'} IST cutoff.`;
+      }
+    }
+
     async function fetchStatus() {
       try {
         const res = await fetch('/api/status');
@@ -1478,6 +1521,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           updateExecutionModeUI();
           const isOpen = (typeof data.is_market_open === 'boolean') ? data.is_market_open : computeMarketStatusClient();
           renderMarketStatusUI(isOpen);
+          if (data.is_trade_allowed !== undefined) {
+            renderCutoffUI(data.is_trade_allowed, data.trade_cutoff_time, data.trade_allowed_reason);
+          }
           const dbStatus = document.getElementById('db-status');
           if (dbStatus && data.db_description) {
             dbStatus.textContent = data.db_description;
@@ -1908,6 +1954,38 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    async function confirmEmergencySquareOff() {
+      if (!confirm("⚠️ Are you sure you want to SQUARE OFF all open intraday positions and cancel all pending orders immediately?")) {
+        return;
+      }
+      const btn = document.getElementById('square-off-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-50');
+      }
+      showToast('Initiating intraday square-off sequence...', '🛑');
+      try {
+        const res = await fetch('/api/trades/square-off', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
+          const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
+          showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
+          fetchFeed();
+        } else {
+          const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
+          showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+        }
+      } catch (err) {
+        showToast('Failed to trigger square-off request', '❌');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-50');
+        }
+      }
+    }
+
     function connectSSE() {
       const evtSource = new EventSource('/api/events');
       evtSource.onmessage = function(event) {
@@ -1916,6 +1994,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED' || payload.type === 'MODE_TOGGLED' || payload.type === 'FEED_CLEARED' || payload.type === 'FEED_HISTORY_LOADED') {
             fetchFeed();
             fetchTokenStatus();
+            fetchStatus();
+          } else if (payload.type === 'AUTO_SQUARE_OFF' || payload.type === 'MANUAL_SQUARE_OFF') {
+            const label = payload.type === 'AUTO_SQUARE_OFF' ? '⏰ 3:00 PM Auto Square-Off' : '🛑 Manual Square-Off';
+            showToast(`${label} executed! Intraday positions flattened.`, '⚠️');
+            fetchFeed();
             fetchStatus();
           } else if (payload.type === 'POLL_CYCLE_COMPLETED') {
             if (payload.data && payload.data.last_polled_ts) {
@@ -2119,6 +2202,10 @@ def create_app() -> FastAPI:
             "fno_universe_size": len(get_fno_symbols()),
             "is_market_open": RiskManager.is_market_open(),
             "market_status_label": "MARKET OPEN" if RiskManager.is_market_open() else "MARKET CLOSED",
+            "trade_cutoff_time": state.executor.trade_cutoff_time,
+            "square_off_time": state.executor.square_off_time,
+            "is_trade_allowed": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[0],
+            "trade_allowed_reason": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[1],
         }
 
     @app.get("/api/settings/token")
@@ -2418,6 +2505,13 @@ def create_app() -> FastAPI:
             "quantity": result.quantity,
             "remarks": result.remarks,
         }
+
+    @app.post("/api/trades/square-off")
+    async def trigger_manual_square_off():
+        """Emergency endpoint to immediately cancel all open orders and square off all intraday positions."""
+        result = await asyncio.to_thread(state.executor.square_off_all_positions)
+        await state.broadcast_event("MANUAL_SQUARE_OFF", result)
+        return JSONResponse(content={"success": result.get("success", True), "result": result})
 
     @app.post("/api/simulate")
     async def run_simulation():

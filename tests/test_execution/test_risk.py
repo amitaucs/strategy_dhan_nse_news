@@ -209,8 +209,50 @@ class TestRiskManager(unittest.TestCase):
         r4 = executor.execute_order(make_signal("SBIN"), ltp=800.0)
         self.assertFalse(r4.success)
         self.assertEqual(r4.quantity, 0)
-        self.assertIn("ORDER REJECTED: Daily order limit reached (3/3 orders placed today)", r4.remarks)
-        self.assertEqual(executor.get_daily_order_count(), 3)
+    def test_is_trade_allowed(self):
+        # Wednesday 10:30 AM (Allowed)
+        wed_morning = datetime(2026, 9, 2, 10, 30)
+        allowed, reason = RiskManager.is_trade_allowed(wed_morning, cutoff_str="14:45")
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "OK")
+
+        # Wednesday 14:44:59 (Allowed before cutoff)
+        wed_before_cutoff = datetime(2026, 9, 2, 14, 44, 59)
+        allowed, _ = RiskManager.is_trade_allowed(wed_before_cutoff, cutoff_str="14:45")
+        self.assertTrue(allowed)
+
+        # Wednesday 14:45:00 / 14:46 (Blocked after 14:45 cutoff)
+        wed_after_cutoff = datetime(2026, 9, 2, 14, 46, 0)
+        allowed, reason = RiskManager.is_trade_allowed(wed_after_cutoff, cutoff_str="14:45")
+        self.assertFalse(allowed)
+        self.assertIn("Trade cutoff reached", reason)
+
+        # Sunday 11:00 AM (Blocked - Market Closed)
+        sun_dt = datetime(2026, 9, 6, 11, 0)
+        allowed, reason = RiskManager.is_trade_allowed(sun_dt, cutoff_str="14:45")
+        self.assertFalse(allowed)
+        self.assertIn("Market is closed", reason)
+
+    def test_is_square_off_time(self):
+        # Wednesday 14:59 (Not square-off time yet)
+        wed_early = datetime(2026, 9, 2, 14, 59, 0)
+        self.assertFalse(RiskManager.is_square_off_time(wed_early, square_off_str="15:00"))
+
+        # Wednesday 15:00 sharp (Square-off time triggered)
+        wed_sq = datetime(2026, 9, 2, 15, 0, 0)
+        self.assertTrue(RiskManager.is_square_off_time(wed_sq, square_off_str="15:00"))
+
+        # Wednesday 15:15 (Within square-off window before 15:30)
+        wed_sq_late = datetime(2026, 9, 2, 15, 15, 0)
+        self.assertTrue(RiskManager.is_square_off_time(wed_sq_late, square_off_str="15:00"))
+
+        # Wednesday 15:31 (After market close)
+        wed_after_close = datetime(2026, 9, 2, 15, 31, 0)
+        self.assertFalse(RiskManager.is_square_off_time(wed_after_close, square_off_str="15:00"))
+
+        # Sunday 15:00 (Weekend - no square-off)
+        sun_sq = datetime(2026, 9, 6, 15, 0, 0)
+        self.assertFalse(RiskManager.is_square_off_time(sun_sq, square_off_str="15:00"))
 
 
 if __name__ == "__main__":

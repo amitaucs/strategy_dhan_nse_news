@@ -14,6 +14,12 @@ class RiskManager:
     MARKET_CLOSE_HOUR = 15
     MARKET_CLOSE_MINUTE = 30
 
+    # Intraday Trade Cutoff & Auto Square-Off Window (IST)
+    TRADE_CUTOFF_HOUR = 14
+    TRADE_CUTOFF_MINUTE = 45
+    SQUARE_OFF_HOUR = 15
+    SQUARE_OFF_MINUTE = 0
+
     @classmethod
     def is_market_open(cls, dt: Optional[datetime] = None) -> bool:
         """Check if the current time falls within live NSE equity market hours."""
@@ -27,6 +33,85 @@ class RiskManager:
         market_close = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
 
         return market_open <= current_time <= market_close
+
+    @classmethod
+    def is_trade_allowed(
+        cls,
+        dt: Optional[datetime] = None,
+        cutoff_str: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """Check if new trade entries are allowed based on market hours and trade cutoff (default: 02:45 PM IST).
+        
+        Args:
+            dt: Evaluation datetime (defaults to datetime.now()).
+            cutoff_str: Optional cutoff time string (e.g. '14:45').
+
+        Returns:
+            tuple of (is_allowed: bool, reason: str)
+        """
+        now = dt or datetime.now()
+        if now.weekday() >= 5:
+            return False, "Market is closed (Weekend)"
+
+        current_time = now.time()
+        market_open = datetime.strptime(f"{cls.MARKET_OPEN_HOUR}:{cls.MARKET_OPEN_MINUTE}", "%H:%M").time()
+        market_close = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+
+        if current_time < market_open:
+            return False, f"Market is not open yet (Opens at {cls.MARKET_OPEN_HOUR:02d}:{cls.MARKET_OPEN_MINUTE:02d} IST)"
+
+        if current_time > market_close:
+            return False, f"Market is closed for the day (Closed at {cls.MARKET_CLOSE_HOUR:02d}:{cls.MARKET_CLOSE_MINUTE:02d} IST)"
+
+        # Parse cutoff time
+        cutoff_time = None
+        if cutoff_str:
+            try:
+                cutoff_time = datetime.strptime(cutoff_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+
+        if not cutoff_time:
+            cutoff_time = datetime.strptime(f"{cls.TRADE_CUTOFF_HOUR}:{cls.TRADE_CUTOFF_MINUTE}", "%H:%M").time()
+
+        if current_time >= cutoff_time:
+            cutoff_formatted = cutoff_time.strftime("%I:%M %p")
+            return False, f"Trade cutoff reached: No new trades allowed after {cutoff_formatted} IST"
+
+        return True, "OK"
+
+    @classmethod
+    def is_square_off_time(
+        cls,
+        dt: Optional[datetime] = None,
+        square_off_str: Optional[str] = None,
+    ) -> bool:
+        """Check if current time has reached or passed the automated intraday square-off time (default: 03:00 PM IST).
+        
+        Args:
+            dt: Evaluation datetime (defaults to datetime.now()).
+            square_off_str: Optional square off time string (e.g. '15:00').
+
+        Returns:
+            bool: True if current time is within square-off window on a weekday, False otherwise.
+        """
+        now = dt or datetime.now()
+        if now.weekday() >= 5:
+            return False
+
+        current_time = now.time()
+        sq_time = None
+        if square_off_str:
+            try:
+                sq_time = datetime.strptime(square_off_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+
+        if not sq_time:
+            sq_time = datetime.strptime(f"{cls.SQUARE_OFF_HOUR}:{cls.SQUARE_OFF_MINUTE}", "%H:%M").time()
+
+        market_close = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+        return sq_time <= current_time <= market_close
 
     @staticmethod
     def calculate_position_size(capital: float, ltp: float, max_quantity: int = 10) -> int:

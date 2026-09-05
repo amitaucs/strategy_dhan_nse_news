@@ -31,12 +31,15 @@ class TestUIServer(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_get_index_html(self):
-        """Root GET request with active session should serve dashboard with market status indicator and filter dropdown."""
+        """Root GET request with active session should serve dashboard with market status indicator, cutoff badge, square-off button, and filter dropdown."""
         with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
             res = self.client.get("/")
             self.assertEqual(res.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res.text)
             self.assertIn("market-status-badge", res.text)
+            self.assertIn("cutoff-status-badge", res.text)
+            self.assertIn("square-off-btn", res.text)
+            self.assertIn("Square Off (3 PM)", res.text)
             self.assertIn("feed-filter-select", res.text)
             self.assertIn("All Passed", res.text)
             self.assertIn("AUTO ORDER", res.text)
@@ -49,6 +52,9 @@ class TestUIServer(unittest.TestCase):
             self.assertEqual(res_no_sim.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res_no_sim.text)
             self.assertIn("market-status-badge", res_no_sim.text)
+            self.assertIn("cutoff-status-badge", res_no_sim.text)
+            self.assertIn("square-off-btn", res_no_sim.text)
+            self.assertIn("Square Off (3 PM)", res_no_sim.text)
             self.assertIn("feed-filter-select", res_no_sim.text)
             self.assertIn("All Passed", res_no_sim.text)
             self.assertIn("AUTO ORDER", res_no_sim.text)
@@ -57,7 +63,7 @@ class TestUIServer(unittest.TestCase):
             self.assertNotIn("Test / Simulate Sample Catalyst Feed", res_no_sim.text)
 
     def test_get_status_api(self):
-        """API status endpoint returns system state including market open/closed status."""
+        """API status endpoint returns system state including market status, cutoff time, and square-off time."""
         res = self.client.get("/api/status")
         self.assertEqual(res.status_code, 200)
         data = res.json()
@@ -65,6 +71,10 @@ class TestUIServer(unittest.TestCase):
         self.assertIn("auto_order", data)
         self.assertIn("is_market_open", data)
         self.assertIn("market_status_label", data)
+        self.assertEqual(data["trade_cutoff_time"], "14:45")
+        self.assertEqual(data["square_off_time"], "15:00")
+        self.assertIn("is_trade_allowed", data)
+        self.assertIn("trade_allowed_reason", data)
         self.assertIn("max_shares_per_trade", data)
         self.assertEqual(data["max_orders_per_day"], 3)
         self.assertIn("today_orders_count", data)
@@ -506,6 +516,16 @@ class TestUIServer(unittest.TestCase):
         mdata = me_res.json()
         self.assertEqual(mdata["masked_client_id"], "••••2040")
         self.assertEqual(mdata["client_name"], "Amit Datta")
+
+    def test_square_off_endpoint(self):
+        """Emergency square-off endpoint executes position flattening and cancels orders."""
+        res = self.client.post("/api/trades/square-off")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertIn("result", data)
+        self.assertIn("closed_positions", data["result"])
+        self.assertIn("cancelled_orders", data["result"])
 
 
 if __name__ == "__main__":

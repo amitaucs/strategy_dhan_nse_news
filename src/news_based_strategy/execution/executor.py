@@ -83,6 +83,8 @@ class DhanExecutor:
         stop_loss_pct: Optional[float] = None,
         trailing_jump_points: Optional[float] = None,
         slippage_buffer_pct: Optional[float] = None,
+        trade_cutoff_time: Optional[str] = None,
+        square_off_time: Optional[str] = None,
         approval_callback=None,
     ):
         self.client_id = client_id
@@ -115,6 +117,12 @@ class DhanExecutor:
         )
         self.slippage_buffer_pct = (
             settings.slippage_buffer_pct if slippage_buffer_pct is None else slippage_buffer_pct
+        )
+        self.trade_cutoff_time = (
+            settings.trade_cutoff_time if trade_cutoff_time is None else trade_cutoff_time
+        )
+        self.square_off_time = (
+            settings.square_off_time if square_off_time is None else square_off_time
         )
 
         self._daily_order_timestamps: List[datetime] = []
@@ -364,7 +372,43 @@ class DhanExecutor:
                     dry_run=self.dry_run,
                 )
 
-        # 2. Daily Max Orders Circuit Breaker (Configurable per day limit)
+        # 2. Intraday Trade Cutoff Window (No new trades permitted after 02:45 PM IST)
+        if not self.dry_run:
+            ref_dt = RiskManager.parse_exchange_timestamp(signal.exchange_time) if signal.exchange_time else datetime.now()
+            is_allowed, cutoff_reason = RiskManager.is_trade_allowed(ref_dt, cutoff_str=self.trade_cutoff_time)
+            if not is_allowed:
+                remarks = f"ORDER REJECTED: {cutoff_reason}"
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=self.dry_run,
+                )
+        elif signal.exchange_time:
+            # In dry-run, if explicit exchange filing time is given, enforce cutoff if it was filed after 14:45 IST
+            ref_dt = RiskManager.parse_exchange_timestamp(signal.exchange_time)
+            if ref_dt:
+                is_allowed, cutoff_reason = RiskManager.is_trade_allowed(ref_dt, cutoff_str=self.trade_cutoff_time)
+                if not is_allowed and "cutoff" in cutoff_reason.lower():
+                    remarks = f"ORDER REJECTED: {cutoff_reason}"
+                    logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                    return TradeResult(
+                        success=False,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        quantity=0,
+                        product_type=safe_product,
+                        order_id=None,
+                        remarks=remarks,
+                        dry_run=self.dry_run,
+                    )
+
+        # 3. Daily Max Orders Circuit Breaker (Configurable per day limit)
         today_order_count = self.get_daily_order_count()
         if RiskManager.is_daily_order_limit_reached(today_order_count, self.max_orders_per_day):
             remarks = (
@@ -557,6 +601,136 @@ class DhanExecutor:
                 remarks=str(e),
                 dry_run=False,
             )
+
+    def square_off_all_positions(self) -> dict:
+        """Cancel all pending/open orders and square off all open intraday positions (Long & Short)."""
+        mode_str = "VIRTUAL" if self.dry_run else "LIVE"
+        logger.info("⏰ Triggering Intraday Square-Off routine (Mode: %s)...", mode_str)
+        results = {
+            "success": True,
+            "dry_run": self.dry_run,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "orders_cancelled": 0,
+            "positions_squared_off": 0,
+            "cancelled_orders": [],
+            "closed_positions": [],
+            "details": [],
+        }
+
+        if self.dry_run or not self.dhan:
+            msg = "Virtual square-off completed: All virtual intraday positions and orders cleared."
+            logger.info("✅ [VIRTUAL] %s", msg)
+            results["details"].append({"type": "VIRTUAL", "status": "CLEARED", "remarks": msg})
+            return results
+
+        try:
+            # 1. Cancel all open / pending regular orders
+            try:
+                orders_resp = self.dhan.get_order_list()
+                order_list = orders_resp if isinstance(orders_resp, list) else orders_resp.get("data", []) if isinstance(orders_resp, dict) else []
+                for o in order_list:
+                    if isinstance(o, dict):
+                        o_id = str(o.get("orderId", ""))
+                        o_status = str(o.get("orderStatus", "")).upper()
+                        if o_status in ("PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN"):
+                            try:
+                                cancel_res = self.dhan.cancel_order(order_id=o_id)
+                                results["orders_cancelled"] += 1
+                                results["cancelled_orders"].append(o_id)
+                                results["details"].append({
+                                    "type": "CANCEL_ORDER",
+                                    "order_id": o_id,
+                                    "status": "CANCELLED",
+                                    "response": cancel_res,
+                                })
+                                logger.info("🚫 Cancelled open order %s (%s)", o_id, o_status)
+                            except Exception as ce:
+                                logger.warning("Failed to cancel order %s: %s", o_id, ce)
+            except Exception as oe:
+                logger.warning("Error fetching order list during square off: %s", oe)
+
+            # 2. Cancel open Super Orders
+            try:
+                if hasattr(self.dhan, "get_super_order_list") and hasattr(self.dhan, "cancel_super_order"):
+                    so_resp = self.dhan.get_super_order_list()
+                    so_list = so_resp if isinstance(so_resp, list) else so_resp.get("data", []) if isinstance(so_resp, dict) else []
+                    for so in so_list:
+                        if isinstance(so, dict):
+                            so_id = str(so.get("orderId", "") or so.get("superOrderId", ""))
+                            so_status = str(so.get("orderStatus", "")).upper()
+                            if so_status in ("PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN"):
+                                try:
+                                    cancel_so = self.dhan.cancel_super_order(order_id=so_id)
+                                    results["orders_cancelled"] += 1
+                                    results["cancelled_orders"].append(so_id)
+                                    results["details"].append({
+                                        "type": "CANCEL_SUPER_ORDER",
+                                        "order_id": so_id,
+                                        "status": "CANCELLED",
+                                        "response": cancel_so,
+                                    })
+                                    logger.info("🚫 Cancelled open super order %s (%s)", so_id, so_status)
+                                except Exception as cse:
+                                    logger.warning("Failed to cancel super order %s: %s", so_id, cse)
+            except Exception as soe:
+                logger.debug("Super order list check skipped/unsupported: %s", soe)
+
+            # 3. Query open positions and square off intraday positions
+            pos_resp = self.dhan.get_positions()
+            pos_list = pos_resp if isinstance(pos_resp, list) else pos_resp.get("data", []) if isinstance(pos_resp, dict) else []
+
+            for p in pos_list:
+                if not isinstance(p, dict):
+                    continue
+                prod_type = str(p.get("productType", "") or p.get("positionType", "")).upper()
+                sec_id = str(p.get("securityId", ""))
+                symbol = str(p.get("tradingSymbol", "") or sec_id)
+                net_qty = int(p.get("netQty", 0) or 0)
+
+                # Square off open intraday positions
+                if net_qty != 0 and prod_type in ("INTRADAY", "INTRA", ""):
+                    sq_action = self.dhan.SELL if net_qty > 0 else self.dhan.BUY
+                    sq_qty = abs(net_qty)
+                    try:
+                        sq_order = self.dhan.place_order(
+                            security_id=sec_id,
+                            exchange_segment=self.dhan.NSE,
+                            transaction_type=sq_action,
+                            quantity=sq_qty,
+                            order_type=self.dhan.MARKET,
+                            product_type=self.dhan.INTRA,
+                            price=0,
+                        )
+                        results["positions_squared_off"] += 1
+                        results["closed_positions"].append(symbol)
+                        results["details"].append({
+                            "type": "SQUARE_OFF_POSITION",
+                            "symbol": symbol,
+                            "security_id": sec_id,
+                            "action": "SELL" if net_qty > 0 else "BUY",
+                            "quantity": sq_qty,
+                            "order": sq_order,
+                        })
+                        logger.info(
+                            "✅ Squared off intraday position for %s: %s %d shares",
+                            symbol,
+                            "SELL" if net_qty > 0 else "BUY",
+                            sq_qty,
+                        )
+                    except Exception as sq_err:
+                        logger.error("❌ Failed to square off position for %s: %s", symbol, sq_err)
+                        results["details"].append({
+                            "type": "SQUARE_OFF_ERROR",
+                            "symbol": symbol,
+                            "error": str(sq_err),
+                        })
+
+            return results
+        except Exception as e:
+            logger.error("❌ Unexpected error in square_off_all_positions: %s", e)
+            results["success"] = False
+            results["error"] = str(e)
+            return results
 
 
 __all__ = ["DhanExecutor", "check_token_expiry", "parse_jwt_claims"]
