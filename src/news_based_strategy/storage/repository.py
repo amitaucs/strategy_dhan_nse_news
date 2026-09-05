@@ -82,6 +82,7 @@ class StrategyStorage:
 
         self._init_tables()
         self.seed_default_user()
+        self.seed_authorized_clients()
 
     @property
     def conn(self):
@@ -246,6 +247,18 @@ class StrategyStorage:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS `Authorized user` (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            client_id VARCHAR(64) UNIQUE NOT NULL,
+                            name VARCHAR(128),
+                            is_active TINYINT NOT NULL DEFAULT 1,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            INDEX idx_client_id (client_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 return
             except Exception as e:
                 logger.warning("Failed creating MySQL tables: %s. Reverting to SQLite.", e)
@@ -322,6 +335,17 @@ class StrategyStorage:
                         username TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         expires_at TEXT NOT NULL
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS `Authorized user` (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_id TEXT UNIQUE NOT NULL,
+                        name TEXT,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
@@ -884,6 +908,146 @@ class StrategyStorage:
                     return cursor.rowcount > 0
         except Exception as e:
             logger.warning("Error deleting session: %s", session_token, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def seed_authorized_clients(self, default_client_id: str = "1104872040") -> None:
+        """Seed default authorized client ID into `Authorized user` table if not present."""
+        try:
+            ids_to_seed = [default_client_id]
+            if settings.dhan_client_id and settings.dhan_client_id not in ids_to_seed:
+                ids_to_seed.append(settings.dhan_client_id)
+            for cid in ids_to_seed:
+                if cid and not self.is_client_authorized(cid):
+                    self.add_authorized_client(cid, name="Primary Authorized Account", is_active=1)
+                    logger.info("Seeded authorized client '%s' in `Authorized user` table.", cid)
+        except Exception as e:
+            logger.warning("Could not seed authorized client: %s", e)
+
+    @_thread_safe
+    def is_client_authorized(self, client_id: str) -> bool:
+        """Check if a Dhan client ID is present and active in `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT 1 FROM `Authorized user` WHERE client_id = %s AND is_active = 1",
+                        (cid,),
+                    )
+                    return cursor.fetchone() is not None
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM `Authorized user` WHERE client_id = ? AND is_active = 1",
+                    (cid,),
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.warning("Error checking is_client_authorized for '%s': %s", cid, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def add_authorized_client(self, client_id: str, name: str = "", is_active: int = 1) -> bool:
+        """Add or update an authorized client ID in `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO `Authorized user` (client_id, name, is_active)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active)
+                        """,
+                        (cid, name.strip(), int(is_active)),
+                    )
+                    return True
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO `Authorized user` (client_id, name, is_active)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(client_id) DO UPDATE SET name = excluded.name, is_active = excluded.is_active
+                        """,
+                        (cid, name.strip(), int(is_active)),
+                    )
+                    return True
+        except Exception as e:
+            logger.warning("Error adding authorized client '%s': %s", cid, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def get_authorized_clients(self) -> List[Dict[str, Any]]:
+        """Return all authorized client records from `Authorized user` table."""
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT id, client_id, name, is_active, created_at FROM `Authorized user` ORDER BY id ASC")
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            "id": r[0],
+                            "client_id": str(r[1]),
+                            "name": r[2] or "",
+                            "is_active": bool(r[3]),
+                            "created_at": str(r[4]),
+                        }
+                        for r in rows
+                    ]
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT id, client_id, name, is_active, created_at FROM `Authorized user` ORDER BY id ASC")
+                rows = cursor.fetchall()
+                return [
+                    {
+                        "id": r[0],
+                        "client_id": str(r[1]),
+                        "name": r[2] or "",
+                        "is_active": bool(r[3]),
+                        "created_at": str(r[4]),
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            logger.warning("Error fetching authorized clients: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return []
+
+    @_thread_safe
+    def remove_authorized_client(self, client_id: str) -> bool:
+        """Remove or deactivate an authorized client ID from `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM `Authorized user` WHERE client_id = %s", (cid,))
+                    return cursor.rowcount > 0
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    cursor = self._sqlite_conn.cursor()
+                    cursor.execute("DELETE FROM `Authorized user` WHERE client_id = ?", (cid,))
+                    return cursor.rowcount > 0
+        except Exception as e:
+            logger.warning("Error removing authorized client '%s': %s", cid, e)
             if self.is_mysql_active:
                 self._mysql_conn = None
         return False

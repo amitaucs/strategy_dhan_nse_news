@@ -2290,14 +2290,24 @@ def create_app() -> FastAPI:
         if not success:
             return RedirectResponse(url=f"/login?error={token_or_err}")
 
+        # Extract client ID from token claims
+        claims = parse_jwt_claims(token_or_err)
+        token_client_id = str(claims.get("dhanClientId") or claims.get("client_id") or state.executor.client_id or "").strip()
+
+        # Enforce Client ID authorization against `Authorized user` database table
+        if not token_client_id or not state.storage.is_client_authorized(token_client_id):
+            logger.warning("Unauthorized Dhan login attempt for Client ID '%s'", token_client_id)
+            import urllib.parse
+            err_msg = f"Unauthorized Dhan Account (Client ID {token_client_id or 'unknown'}). Only authorized client IDs in `Authorized user` table are permitted."
+            return RedirectResponse(url=f"/login?error={urllib.parse.quote(err_msg)}")
+
         # Update live executor credentials & persist to DB
-        state.executor.update_credentials(access_token=token_or_err, dry_run=False)
+        state.executor.update_credentials(client_id=token_client_id, access_token=token_or_err, dry_run=False)
         state.storage.set_setting("dhan_access_token", token_or_err)
-        if state.executor.client_id:
-            state.storage.set_setting("dhan_client_id", state.executor.client_id)
+        state.storage.set_setting("dhan_client_id", token_client_id)
 
         # Establish app session for SSO
-        session_user = state.executor.client_id or "amit"
+        session_user = token_client_id or "amit"
         session_token = state.storage.create_session(session_user)
 
         await state.broadcast_event("TOKEN_UPDATED", {
@@ -2324,6 +2334,7 @@ def create_app() -> FastAPI:
             c_id = req.client_id.strip()
             state.executor.client_id = c_id
             state.storage.set_setting("dhan_client_id", c_id)
+            state.storage.add_authorized_client(c_id, name="Configured OAuth Key")
 
         a_id = req.app_id.strip()
         a_sec = req.app_secret.strip()

@@ -374,6 +374,21 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("eyJhbGci...", token_status["masked_token"])
             self.assertEqual(token_status["client_id"], "1000998877")
 
+            # 6. Unauthorized Dhan Client ID is rejected on callback
+            import base64
+            h_b64 = base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+            p_b64 = base64.urlsafe_b64encode(b'{"dhanClientId":"9999888877"}').decode().rstrip("=")
+            unauth_jwt = f"{h_b64}.{p_b64}.signature"
+
+            mock_resp_unauth = MagicMock()
+            mock_resp_unauth.json.return_value = {"accessToken": unauth_jwt}
+            mock_post.return_value = mock_resp_unauth
+
+            res_unauth = client.get("/api/auth/dhan/callback?tokenId=UNAUTH_TOKEN_999", follow_redirects=False)
+            self.assertEqual(res_unauth.status_code, 307)
+            self.assertIn("/login?error=", res_unauth.headers["location"])
+            self.assertIn("Unauthorized", res_unauth.headers["location"])
+
     def test_database_persistence_across_server_restarts(self):
         """Verify that credentials saved in DB persist when creating a new server instance."""
         import tempfile
