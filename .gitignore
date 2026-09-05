@@ -81,3 +81,19 @@ data/
 *.db-wal
 *.db-shm
 
+# Terraform Cache & State
+.terraform
+.terraform/
+**/.terraform/
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+

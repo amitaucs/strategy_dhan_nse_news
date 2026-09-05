@@ -1,0 +1,49 @@
+# ==============================================================================
+# Terraform Variables Example for NSE Catalyst Trading Terminal on GCP
+# Copy this file to 'terraform.tfvars' and replace with your GCP Project ID:
+#   cp terraform.tfvars.example terraform.tfvars
+# ==============================================================================
+
+# Required: Your Google Cloud Project ID
+project_id = "your-gcp-project-id"
+
+# ------------------------------------------------------------------------------
+# OPTION 1: 100% Always Free Tier (US Region) — [DEFAULT]
+# ------------------------------------------------------------------------------
+region            = "us-central1"
+zone              = "us-central1-a"
+machine_type      = "e2-micro"
+boot_disk_size_gb = 30
+boot_disk_type    = "pd-standard"
+
+# ------------------------------------------------------------------------------
+# OPTION 2: Low-Latency India Region (Mumbai) — (~₹650 INR/month)
+# To use Mumbai, uncomment the lines below:
+# ------------------------------------------------------------------------------
+# region            = "asia-south1"
+# zone              = "asia-south1-a"
+# machine_type      = "e2-micro"
+# boot_disk_size_gb = 10
+# boot_disk_type    = "pd-standard"
+
+# ------------------------------------------------------------------------------
+# Application Configuration
+# ------------------------------------------------------------------------------
+instance_name = "nse-trading-terminal"
+app_port      = 8000
+
+# Security: Restrict Web UI access to your home/office IP for maximum security:
+# allowed_ingress_cidrs = ["YOUR_HOME_PUBLIC_IP/32"]
+allowed_ingress_cidrs = ["0.0.0.0/0"]
+
+# ------------------------------------------------------------------------------
+# OPTION 3: Automated Market Hours Schedule (Auto Start & Stop VM)
+# Set enable_schedule = true to automatically start VM at 09:00 AM IST
+# and stop it at 03:45 PM IST (Monday - Friday).
+# ------------------------------------------------------------------------------
+enable_schedule   = false
+schedule_timezone = "Asia/Kolkata"
+schedule_start    = "00 09 * * 1-5"   # 09:00 AM IST Mon-Fri
+schedule_stop     = "45 15 * * 1-5"   # 03:45 PM IST Mon-Fri
+
+
