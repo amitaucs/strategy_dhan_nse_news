@@ -1,0 +1,19 @@
+services:
+  trading-terminal:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: nse_catalyst_terminal
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    # Injects .env secrets directly into memory at container startup (never baked into image)
+    env_file:
+      - ../.env
+    # Persist SQLite database and runtime data on host
+    volumes:
+      - ../data:/app/data
+    environment:
+      - APP_ENV=production
+      - PYTHONUNBUFFERED=1
+

@@ -249,6 +249,7 @@ class DashboardState:
         from news_based_strategy.ingestion.monitor import NSEFilingMonitor
 
         monitor = NSEFilingMonitor(storage=self.storage)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
                 self.poll_cycles_count += 1
@@ -256,6 +257,9 @@ class DashboardState:
 
                 def on_filtered(item: Announcement, reason: str):
                     self.suppressed_noise_count += 1
+                    brief = (item.desc or item.details or "").strip().split()
+                    brief_str = " ".join(brief[:5]) if brief else "Routine filing"
+                    print(f"  ↳ [{item.symbol}] 🔇 Filtered out ({reason}) — {brief_str}", flush=True)
 
                 new_items = await asyncio.to_thread(
                     monitor.get_new_announcements,
@@ -265,6 +269,7 @@ class DashboardState:
                     extract_pdf=True,
                     on_filtered=on_filtered,
                 )
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
                 for ann in new_items:
                     processed = self.process_and_add_announcement(ann)
                     if processed:
@@ -390,6 +395,21 @@ class DashboardState:
         else:
             order_data["status"] = "SKIPPED_LOW_CONFIDENCE"
             order_data["remarks"] = f"Confidence < {settings.confidence_threshold}% or non-material"
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        sec_id_str = f" [Dhan ID: {sec_id}]" if sec_id and sec_id != "0" else ""
+        print(f"\n[{ts}] [{ann.symbol} [F&O]{sec_id_str}] 📢 {ann.desc}", flush=True)
+        print(f"   ↳ Status: 🟢 PASSED ALL FILTERS ➔ Sent to AI Reasoning Engine", flush=True)
+        if ann.an_dt:
+            badge = ann.freshness_badge(max_age_seconds=180)
+            badge_str = f" {badge}" if badge else ""
+            print(f"   ↳ Exchange Time: {ann.an_dt}{badge_str}", flush=True)
+        print(f"   🎯 VERDICT: {sentiment_label} (Confidence: {audit.confidence}% | Category: {audit.catalyst_type})", flush=True)
+        print(f"   📝 AI Summary: \"{audit.summary}\"", flush=True)
+        if is_conviction:
+            print(f"   🚀 CONVICTION TRIGGER: {order_data['status']} ({qty} shares @ ₹{ltp} | TP: ₹{tp_price}, SL: ₹{sl_price})", flush=True)
+        else:
+            print(f"   ⏸️ ORDER: {order_data['status']} ({order_data['remarks']})", flush=True)
 
         is_fresh, age = RiskManager.is_news_fresh(ann.an_dt, max_age_seconds=180)
         feed_item = {
@@ -2511,5 +2531,5 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
         print("   ⚠️  ERROR: Dhan access token is EXPIRED! Please 1-Click Login or update token in GUI.")
     print("   Press Ctrl+C to shutdown the server.")
     print("=" * 70)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
 

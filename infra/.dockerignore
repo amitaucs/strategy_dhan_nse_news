@@ -1,0 +1,38 @@
+# Environment & Secrets (NEVER bake into image)
+.env
+.env.*
+*.pem
+*.key
+
+# Virtual Environments & Caches
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git & IDEs
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Runtime Databases & Logs
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+logs/
+*.log
+
