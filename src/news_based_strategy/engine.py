@@ -27,6 +27,7 @@ class StrategyEngine:
         executor: Optional[DhanExecutor] = None,
         dry_run: bool = True,
         auto_order: Optional[bool] = None,
+        max_orders_per_day: Optional[int] = None,
         fno_only: bool = True,
         filter_noise: bool = True,
         extract_pdf: bool = True,
@@ -37,17 +38,24 @@ class StrategyEngine:
             headers=settings.headers,
         )
         self.storage = storage or StrategyStorage(settings.database_path)
+        persisted_client_id = self.storage.get_setting("dhan_client_id")
+        persisted_token = self.storage.get_setting("dhan_access_token")
+        eff_client_id = persisted_client_id if persisted_client_id is not None else settings.dhan_client_id
+        eff_token = persisted_token if persisted_token is not None else settings.dhan_access_token
+
         self.analyzer = analyzer or FilingAnalyzer(
             api_key=settings.gemini_api_key,
             model_name=settings.gemini_model,
+            thinking_budget=settings.gemini_thinking_budget,
         )
         self.executor = executor or DhanExecutor(
-            client_id=settings.dhan_client_id,
-            access_token=settings.dhan_access_token,
+            client_id=eff_client_id,
+            access_token=eff_token,
             dry_run=dry_run,
             auto_order=settings.auto_order if auto_order is None else auto_order,
             capital_per_trade=settings.capital_per_trade,
             max_shares_per_trade=settings.max_shares_per_trade,
+            max_orders_per_day=settings.max_orders_per_day if max_orders_per_day is None else max_orders_per_day,
         )
         self.fno_only = fno_only
         self.filter_noise = filter_noise

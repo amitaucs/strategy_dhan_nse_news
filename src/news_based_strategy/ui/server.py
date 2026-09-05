@@ -11,7 +11,7 @@ import requests
 from pydantic import BaseModel
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
-from news_based_strategy.execution.executor import DhanExecutor
+from news_based_strategy.execution.executor import DhanExecutor, check_token_expiry, parse_jwt_claims
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
@@ -55,6 +55,10 @@ class ToggleAutoOrderRequest(BaseModel):
     auto_order: bool
 
 
+class ToggleDryRunRequest(BaseModel):
+    dry_run: bool
+
+
 class UpdateTokenRequest(BaseModel):
     access_token: str
     client_id: Optional[str] = None
@@ -85,7 +89,7 @@ def generate_dhan_consent_url(
         data = resp.json()
         consent_id = data.get("consentAppId") or (data.get("data", {}) if isinstance(data.get("data"), dict) else {}).get("consentAppId")
         if consent_id:
-            login_url = f"{auth_url.rstrip('/')}/app/login?consentAppId={consent_id}"
+            login_url = f"{auth_url.rstrip('/')}/login/consentApp-login?consentAppId={consent_id}"
             return True, login_url
         error_msg = data.get("remarks") or data.get("message") or str(data)
         return False, f"Dhan Consent generation failed: {error_msg}"
@@ -99,9 +103,9 @@ def consume_dhan_consent(
     app_secret: str,
     auth_url: str = "https://auth.dhan.co",
 ) -> tuple[bool, str, dict]:
-    """Exchange tokenId for accessToken via Dhan /app/consume-consent."""
+    """Exchange tokenId for accessToken via Dhan /app/consumeApp-consent."""
     try:
-        url = f"{auth_url.rstrip('/')}/app/consume-consent"
+        url = f"{auth_url.rstrip('/')}/app/consumeApp-consent?tokenId={token_id}"
         headers = {
             "app_id": app_id,
             "app_secret": app_secret,
@@ -124,25 +128,40 @@ class DashboardState:
 
     def __init__(self):
         self.storage = StrategyStorage()
+
+        # Load persisted settings from DB with fallback to config / environment
+        db_app_id = self.storage.get_setting("dhan_app_id")
+        db_app_secret = self.storage.get_setting("dhan_app_secret")
+        db_client_id = self.storage.get_setting("dhan_client_id")
+        db_access_token = self.storage.get_setting("dhan_access_token")
+
+        self.app_id = db_app_id if db_app_id is not None else settings.dhan_app_id
+        self.app_secret = db_app_secret if db_app_secret is not None else settings.dhan_app_secret
+        eff_client_id = db_client_id if db_client_id is not None else settings.dhan_client_id
+        eff_access_token = db_access_token if db_access_token is not None else settings.dhan_access_token
+
+        db_dry_run = self.storage.get_setting("dry_run")
+        eff_dry_run = (db_dry_run.lower() in ("true", "1", "yes")) if db_dry_run is not None else settings.dry_run
+
         self.analyzer = FilingAnalyzer(
             api_key=settings.gemini_api_key,
             model_name=settings.gemini_model,
+            thinking_budget=settings.gemini_thinking_budget,
         )
         self.executor = DhanExecutor(
-            client_id=settings.dhan_client_id,
-            access_token=settings.dhan_access_token,
-            dry_run=settings.dry_run,
+            client_id=eff_client_id,
+            access_token=eff_access_token,
+            dry_run=eff_dry_run,
             auto_order=settings.auto_order,
             capital_per_trade=settings.capital_per_trade,
             max_shares_per_trade=settings.max_shares_per_trade,
+            max_orders_per_day=settings.max_orders_per_day,
             super_order_enabled=settings.super_order_enabled,
             target_profit_pct=settings.target_profit_pct,
             stop_loss_pct=settings.stop_loss_pct,
             trailing_jump_points=settings.trailing_jump_points,
             slippage_buffer_pct=settings.slippage_buffer_pct,
         )
-        self.app_id = settings.dhan_app_id
-        self.app_secret = settings.dhan_app_secret
         self.auth_url = settings.dhan_auth_url
         self.redirect_url = settings.dhan_redirect_url
         self.feed_items: List[Dict[str, Any]] = []
@@ -153,6 +172,11 @@ class DashboardState:
         self.auto_order = enabled
         self.executor.auto_order = enabled
         return self.auto_order
+
+    def toggle_dry_run(self, dry_run: bool) -> bool:
+        self.executor.update_credentials(dry_run=dry_run)
+        self.storage.set_setting("dry_run", "true" if dry_run else "false")
+        return self.executor.dry_run
 
     async def broadcast_event(self, event_type: str, data: Any):
         payload = json.dumps({"type": event_type, "data": data})
@@ -327,44 +351,95 @@ def get_dashboard_html() -> str:
           <div class="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
             <span>Model: <span class="text-indigo-400 font-mono font-semibold">gemini-3.7-flash</span></span>
             <span>•</span>
-            <span>Broker: <span id="mode-text" class="text-amber-400 font-mono font-semibold">DRY-RUN</span></span>
+            <span>Broker: <span id="mode-text" class="text-amber-400 font-mono font-semibold">VIRTUAL</span></span>
             <span>•</span>
-            <span>Token: <span id="telemetry-token-status" class="text-emerald-400 font-mono font-semibold">Checking...</span></span>
-            <span>•</span>
-            <span id="db-status" class="text-emerald-400 font-mono">MySQL Primary</span>
+            <span>Token: <span id="telemetry-token-status" class="text-emerald-400 font-mono font-bold">Active</span></span>
           </div>
         </div>
       </div>
 
-      <!-- Controls & Actions -->
-      <div class="flex items-center gap-3">
+      <!-- Controls & Actions (Separated Strategy Controls & Dedicated Dhan Token Widget) -->
+      <div class="flex items-center gap-3.5">
         
-        <!-- AUTO_ORDER Toggle Switch -->
-        <div class="flex items-center gap-2.5 bg-[#1e293b]/70 border border-gray-700/80 px-3 py-1.5 rounded-lg shadow-sm">
-          <span class="text-xs font-semibold text-gray-300">AUTO ORDER:</span>
-          <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow">
-            <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
-            <span id="auto-status-label">LOADING...</span>
+        <!-- Strategy Controls Group -->
+        <div class="flex items-center gap-2.5">
+          <!-- EXECUTION MODE (VIRTUAL / LIVE) Toggle Switch -->
+          <div class="flex items-center gap-2 bg-[#1e293b]/80 border border-gray-700/80 px-3 py-1.5 rounded-lg shadow-sm">
+            <span class="text-xs font-semibold text-gray-300">EXECUTION:</span>
+            <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
+              <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
+              <span id="mode-status-label">VIRTUAL</span>
+            </button>
+          </div>
+
+          <!-- AUTO_ORDER Toggle Switch -->
+          <div class="flex items-center gap-2 bg-[#1e293b]/80 border border-gray-700/80 px-3 py-1.5 rounded-lg shadow-sm">
+            <span class="text-xs font-semibold text-gray-300">AUTO ORDER:</span>
+            <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow">
+              <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
+              <span id="auto-status-label">LOADING...</span>
+            </button>
+          </div>
+
+          <!-- Simulation Button -->
+          <button onclick="triggerSimulation()" id="sim-btn" class="bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold px-3 py-2 rounded-lg transition border border-indigo-400/40 shadow-md flex items-center gap-1.5">
+            <span>⚡</span>
+            <span>Simulate Feed</span>
+          </button>
+
+          <!-- Refresh Button -->
+          <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-2 rounded-lg transition border border-gray-700" title="Refresh Table">
+            🔄
           </button>
         </div>
 
-        <!-- Dhan Token Update Modal Button -->
-        <button onclick="openTokenModal()" id="token-btn" class="bg-[#1e293b]/90 hover:bg-[#334155] border border-amber-500/30 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center gap-1.5" title="Update Dhan Access Token">
-          <span>🔑</span>
-          <span>Dhan Token</span>
-          <span id="token-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
-        </button>
+        <!-- Vertical Divider -->
+        <div class="h-8 w-px bg-gray-700/60 hidden sm:block"></div>
 
-        <!-- Simulation Button -->
-        <button onclick="triggerSimulation()" id="sim-btn" class="bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition border border-indigo-400/40 shadow-md flex items-center gap-1.5">
-          <span>⚡</span>
-          <span>Simulate Feed</span>
-        </button>
+        <!-- RIGHT-TOP USER LOGIN & ACCOUNT WIDGET -->
+        <div class="relative" id="user-account-container">
+          <!-- Unauthenticated Login Button -->
+          <button onclick="openLoginScreen()" id="btn-header-login" class="hidden bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center gap-2 transition active:scale-95">
+            <span>🔐</span>
+            <span>Login with Dhan</span>
+          </button>
 
-        <!-- Refresh Button -->
-        <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-2 rounded-lg transition border border-gray-700" title="Refresh Table">
-          🔄
-        </button>
+          <!-- Authenticated User Profile Button -->
+          <div id="user-profile-widget" class="flex items-center gap-2">
+            <button onclick="toggleUserMenu()" id="token-btn" class="group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3.5 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5" title="Manage Dhan Account & Session">
+              <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-inner">
+                👤
+              </div>
+              <div class="text-left">
+                <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                  <span id="user-client-id-label">DHAN USER</span>
+                  <span id="token-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                </div>
+                <div id="header-token-mask" class="text-xs font-mono font-bold text-emerald-400 group-hover:text-emerald-300">
+                  Active
+                </div>
+              </div>
+              <span class="text-[10px] text-gray-400 group-hover:text-white transition ml-1">▼</span>
+            </button>
+
+            <!-- User Menu Dropdown -->
+            <div id="user-menu-dropdown" class="hidden absolute right-0 top-12 w-64 bg-[#111827] border border-gray-700/80 rounded-xl shadow-2xl p-3 z-50 space-y-2.5 text-xs">
+              <div class="border-b border-gray-800 pb-2">
+                <div class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Trading Account</div>
+                <div id="menu-client-id" class="text-xs font-mono font-bold text-white mt-0.5">Client ID: --</div>
+                <div id="menu-expiry-info" class="text-[10px] text-emerald-400 font-mono mt-0.5">Active Session</div>
+              </div>
+              <div class="space-y-1">
+                <button onclick="openLoginScreen(); toggleUserMenu();" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white flex items-center gap-2 transition">
+                  <span>🔄</span> Switch Account / Re-login
+                </button>
+                <button onclick="logoutDhan(); toggleUserMenu();" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/40 text-rose-400 hover:text-rose-300 flex items-center gap-2 transition font-semibold">
+                  <span>🚪</span> Logout from Dhan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
 
       </div>
     </div>
@@ -415,13 +490,20 @@ def get_dashboard_html() -> str:
       </button>
     </div>
 
-    <!-- Search input -->
+    <!-- Search input & Clear Feed -->
     <div class="flex items-center gap-3">
       <div class="relative">
-        <input type="text" id="search-input" onkeyup="renderFeed()" placeholder="Search symbol or catalyst..." class="bg-[#111827] border border-gray-800 text-xs text-gray-200 placeholder-gray-500 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 w-64 transition">
+        <input type="text" id="search-input" onkeyup="renderFeed()" placeholder="Search symbol or catalyst..." class="bg-[#111827] border border-gray-800 text-xs text-gray-200 placeholder-gray-500 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 w-60 transition">
         <span class="absolute left-2.5 top-2 text-xs text-gray-500">🔍</span>
       </div>
-      <span class="text-xs text-gray-500">Auto-Refreshes Live</span>
+      
+      <!-- Clear List Button -->
+      <button onclick="clearFeedList()" id="btn-clear-feed" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#162032] hover:bg-rose-950/40 text-gray-300 hover:text-rose-200 border border-gray-700/80 hover:border-rose-500/50 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Clear displayed list from screen (All signals & orders remain permanently stored in DB for audit)">
+        <span>🗑️</span>
+        <span>Clear List</span>
+      </button>
+
+      <span class="text-xs text-gray-500 hidden sm:inline">Auto-Refreshes Live</span>
     </div>
 
   </div>
@@ -467,25 +549,31 @@ def get_dashboard_html() -> str:
     </div>
   </main>
 
-  <!-- DHAN TOKEN UPDATE & OAUTH MODAL -->
-  <div id="token-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
-    <div class="bg-[#111827] border border-gray-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar" id="token-modal-card">
+  <!-- DHAN LOGIN & AUTHENTICATION MODAL / SCREEN -->
+  <div id="token-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+    <div class="bg-[#111827] border border-gray-700/90 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar" id="token-modal-card">
       
       <!-- Modal Header -->
-      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
-        <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-sm">
-            🔑
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3.5">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg shadow-inner">
+            🔐
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white uppercase tracking-wide">Dhan Authentication & Token</h3>
-            <p class="text-[11px] text-gray-400">1-Click OAuth Login or Manual Token Refresh</p>
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <span>Login with DhanHQ</span>
+              <span class="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-mono">Broker Auth</span>
+            </h3>
+            <p class="text-[11px] text-gray-400 mt-0.5">Authenticate your Dhan trading account for live execution</p>
           </div>
         </div>
-        <button onclick="closeTokenModal()" class="text-gray-400 hover:text-white text-lg font-bold p-1 rounded transition">✕</button>
+        <button onclick="closeTokenModal()" class="text-gray-400 hover:text-white text-lg font-bold p-1 rounded-lg hover:bg-gray-800 transition" title="Dismiss">✕</button>
       </div>
 
-      <!-- Option 1: 1-Click Login with Dhan (OAuth) -->
+      <!-- Session Expired Alert Banner (Dynamic) -->
+      <div id="login-session-alert" class="hidden text-xs p-3 rounded-xl border shadow-inner"></div>
+
+      <!-- Option 1: 1-Click Login with Dhan (OAuth 2.0) -->
       <div class="bg-gradient-to-r from-emerald-950/40 via-teal-950/30 to-slate-900 border border-emerald-500/30 rounded-xl p-4 space-y-3 shadow-inner">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
@@ -495,12 +583,12 @@ def get_dashboard_html() -> str:
           <span class="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-mono">OAuth 2.0</span>
         </div>
         <p class="text-[11px] text-gray-300 leading-relaxed">
-          Redirects to Dhan to log in with Mobile + OTP/TOTP. Token is automatically fetched & loaded with zero copy-pasting.
+          Redirects to Dhan to log in securely via Mobile + OTP/TOTP. Token is automatically fetched & activated with zero copy-pasting.
         </p>
 
         <div class="pt-1 flex items-center gap-2">
           <button onclick="launchDhanOAuth()" id="btn-oauth-login" class="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center justify-center gap-2 transition active:scale-95">
-            <span>🚀 Authenticate on Dhan</span>
+            <span>🚀 Log In via Dhan Portal</span>
           </button>
           <button onclick="toggleOAuthSettings()" class="px-2.5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs border border-gray-700 transition" title="Configure App ID & Secret">
             ⚙️ Keys
@@ -508,7 +596,7 @@ def get_dashboard_html() -> str:
         </div>
 
         <!-- Collapsible OAuth Keys Config -->
-        <div id="oauth-keys-drawer" class="hidden pt-3 space-y-2 border-t border-emerald-500/20 text-xs">
+        <div id="oauth-keys-drawer" class="hidden pt-3 space-y-2.5 border-t border-emerald-500/20 text-xs">
           <div>
             <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan Client ID</label>
             <input type="text" id="input-client-id" placeholder="e.g. 100028912" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
@@ -524,7 +612,7 @@ def get_dashboard_html() -> str:
             </div>
           </div>
           <div class="flex justify-end pt-1">
-            <button onclick="saveOAuthKeys()" class="text-[11px] bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-3 py-1 rounded transition">Save Keys</button>
+            <button onclick="saveOAuthKeys()" class="text-[11px] bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-3 py-1.5 rounded-lg transition">Save Credentials to DB</button>
           </div>
         </div>
       </div>
@@ -532,7 +620,7 @@ def get_dashboard_html() -> str:
       <!-- DIVIDER -->
       <div class="flex items-center gap-3">
         <div class="flex-1 h-px bg-gray-800"></div>
-        <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">OR MANUAL JWT TOKEN</span>
+        <span class="text-[10px] text-gray-500 font-bold uppercase tracking-wider">OR DIRECT TOKEN LOGIN</span>
         <div class="flex-1 h-px bg-gray-800"></div>
       </div>
 
@@ -551,29 +639,17 @@ def get_dashboard_html() -> str:
           </div>
         </div>
 
-        <!-- Mode Toggle in Modal -->
-        <div class="bg-[#1e293b]/50 border border-gray-800 rounded-lg p-3 flex items-center justify-between">
-          <div>
-            <div class="text-xs font-semibold text-gray-200">Execution Mode</div>
-            <div class="text-[10px] text-gray-400">Uncheck to enable live real-money order placement</div>
-          </div>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" id="modal-dry-run-chk" onchange="updateModalDryRunLabel()" class="w-4 h-4 rounded text-amber-500 focus:ring-0">
-            <span class="text-xs font-mono font-bold text-amber-400" id="modal-dry-run-label">DRY-RUN (Simulated)</span>
-          </label>
-        </div>
-
         <!-- Modal Status Feedback -->
         <div id="modal-feedback" class="hidden text-xs p-2.5 rounded-lg"></div>
       </div>
 
       <!-- Modal Actions -->
-      <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-800">
-        <button onclick="closeTokenModal()" class="px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white rounded-lg transition">
-          Close
+      <div class="flex items-center justify-between gap-2.5 pt-2 border-t border-gray-800">
+        <button onclick="closeTokenModal()" class="text-xs font-semibold text-gray-400 hover:text-gray-200 px-3 py-2 rounded-lg hover:bg-gray-800 transition">
+          <span>👁️ Preview in Virtual Mode</span>
         </button>
         <button onclick="saveTokenModal()" id="btn-save-token" class="bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-bold px-5 py-2 rounded-lg transition shadow-lg shadow-amber-600/20 flex items-center gap-2">
-          <span>💾 Save & Apply Token</span>
+          <span>💾 Login with Token</span>
         </button>
       </div>
 
@@ -589,6 +665,7 @@ def get_dashboard_html() -> str:
   <!-- JAVASCRIPT LOGIC -->
   <script>
     let isAutoOrder = true;
+    let isDryRun = true;
     let feedItems = [];
     let currentFilter = 'ALL';
     let expandedRows = new Set();
@@ -688,26 +765,149 @@ def get_dashboard_html() -> str:
       }
     }
 
+    function toggleUserMenu() {
+      const dropdown = document.getElementById('user-menu-dropdown');
+      if (dropdown) dropdown.classList.toggle('hidden');
+    }
+
+    // Close user menu on outside click
+    document.addEventListener('click', function(e) {
+      const container = document.getElementById('user-account-container');
+      const dropdown = document.getElementById('user-menu-dropdown');
+      if (dropdown && container && !container.contains(e.target)) {
+        dropdown.classList.add('hidden');
+      }
+    });
+
+    async function logoutDhan() {
+      try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        if (res.ok) {
+          showToast('👋 Logged out from Dhan trading session.', 'ℹ️');
+          fetchTokenStatus();
+          setTimeout(() => {
+            openLoginScreen();
+          }, 300);
+        } else {
+          showToast('Logout request failed', '❌');
+        }
+      } catch (err) {
+        showToast('Logout request failed', '❌');
+      }
+    }
+
+    function openLoginScreen() {
+      openTokenModal();
+    }
+
     async function fetchTokenStatus() {
       try {
-        const res = await fetch('/api/settings/token');
+        const res = await fetch('/api/auth/me');
         if (res.ok) {
           const data = await res.json();
           const badge = document.getElementById('telemetry-token-status');
+          const headerMask = document.getElementById('header-token-mask');
           const dot = document.getElementById('token-indicator-dot');
           const currentBadge = document.getElementById('current-token-badge');
-          
-          if (data.is_configured) {
-            badge.textContent = data.masked_token;
-            badge.className = 'text-emerald-400 font-mono font-semibold';
-            dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
-            if (currentBadge) currentBadge.textContent = `Current: ${data.masked_token}`;
+          const tokenBtn = document.getElementById('token-btn');
+          const headerLoginBtn = document.getElementById('btn-header-login');
+          const userProfileWidget = document.getElementById('user-profile-widget');
+          const userClientIdLabel = document.getElementById('user-client-id-label');
+          const menuClientId = document.getElementById('menu-client-id');
+          const menuExpiry = document.getElementById('menu-expiry-info');
+          const sessionAlert = document.getElementById('login-session-alert');
+          const feedback = document.getElementById('modal-feedback');
+
+          if (data.authenticated) {
+            // USER IS LOGGED IN
+            if (headerLoginBtn) headerLoginBtn.classList.add('hidden');
+            if (userProfileWidget) userProfileWidget.classList.remove('hidden');
+            if (userClientIdLabel) userClientIdLabel.textContent = data.client_id ? `DHAN ${data.client_id}` : 'DHAN USER';
+            if (menuClientId) menuClientId.textContent = `Client ID: ${data.client_id || 'N/A'}`;
+            if (menuExpiry) {
+              menuExpiry.textContent = data.expiry_message || '🟢 Active Session';
+              menuExpiry.className = 'text-[10px] text-emerald-400 font-mono mt-0.5';
+            }
+            if (badge) {
+              badge.textContent = 'Active';
+              badge.className = 'text-emerald-400 font-mono font-bold';
+            }
+            if (headerMask) {
+              headerMask.textContent = 'Active';
+              headerMask.className = 'text-xs font-mono font-bold text-emerald-400 group-hover:text-emerald-300';
+            }
+            if (dot) {
+              dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+            }
+            if (tokenBtn) {
+              tokenBtn.className = 'group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3.5 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5';
+            }
+            if (currentBadge) {
+              currentBadge.innerHTML = `<span class="text-emerald-400 font-bold">🟢 Active</span> <span class="text-gray-400 text-[10px]">(${data.expiry_message || 'Valid session'})</span>`;
+            }
+            if (sessionAlert) {
+              sessionAlert.className = 'hidden';
+            }
+          } else if (data.is_expired) {
+            // TOKEN EXPIRED
+            const expText = data.expiry_message || 'Token Expired';
+            if (headerLoginBtn) headerLoginBtn.classList.remove('hidden');
+            if (userProfileWidget) userProfileWidget.classList.add('hidden');
+            if (badge) {
+              badge.textContent = 'Expired';
+              badge.className = 'text-rose-400 font-mono font-bold';
+            }
+            if (headerMask) {
+              headerMask.textContent = 'Expired';
+              headerMask.className = 'text-xs font-mono font-bold text-rose-400 group-hover:text-rose-300';
+            }
+            if (dot) {
+              dot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-ping';
+            }
+            if (tokenBtn) {
+              tokenBtn.className = 'group bg-rose-950/40 hover:bg-rose-900/50 active:scale-95 border border-rose-500/70 hover:border-rose-400 px-3.5 py-1.5 rounded-xl transition-all shadow-lg shadow-rose-950/50 flex items-center gap-2.5 ring-2 ring-rose-500/30';
+            }
+            if (currentBadge) {
+              currentBadge.innerHTML = `<span class="text-rose-400 font-bold">⚠️ Expired</span> <span class="text-gray-400 text-[10px]">(${expText})</span>`;
+            }
+            if (sessionAlert) {
+              sessionAlert.className = 'block bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs p-3 rounded-xl font-medium shadow-inner';
+              sessionAlert.innerHTML = `⚠️ <b>Dhan Session Expired:</b> ${expText}. Please 1-Click Login or enter token to reconnect live trading.`;
+            }
+            if (!window._hasAlertedExpiry) {
+              window._hasAlertedExpiry = true;
+              showToast(`❌ Dhan Session EXPIRED: ${expText}. Please login.`, '⚠️');
+              if (!window._hasDismissedModal) {
+                openLoginScreen();
+              }
+            }
           } else {
-            badge.textContent = 'NOT CONFIGURED';
-            badge.className = 'text-amber-400 font-mono font-semibold';
-            dot.className = 'w-2 h-2 rounded-full bg-amber-400';
-            if (currentBadge) currentBadge.textContent = 'Current: None';
+            // NOT CONFIGURED / LOGGED OUT
+            if (headerLoginBtn) headerLoginBtn.classList.remove('hidden');
+            if (userProfileWidget) userProfileWidget.classList.add('hidden');
+            if (badge) {
+              badge.textContent = 'Not Logged In';
+              badge.className = 'text-amber-400 font-mono font-semibold';
+            }
+            if (headerMask) {
+              headerMask.textContent = 'Not Logged In';
+              headerMask.className = 'text-xs font-mono font-bold text-amber-400/80 group-hover:text-amber-300';
+            }
+            if (dot) {
+              dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+            }
+            if (tokenBtn) {
+              tokenBtn.className = 'group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-gray-700 hover:border-gray-500 px-3.5 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5';
+            }
+            if (currentBadge) {
+              currentBadge.textContent = 'Current: Not Configured';
+            }
+            if (sessionAlert) {
+              sessionAlert.className = 'block bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs p-3 rounded-xl font-medium';
+              sessionAlert.innerHTML = `ℹ️ <b>Dhan Login Required:</b> Connect your DhanHQ trading account via 1-Click OAuth or Access Token.`;
+            }
           }
+
           if (document.getElementById('input-client-id') && data.client_id) {
             if (!document.getElementById('input-client-id').value) {
               document.getElementById('input-client-id').value = data.client_id;
@@ -718,13 +918,9 @@ def get_dashboard_html() -> str:
               document.getElementById('input-app-id').value = data.app_id;
             }
           }
-          if (document.getElementById('modal-dry-run-chk')) {
-            document.getElementById('modal-dry-run-chk').checked = data.dry_run;
-            updateModalDryRunLabel();
-          }
         }
-      } catch (e) {
-        console.error('Failed fetching token status:', e);
+      } catch (err) {
+        console.error('Failed fetching token status:', err);
       }
     }
 
@@ -761,22 +957,77 @@ def get_dashboard_html() -> str:
       }
     }
 
-    function updateModalDryRunLabel() {
-      const chk = document.getElementById('modal-dry-run-chk');
-      const lbl = document.getElementById('modal-dry-run-label');
-      if (chk.checked) {
-        lbl.textContent = 'DRY-RUN (Simulated)';
-        lbl.className = 'text-xs font-mono font-bold text-amber-400';
+    function updateExecutionModeUI() {
+      const btn = document.getElementById('toggle-mode-btn');
+      const label = document.getElementById('mode-status-label');
+      const indicator = document.getElementById('mode-status-indicator');
+      const modeText = document.getElementById('mode-text');
+
+      if (!btn || !label || !indicator) return;
+
+      if (isDryRun) {
+        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40';
+        label.textContent = 'VIRTUAL';
+        indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
+        if (modeText) {
+          modeText.textContent = 'VIRTUAL (Simulated)';
+          modeText.className = 'text-amber-400 font-mono font-semibold';
+        }
       } else {
-        lbl.textContent = 'LIVE (Real Dhan Execution)';
-        lbl.className = 'text-xs font-mono font-bold text-emerald-400';
+        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle';
+        label.textContent = 'LIVE';
+        indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
+        if (modeText) {
+          modeText.textContent = 'LIVE (Real Orders)';
+          modeText.className = 'text-emerald-400 font-mono font-bold';
+        }
+      }
+    }
+
+    async function toggleExecutionMode() {
+      const targetDryRun = !isDryRun;
+
+      // Safety check: Don't allow live mode if token is not configured or expired
+      if (!targetDryRun) {
+        try {
+          const res = await fetch('/api/settings/token');
+          if (res.ok) {
+            const data = await res.json();
+            if (!data.is_configured || data.is_expired) {
+              showToast('⚠️ Cannot enable Live Trading: Dhan token is missing or expired!', '⚠️');
+              openTokenModal();
+              return;
+            }
+          }
+        } catch (e) {}
+      }
+
+      try {
+        const res = await fetch('/api/toggle-dry-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dry_run: targetDryRun })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          isDryRun = data.dry_run;
+          updateExecutionModeUI();
+          if (!isDryRun) {
+            showToast('🚨 LIVE TRADING ENABLED! Real Dhan market orders will be placed.', '⚡');
+          } else {
+            showToast('🛡️ Switched to VIRTUAL mode (Simulated execution).', 'ℹ️');
+          }
+        } else {
+          showToast('Failed to toggle Execution Mode', '❌');
+        }
+      } catch (err) {
+        showToast('Failed to toggle Execution Mode', '❌');
       }
     }
 
     async function saveTokenModal() {
       const clientId = (document.getElementById('input-client-id').value || '').trim();
       const accessToken = (document.getElementById('input-access-token').value || '').trim();
-      const dryRun = document.getElementById('modal-dry-run-chk').checked;
       const feedback = document.getElementById('modal-feedback');
       const btn = document.getElementById('btn-save-token');
 
@@ -797,13 +1048,12 @@ def get_dashboard_html() -> str:
           body: JSON.stringify({
             client_id: clientId,
             access_token: accessToken,
-            dry_run: dryRun
           })
         });
         const data = await res.json();
         if (res.ok && data.success) {
           feedback.className = 'block bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs p-2.5 rounded-lg';
-          feedback.textContent = `✅ ${data.message} (Mask: ${data.masked_token})`;
+          feedback.textContent = `✅ ${data.message}`;
           showToast('Dhan Access Token updated & validated!', '🔑');
           fetchStatus();
           fetchTokenStatus();
@@ -821,7 +1071,7 @@ def get_dashboard_html() -> str:
       } finally {
         btn.disabled = false;
         btn.classList.remove('opacity-50');
-        btn.innerHTML = '<span>💾 Validate & Save Token</span>';
+        btn.innerHTML = '<span>💾 Save & Apply Token</span>';
       }
     }
 
@@ -831,9 +1081,13 @@ def get_dashboard_html() -> str:
         if (res.ok) {
           const data = await res.json();
           isAutoOrder = data.auto_order;
+          isDryRun = data.dry_run;
           updateAutoOrderUI();
-          document.getElementById('mode-text').textContent = data.dry_run ? 'DRY-RUN (Simulated)' : 'LIVE TRADING';
-          document.getElementById('db-status').textContent = data.db_description;
+          updateExecutionModeUI();
+          const dbStatus = document.getElementById('db-status');
+          if (dbStatus && data.db_description) {
+            dbStatus.textContent = data.db_description;
+          }
         }
       } catch (err) {
         console.error('Failed fetching status:', err);
@@ -895,6 +1149,26 @@ def get_dashboard_html() -> str:
         expandedRows.add(seqId);
       }
       renderFeed();
+    }
+
+    async function clearFeedList() {
+      if (!feedItems || feedItems.length === 0) {
+        showToast('Feed list is already empty.', 'ℹ️');
+        return;
+      }
+      try {
+        const res = await fetch('/api/feed/clear', { method: 'POST' });
+        if (res.ok) {
+          feedItems = [];
+          expandedRows.clear();
+          renderFeed();
+          showToast('🧹 List cleared! All signals & orders remain safely stored in DB for audit.', '✅');
+        } else {
+          showToast('Failed to clear feed list', '❌');
+        }
+      } catch (err) {
+        showToast('Failed to clear feed list', '❌');
+      }
     }
 
     async function fetchFeed() {
@@ -1017,7 +1291,7 @@ def get_dashboard_html() -> str:
                 <span>✅</span> PLACED (Auto)
               </span>
               <span class="text-[10px] text-gray-400 mt-1 truncate max-w-[170px]" title="${order.order_id}">
-                ID: <span class="text-gray-200 font-semibold">${order.order_id || 'DRY_SIMULATED'}</span>
+                ID: <span class="text-gray-200 font-semibold">${order.order_id || 'VIRTUAL_SIMULATED'}</span>
               </span>
               <span class="text-[10px] text-emerald-400 mt-0.5">@ ₹${order.entry_price ? order.entry_price.toFixed(2) : '0.00'} (${order.quantity} sh)</span>
             </div>
@@ -1176,7 +1450,7 @@ def get_dashboard_html() -> str:
       evtSource.onmessage = function(event) {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED') {
+          if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED' || payload.type === 'MODE_TOGGLED' || payload.type === 'FEED_CLEARED') {
             fetchFeed();
             fetchTokenStatus();
             fetchStatus();
@@ -1225,11 +1499,19 @@ def create_app() -> FastAPI:
     @app.get("/api/status")
     async def get_status():
         stored_count = state.storage.get_processed_count()
+        is_exp, exp_msg, exp_ts = check_token_expiry(state.executor.access_token)
         return {
             "dry_run": state.executor.dry_run,
             "auto_order": state.auto_order,
-            "super_order_enabled": settings.super_order_enabled,
-            "max_shares_per_trade": settings.max_shares_per_trade,
+            "capital_per_trade": state.executor.capital_per_trade,
+            "max_shares_per_trade": state.executor.max_shares_per_trade,
+            "max_orders_per_day": state.executor.max_orders_per_day,
+            "today_orders_count": state.executor.get_daily_order_count(),
+            "super_order_enabled": state.executor.super_order_enabled,
+            "target_profit_pct": state.executor.target_profit_pct,
+            "stop_loss_pct": state.executor.stop_loss_pct,
+            "trailing_jump_points": state.executor.trailing_jump_points,
+            "slippage_buffer_pct": state.executor.slippage_buffer_pct,
             "confidence_threshold": settings.confidence_threshold,
             "gemini_model": settings.gemini_model,
             "db_description": state.storage.get_status_description(),
@@ -1237,12 +1519,20 @@ def create_app() -> FastAPI:
             "active_feed_count": len(state.feed_items),
             "masked_token": state.executor.get_masked_token(),
             "client_id": state.executor.client_id,
+            "is_configured": bool(state.executor.access_token) and not is_exp,
+            "is_expired": is_exp,
+            "expiry_message": exp_msg,
+            "expiry_ts": exp_ts,
         }
 
     @app.get("/api/settings/token")
     async def get_token_settings():
+        is_exp, exp_msg, exp_ts = check_token_expiry(state.executor.access_token)
         return {
-            "is_configured": bool(state.executor.access_token),
+            "is_configured": bool(state.executor.access_token) and not is_exp,
+            "is_expired": is_exp,
+            "expiry_message": exp_msg,
+            "expiry_ts": exp_ts,
             "masked_token": state.executor.get_masked_token(),
             "client_id": state.executor.client_id,
             "dry_run": state.executor.dry_run,
@@ -1258,19 +1548,65 @@ def create_app() -> FastAPI:
             dry_run=req.dry_run,
         )
 
+        if req.access_token:
+            state.storage.set_setting("dhan_access_token", req.access_token.strip())
+        if req.client_id:
+            state.storage.set_setting("dhan_client_id", req.client_id.strip())
+
+        is_exp, exp_msg, exp_ts = check_token_expiry(state.executor.access_token)
+
         await state.broadcast_event("TOKEN_UPDATED", {
             "masked_token": state.executor.get_masked_token(),
             "dry_run": state.executor.dry_run,
             "valid": res.get("valid", True),
+            "is_expired": is_exp,
+            "expiry_message": exp_msg,
+            "expiry_ts": exp_ts,
         })
 
         return {
             "success": res.get("valid", True),
-            "message": res.get("message", "Token updated successfully"),
+            "is_expired": is_exp,
+            "expiry_message": exp_msg,
+            "expiry_ts": exp_ts,
+            "message": res.get("message", "Token updated and saved to database successfully"),
             "masked_token": state.executor.get_masked_token(),
             "client_id": state.executor.client_id,
             "dry_run": state.executor.dry_run,
         }
+
+    @app.get("/api/auth/me")
+    async def get_current_user_auth():
+        token = state.executor.access_token
+        is_configured = bool(token and token != "NOT_CONFIGURED")
+        is_exp, exp_msg, exp_ts = check_token_expiry(token) if is_configured else (False, "No token", None)
+        is_authenticated = is_configured and not is_exp
+
+        return {
+            "authenticated": is_authenticated,
+            "client_id": state.executor.client_id,
+            "masked_token": state.executor.get_masked_token() if is_configured else "NOT_CONFIGURED",
+            "is_configured": is_configured,
+            "is_expired": is_exp,
+            "expiry_message": exp_msg,
+            "expiry_ts": exp_ts,
+            "has_app_keys": bool(state.app_id and state.app_secret),
+            "app_id": state.app_id,
+        }
+
+    @app.post("/api/auth/logout")
+    async def logout_user():
+        state.executor.update_credentials(access_token="", dry_run=True)
+        state.storage.set_setting("dhan_access_token", "")
+        await state.broadcast_event("TOKEN_UPDATED", {
+            "masked_token": "NOT_CONFIGURED",
+            "dry_run": True,
+            "valid": False,
+            "is_expired": False,
+            "expiry_message": "Logged out",
+            "expiry_ts": None,
+        })
+        return {"success": True, "authenticated": False, "message": "Logged out from Dhan session"}
 
     @app.get("/api/auth/dhan/login")
     async def dhan_oauth_login(
@@ -1278,24 +1614,27 @@ def create_app() -> FastAPI:
         app_id: Optional[str] = None,
         app_secret: Optional[str] = None,
     ):
-        eff_client_id = (client_id or state.executor.client_id or settings.dhan_client_id or "").strip()
-        eff_app_id = (app_id or state.app_id or settings.dhan_app_id or "").strip()
-        eff_app_secret = (app_secret or state.app_secret or settings.dhan_app_secret or "").strip()
+        eff_client_id = (client_id or state.executor.client_id or state.storage.get_setting("dhan_client_id") or settings.dhan_client_id or "").strip()
+        eff_app_id = (app_id or state.app_id or state.storage.get_setting("dhan_app_id") or settings.dhan_app_id or "").strip()
+        eff_app_secret = (app_secret or state.app_secret or state.storage.get_setting("dhan_app_secret") or settings.dhan_app_secret or "").strip()
 
         if not (eff_client_id and eff_app_id and eff_app_secret):
             return JSONResponse(
                 status_code=400,
                 content={
                     "success": False,
-                    "message": "Missing Dhan credentials. Please configure Client ID, App ID, and App Secret in the modal or .env.",
+                    "message": "Missing Dhan credentials. Please configure Client ID, App ID, and App Secret in the modal or database.",
                 },
             )
 
-        # Update in-memory state
+        # Update in-memory state and persist to DB
         state.app_id = eff_app_id
         state.app_secret = eff_app_secret
         if eff_client_id:
             state.executor.client_id = eff_client_id
+        state.storage.set_setting("dhan_app_id", eff_app_id)
+        state.storage.set_setting("dhan_app_secret", eff_app_secret)
+        state.storage.set_setting("dhan_client_id", eff_client_id)
 
         success, result = generate_dhan_consent_url(
             client_id=eff_client_id,
@@ -1321,8 +1660,8 @@ def create_app() -> FastAPI:
             err_text = error_description or error or "Authentication cancelled or no tokenId received from Dhan"
             return RedirectResponse(url=f"/?auth_error={err_text}")
 
-        eff_app_id = state.app_id or settings.dhan_app_id
-        eff_app_secret = state.app_secret or settings.dhan_app_secret
+        eff_app_id = state.app_id or state.storage.get_setting("dhan_app_id") or settings.dhan_app_id
+        eff_app_secret = state.app_secret or state.storage.get_setting("dhan_app_secret") or settings.dhan_app_secret
 
         if not (eff_app_id and eff_app_secret):
             return RedirectResponse(url="/?auth_error=Dhan+App+ID+and+Secret+not+configured")
@@ -1337,8 +1676,12 @@ def create_app() -> FastAPI:
         if not success:
             return RedirectResponse(url=f"/?auth_error={token_or_err}")
 
-        # Update live executor credentials
+        # Update live executor credentials & persist to DB
         state.executor.update_credentials(access_token=token_or_err, dry_run=False)
+        state.storage.set_setting("dhan_access_token", token_or_err)
+        if state.executor.client_id:
+            state.storage.set_setting("dhan_client_id", state.executor.client_id)
+
         await state.broadcast_event("TOKEN_UPDATED", {
             "masked_token": state.executor.get_masked_token(),
             "dry_run": False,
@@ -1350,25 +1693,47 @@ def create_app() -> FastAPI:
     @app.post("/api/settings/oauth-keys")
     async def save_oauth_keys(req: SaveApiKeysRequest):
         if req.client_id:
-            state.executor.client_id = req.client_id.strip()
-        state.app_id = req.app_id.strip()
-        state.app_secret = req.app_secret.strip()
+            c_id = req.client_id.strip()
+            state.executor.client_id = c_id
+            state.storage.set_setting("dhan_client_id", c_id)
+
+        a_id = req.app_id.strip()
+        a_sec = req.app_secret.strip()
+        state.app_id = a_id
+        state.app_secret = a_sec
+        state.storage.set_setting("dhan_app_id", a_id)
+        state.storage.set_setting("dhan_app_secret", a_sec)
+
         return {
             "success": True,
-            "message": "Dhan App ID and Secret saved for 1-Click Login",
+            "message": "Dhan App ID and Secret saved to database successfully",
             "has_app_keys": bool(state.app_id and state.app_secret),
             "client_id": state.executor.client_id,
+            "app_id": state.app_id,
         }
 
     @app.get("/api/feed")
     async def get_feed():
         return JSONResponse(content=state.feed_items)
 
+    @app.post("/api/feed/clear")
+    async def clear_feed():
+        cleared_count = len(state.feed_items)
+        state.feed_items.clear()
+        await state.broadcast_event("FEED_CLEARED", {"cleared_count": cleared_count})
+        return {"success": True, "cleared_count": cleared_count}
+
     @app.post("/api/toggle-auto-order")
     async def toggle_auto_order(payload: ToggleAutoOrderRequest):
         new_val = state.toggle_auto_order(payload.auto_order)
         await state.broadcast_event("AUTO_ORDER_TOGGLE", {"auto_order": new_val})
         return {"auto_order": new_val}
+
+    @app.post("/api/toggle-dry-run")
+    async def toggle_dry_run(payload: ToggleDryRunRequest):
+        new_val = state.toggle_dry_run(payload.dry_run)
+        await state.broadcast_event("MODE_TOGGLED", {"dry_run": new_val})
+        return {"dry_run": new_val}
 
     @app.post("/api/orders/place")
     async def place_order(req: PlaceOrderRequest):
@@ -1500,12 +1865,25 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     import uvicorn
 
     app = create_app()
+    state = app.state.dashboard
+    is_exp, exp_msg, _ = check_token_expiry(state.executor.access_token)
+
+    if not state.executor.access_token:
+        token_line = "⚪ NOT CONFIGURED (Open GUI to login/paste token)"
+    elif is_exp:
+        token_line = f"❌ EXPIRED ({exp_msg}) — Live execution blocked until renewed"
+    else:
+        token_line = f"🟢 ACTIVE ({exp_msg})"
+
     print("=" * 70)
     print("🚀 NSE News-Based Strategy Web GUI Dashboard")
     print(f"   URL: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
-    print(f"   Mode: {'DRY-RUN (Simulated)' if settings.dry_run else 'LIVE TRADING'}")
-    print(f"   Auto-Order: {'ENABLED (Autonomous)' if settings.auto_order else 'DISABLED (Manual Approval)'}")
+    print(f"   Mode: {'VIRTUAL (Simulated)' if state.executor.dry_run else 'LIVE TRADING'}")
+    print(f"   Auto-Order: {'ENABLED (Autonomous)' if state.auto_order else 'DISABLED (Manual Approval)'}")
     print(f"   AI Model: {settings.gemini_model}")
+    print(f"   Dhan Token: {token_line}")
+    if is_exp:
+        print("   ⚠️  ERROR: Dhan access token is EXPIRED! Please 1-Click Login or update token in GUI.")
     print("   Press Ctrl+C to shutdown the server.")
     print("=" * 70)
     uvicorn.run(app, host=host, port=port, log_level="info")

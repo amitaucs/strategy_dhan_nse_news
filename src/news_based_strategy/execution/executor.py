@@ -1,12 +1,56 @@
-"""Broker order executor with DhanHQ integration and dry-run simulation."""
-
+import base64
+from datetime import datetime
+import json
 import logging
-from typing import Optional
+import time
+from typing import Dict, List, Optional, Tuple
 from news_based_strategy.core.models import TradeResult, TradeSignal
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.universe import resolve_security_id
 
 logger = logging.getLogger(__name__)
+
+
+def parse_jwt_claims(token: str) -> dict:
+    """Safely decode JWT payload without verification."""
+    try:
+        parts = token.strip().split(".")
+        if len(parts) != 3:
+            return {}
+        payload = parts[1]
+        padded = payload + "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(padded).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        return {}
+
+
+def check_token_expiry(token: str) -> Tuple[bool, str, Optional[int]]:
+    """
+    Check if a Dhan JWT token is expired.
+    Returns (is_expired, status_message, expiry_timestamp).
+    """
+    if not token or not token.strip():
+        return False, "No token configured", None
+    claims = parse_jwt_claims(token)
+    exp = claims.get("exp")
+    if exp is None:
+        return False, "Valid format (no expiry claim)", None
+
+    current_ts = int(time.time())
+    if current_ts >= exp:
+        exp_str = time.strftime("%d-%b-%Y %H:%M:%S", time.localtime(exp))
+        return True, f"Token expired on {exp_str}", exp
+    else:
+        diff_seconds = exp - current_ts
+        hours_left = diff_seconds / 3600
+        days_left = diff_seconds / 86400
+        if days_left >= 1:
+            time_left_str = f"{days_left:.1f}d remaining"
+        else:
+            time_left_str = f"{hours_left:.1f}h remaining"
+        exp_str = time.strftime("%d-%b-%Y %H:%M:%S", time.localtime(exp))
+        return False, f"Valid until {exp_str} ({time_left_str})", exp
 
 
 class DhanExecutor:
@@ -20,6 +64,7 @@ class DhanExecutor:
         auto_order: Optional[bool] = None,
         capital_per_trade: float = 20000.0,
         max_shares_per_trade: Optional[int] = None,
+        max_orders_per_day: Optional[int] = None,
         max_news_age_seconds: int = 180,
         super_order_enabled: Optional[bool] = None,
         target_profit_pct: Optional[float] = None,
@@ -41,6 +86,9 @@ class DhanExecutor:
         self.max_shares_per_trade = (
             settings.max_shares_per_trade if max_shares_per_trade is None else max_shares_per_trade
         )
+        self.max_orders_per_day = (
+            settings.max_orders_per_day if max_orders_per_day is None else max_orders_per_day
+        )
         self.super_order_enabled = (
             settings.super_order_enabled if super_order_enabled is None else super_order_enabled
         )
@@ -57,18 +105,33 @@ class DhanExecutor:
             settings.slippage_buffer_pct if slippage_buffer_pct is None else slippage_buffer_pct
         )
 
+        self._daily_order_timestamps: List[datetime] = []
         self.dhan = None
         self._init_client()
+
+    def get_daily_order_count(self, ref_dt: Optional[datetime] = None) -> int:
+        """Return count of orders successfully placed on reference date (defaults to today)."""
+        target_date = (ref_dt or datetime.now()).date()
+        return sum(1 for dt in self._daily_order_timestamps if dt.date() == target_date)
+
+    def record_placed_order(self, dt: Optional[datetime] = None) -> None:
+        """Record an executed order timestamp for daily limit tracking."""
+        self._daily_order_timestamps.append(dt or datetime.now())
+
+    def reset_daily_order_count(self) -> None:
+        """Clear recorded daily order history."""
+        self._daily_order_timestamps.clear()
 
     def _init_client(self) -> None:
         """Initialize Dhan client if credentials are provided and dry_run is False."""
         if self.dry_run:
-            logger.info("DhanExecutor initialized in DRY-RUN mode. No real orders will be placed.")
+            logger.info("DhanExecutor initialized in VIRTUAL mode. No real orders will be placed.")
+            self.dhan = None
             return
 
         if not (self.client_id and self.access_token):
-            logger.warning("Dhan credentials missing. Reverting to DRY-RUN mode.")
-            self.dry_run = True
+            logger.warning("Dhan credentials not configured for live execution.")
+            self.dhan = None
             return
 
         try:
@@ -77,8 +140,8 @@ class DhanExecutor:
             self.dhan = dhanhq(self.client_id, self.access_token)
             logger.info("DhanHQ client successfully initialized for live execution.")
         except ImportError:
-            logger.warning("dhanhq package not installed. Running in DRY-RUN mode.")
-            self.dry_run = True
+            logger.warning("dhanhq package not installed. Live orders will fail until installed.")
+            self.dhan = None
 
     def get_masked_token(self) -> str:
         """Return a safely masked version of the access token."""
@@ -105,24 +168,52 @@ class DhanExecutor:
         self._init_client()
         return self.validate_token()
 
+    def get_token_expiry_info(self) -> dict:
+        """Return structured expiry information for the current token."""
+        is_exp, msg, exp_ts = check_token_expiry(self.access_token)
+        return {
+            "is_expired": is_exp,
+            "expiry_message": msg,
+            "expiry_ts": exp_ts,
+            "formatted_expiry": time.strftime("%d-%b-%Y %H:%M:%S", time.localtime(exp_ts)) if exp_ts else None,
+        }
+
     def validate_token(self) -> dict:
-        """Validate token format or test connection against Dhan API if available."""
+        """Validate token format, check expiry, or test connection against Dhan API if available."""
         if not self.access_token:
             return {
                 "valid": False,
+                "is_expired": False,
                 "message": "Access token is empty",
                 "client_id": self.client_id,
                 "dry_run": self.dry_run,
                 "masked_token": "NOT_CONFIGURED",
+                "expiry_info": self.get_token_expiry_info(),
+            }
+
+        is_exp, exp_msg, exp_ts = check_token_expiry(self.access_token)
+        if is_exp:
+            return {
+                "valid": False,
+                "is_expired": True,
+                "message": f"Dhan Access Token is EXPIRED ({exp_msg})",
+                "client_id": self.client_id,
+                "dry_run": self.dry_run,
+                "masked_token": self.get_masked_token(),
+                "expiry_ts": exp_ts,
+                "expiry_info": self.get_token_expiry_info(),
             }
 
         if self.dry_run:
             return {
                 "valid": True,
-                "message": "Token updated successfully (Running in DRY-RUN mode)",
+                "is_expired": False,
+                "message": f"Token updated successfully ({exp_msg} | Running in VIRTUAL mode)",
                 "client_id": self.client_id,
                 "dry_run": True,
                 "masked_token": self.get_masked_token(),
+                "expiry_ts": exp_ts,
+                "expiry_info": self.get_token_expiry_info(),
             }
 
         if self.dhan:
@@ -132,37 +223,45 @@ class DhanExecutor:
                     avail = funds.get("data", {}).get("availabelBalance", "N/A")
                     return {
                         "valid": True,
-                        "message": f"DhanHQ connected successfully (Available Margin: ₹{avail})",
+                        "is_expired": False,
+                        "message": f"DhanHQ connected successfully (Available Margin: ₹{avail} | {exp_msg})",
                         "client_id": self.client_id,
                         "dry_run": False,
                         "masked_token": self.get_masked_token(),
                         "fund_data": funds.get("data"),
+                        "expiry_info": self.get_token_expiry_info(),
                     }
                 else:
                     err_msg = funds.get("remarks") if isinstance(funds, dict) else str(funds)
                     return {
                         "valid": False,
+                        "is_expired": False,
                         "message": f"Dhan API rejected token: {err_msg}",
                         "client_id": self.client_id,
                         "dry_run": False,
                         "masked_token": self.get_masked_token(),
+                        "expiry_info": self.get_token_expiry_info(),
                     }
             except Exception as e:
                 logger.warning("Failed validating Dhan token against API: %s", e)
                 return {
                     "valid": False,
+                    "is_expired": False,
                     "message": f"Dhan API error: {str(e)}",
                     "client_id": self.client_id,
                     "dry_run": False,
                     "masked_token": self.get_masked_token(),
+                    "expiry_info": self.get_token_expiry_info(),
                 }
 
         return {
             "valid": True,
-            "message": "Token format accepted (dhanhq SDK not installed, using simulated execution)",
+            "is_expired": False,
+            "message": f"Token format accepted ({exp_msg})",
             "client_id": self.client_id,
             "dry_run": self.dry_run,
             "masked_token": self.get_masked_token(),
+            "expiry_info": self.get_token_expiry_info(),
         }
 
     def request_user_approval(
@@ -189,7 +288,7 @@ class DhanExecutor:
                 )
             )
 
-        mode_str = "DRY-RUN (Simulated)" if self.dry_run else "LIVE (Real Dhan Order)"
+        mode_str = "VIRTUAL (Simulated)" if self.dry_run else "LIVE (Real Dhan Order)"
         print("\n   ┌─ 🔔 User Trade Approval Required (AUTO_ORDER=False) ────────")
         print(f"   │ • Mode: {mode_str}")
         print(f"   │ • Proposed Order: {signal.action} {quantity} shares of {signal.symbol} (Dhan SecID: {effective_sec_id})")
@@ -233,7 +332,26 @@ class DhanExecutor:
                     dry_run=self.dry_run,
                 )
 
-        # 2. Defensive check for live execution: must have a valid non-zero numeric Security ID
+        # 2. Daily Max Orders Circuit Breaker (Configurable per day limit)
+        today_order_count = self.get_daily_order_count()
+        if RiskManager.is_daily_order_limit_reached(today_order_count, self.max_orders_per_day):
+            remarks = (
+                f"ORDER REJECTED: Daily order limit reached "
+                f"({today_order_count}/{self.max_orders_per_day} orders placed today)"
+            )
+            logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+            return TradeResult(
+                success=False,
+                symbol=signal.symbol,
+                action=signal.action,
+                quantity=0,
+                product_type=safe_product,
+                order_id=None,
+                remarks=remarks,
+                dry_run=self.dry_run,
+            )
+
+        # 3. Defensive check for live execution: must have a valid non-zero numeric Security ID
         if not self.dry_run and self.dhan:
             if not effective_sec_id or effective_sec_id == "0":
                 remarks = f"ORDER REJECTED: Could not resolve Dhan security ID for {signal.symbol}"
@@ -262,7 +380,7 @@ class DhanExecutor:
             slippage_buffer_pct=self.slippage_buffer_pct,
         )
 
-        # 3. User Approval Gate (if AUTO_ORDER=False)
+        # 4. User Approval Gate (if AUTO_ORDER=False)
         if not self.auto_order:
             approved = self.request_user_approval(
                 signal=signal,
@@ -287,12 +405,12 @@ class DhanExecutor:
                     dry_run=self.dry_run,
                 )
 
-        # 4. Simulated Dry-Run Execution
-        if self.dry_run or not self.dhan:
-            simulated_order_id = f"DRY_{signal.symbol}_{effective_sec_id}_{int(signal.confidence)}"
+        # 5. Virtual Simulated Execution
+        if self.dry_run:
+            simulated_order_id = f"VIRTUAL_{signal.symbol}_{effective_sec_id}_{int(signal.confidence)}"
             if self.super_order_enabled:
                 logger.info(
-                    "🚀 [DRY-RUN SUPER ORDER] %s %d shares of %s (Dhan SecID: %s) @ Entry Limit ₹%.2f | Target: ₹%.2f (+%.1f%%) | SL: ₹%.2f (-%.1f%%) | Trail: %.1f pts (Catalyst: %s)",
+                    "🚀 [VIRTUAL SUPER ORDER] %s %d shares of %s (Dhan SecID: %s) @ Entry Limit ₹%.2f | Target: ₹%.2f (+%.1f%%) | SL: ₹%.2f (-%.1f%%) | Trail: %.1f pts (Catalyst: %s)",
                     signal.action,
                     quantity,
                     signal.symbol,
@@ -313,7 +431,7 @@ class DhanExecutor:
                 )
             else:
                 logger.info(
-                    "🚀 [DRY-RUN] Simulated %s %d shares of %s (Dhan SecID: %s | %s) @ ₹%.2f (Catalyst: %s)",
+                    "🚀 [VIRTUAL] Simulated %s %d shares of %s (Dhan SecID: %s | %s) @ ₹%.2f (Catalyst: %s)",
                     signal.action,
                     quantity,
                     signal.symbol,
@@ -322,8 +440,9 @@ class DhanExecutor:
                     ltp,
                     signal.catalyst_type,
                 )
-                remarks = "Simulated dry-run order execution"
+                remarks = "Simulated virtual order execution"
 
+            self.record_placed_order()
             return TradeResult(
                 success=True,
                 symbol=signal.symbol,
@@ -335,7 +454,21 @@ class DhanExecutor:
                 dry_run=True,
             )
 
-        # 4. Live DhanHQ Execution
+        # 6. Live DhanHQ Execution Guard
+        if not self.dhan:
+            logger.error("❌ Live order execution failed: DhanHQ client not initialized or credentials missing.")
+            return TradeResult(
+                success=False,
+                symbol=signal.symbol,
+                action=signal.action,
+                quantity=quantity,
+                product_type="INTRADAY" if self.super_order_enabled else safe_product,
+                order_id=None,
+                remarks="ORDER REJECTED: DhanHQ client not initialized for live trading. Check token/credentials.",
+                dry_run=False,
+            )
+
+        # 7. Live DhanHQ Execution
         try:
             txn_type = self.dhan.BUY if signal.action.upper() == "BUY" else self.dhan.SELL
 
@@ -370,6 +503,7 @@ class DhanExecutor:
 
             order_id = str(order.get("orderId", "")) if isinstance(order, dict) else str(order)
             logger.info("✅ Live Dhan order placed for %s: %s", signal.symbol, order)
+            self.record_placed_order()
             return TradeResult(
                 success=True,
                 symbol=signal.symbol,
@@ -393,5 +527,5 @@ class DhanExecutor:
             )
 
 
-__all__ = ["DhanExecutor"]
+__all__ = ["DhanExecutor", "check_token_expiry", "parse_jwt_claims"]
 

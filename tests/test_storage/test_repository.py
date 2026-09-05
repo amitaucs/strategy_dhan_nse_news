@@ -125,7 +125,38 @@ class TestStrategyStorage(unittest.TestCase):
             # Storage should now also have NEW_SEQ_100
             self.assertTrue(self.storage.is_processed("NEW_SEQ_100"))
 
+    def test_settings_persistence(self):
+        """Test setting, getting, upserting, and deleting key-value configuration in DB."""
+        # Non-existent setting returns default
+        self.assertIsNone(self.storage.get_setting("non_existent_key"))
+        self.assertEqual(self.storage.get_setting("non_existent_key", default="fallback"), "fallback")
+
+        # Set and get settings
+        self.storage.set_setting("dhan_app_id", "APP_12345")
+        self.storage.set_setting("dhan_app_secret", "SEC_98765")
+        self.storage.set_setting("dhan_client_id", "CLIENT_555")
+
+        self.assertEqual(self.storage.get_setting("dhan_app_id"), "APP_12345")
+        self.assertEqual(self.storage.get_setting("dhan_app_secret"), "SEC_98765")
+        self.assertEqual(self.storage.get_setting("dhan_client_id"), "CLIENT_555")
+
+        # Upsert (update existing key)
+        self.storage.set_setting("dhan_app_id", "APP_99999_UPDATED")
+        self.assertEqual(self.storage.get_setting("dhan_app_id"), "APP_99999_UPDATED")
+
+        # Get all settings dictionary
+        all_settings = self.storage.get_all_settings()
+        self.assertIn("dhan_app_id", all_settings)
+        self.assertEqual(all_settings["dhan_app_id"], "APP_99999_UPDATED")
+        self.assertEqual(all_settings["dhan_app_secret"], "SEC_98765")
+
+        # Delete setting
+        deleted = self.storage.delete_setting("dhan_app_secret")
+        self.assertTrue(deleted)
+        self.assertIsNone(self.storage.get_setting("dhan_app_secret"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

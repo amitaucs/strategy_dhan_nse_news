@@ -3,11 +3,12 @@
 Supports remote MySQL (MariaDB) with transparent local SQLite fallback.
 """
 
+from datetime import datetime
 import logging
 import os
 from pathlib import Path
 import sqlite3
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import FilingAudit, TradeResult
 
@@ -157,6 +158,15 @@ class StrategyStorage:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS system_settings (
+                            `key` VARCHAR(64) PRIMARY KEY,
+                            `value` TEXT NOT NULL,
+                            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 return
             except Exception as e:
                 logger.warning("Failed creating MySQL tables: %s. Reverting to SQLite.", e)
@@ -202,6 +212,15 @@ class StrategyStorage:
                         remarks TEXT,
                         dry_run INTEGER NOT NULL,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS system_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
@@ -360,6 +379,120 @@ class StrategyStorage:
             row = cursor.fetchone()
             return int(row[0]) if row else 0
         return 0
+
+    def get_today_order_count(self) -> int:
+        """Return the number of successfully placed orders today."""
+        self._ensure_connection()
+        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        if self.is_mysql_active:
+            try:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM trade_executions WHERE DATE(timestamp) = CURRENT_DATE AND order_id IS NOT NULL"
+                    )
+                    row = cursor.fetchone()
+                    return int(row[0]) if row else 0
+            except Exception as e:
+                logger.warning("Failed querying today order count in MySQL: %s", e)
+        elif self._sqlite_conn:
+            try:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM trade_executions WHERE timestamp LIKE ? AND order_id IS NOT NULL",
+                    (f"{today_prefix}%",),
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+            except Exception as e:
+                logger.warning("Failed querying today order count in SQLite: %s", e)
+        return 0
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Retrieve a stored setting value by key."""
+        if not key:
+            return default
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT `value` FROM system_settings WHERE `key` = %s", (key,))
+                    row = cursor.fetchone()
+                    return str(row[0]) if row and row[0] is not None else default
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT value FROM system_settings WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return str(row[0]) if row and row[0] is not None else default
+        except Exception as e:
+            logger.warning("Error fetching setting '%s': %s", key, e)
+        return default
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Upsert a setting key-value pair into the database."""
+        if not key:
+            return
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO system_settings (`key`, `value`, `updated_at`)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), `updated_at` = CURRENT_TIMESTAMP
+                        """,
+                        (key, value),
+                    )
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO system_settings (key, value, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+                        """,
+                        (key, value),
+                    )
+        except Exception as e:
+            logger.warning("Failed setting '%s' to '%s': %s", key, value, e)
+
+    def get_all_settings(self) -> Dict[str, str]:
+        """Retrieve all stored settings as a dictionary."""
+        self._ensure_connection()
+        res: Dict[str, str] = {}
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT `key`, `value` FROM system_settings")
+                    for row in cursor.fetchall():
+                        res[str(row[0])] = str(row[1])
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT key, value FROM system_settings")
+                for row in cursor.fetchall():
+                    res[str(row[0])] = str(row[1])
+        except Exception as e:
+            logger.warning("Error fetching all settings: %s", e)
+        return res
+
+    def delete_setting(self, key: str) -> bool:
+        """Delete a setting by key."""
+        if not key:
+            return False
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM system_settings WHERE `key` = %s", (key,))
+                    return cursor.rowcount > 0
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    cursor = self._sqlite_conn.cursor()
+                    cursor.execute("DELETE FROM system_settings WHERE key = ?", (key,))
+                    return cursor.rowcount > 0
+        except Exception as e:
+            logger.warning("Error deleting setting '%s': %s", key, e)
+        return False
 
     def get_status_description(self) -> str:
         """Return human-readable connection description for CLI banner."""

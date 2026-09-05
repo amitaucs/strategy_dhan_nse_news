@@ -7,7 +7,7 @@ import time
 from typing import Optional
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
-from news_based_strategy.execution.executor import DhanExecutor
+from news_based_strategy.execution.executor import DhanExecutor, check_token_expiry
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
@@ -173,7 +173,7 @@ def print_announcement(
                         slippage_buffer_pct=executor.slippage_buffer_pct,
                     )
 
-                    mode_label = "DRY-RUN (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
+                    mode_label = "VIRTUAL (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
                     db_name = "MySQL 'trade_executions'" if (storage and storage.is_mysql_active) else "SQLite 'trade_executions'"
 
                     print(f"\n   ┌─ 🚀 DhanHQ Super Order Placed (Mode: {mode_label}) ──────────")
@@ -272,15 +272,24 @@ def run_poller(
     storage = StrategyStorage()
     db_desc = storage.get_status_description()
 
+    persisted_client_id = storage.get_setting("dhan_client_id")
+    persisted_token = storage.get_setting("dhan_access_token")
+    eff_client_id = persisted_client_id if persisted_client_id is not None else settings.dhan_client_id
+    eff_token = persisted_token if persisted_token is not None else settings.dhan_access_token
+
     analyzer = (
-        FilingAnalyzer(api_key=settings.gemini_api_key, model_name=settings.gemini_model)
+        FilingAnalyzer(
+            api_key=settings.gemini_api_key,
+            model_name=settings.gemini_model,
+            thinking_budget=settings.gemini_thinking_budget,
+        )
         if enable_ai
         else None
     )
 
     executor = DhanExecutor(
-        client_id=settings.dhan_client_id,
-        access_token=settings.dhan_access_token,
+        client_id=eff_client_id,
+        access_token=eff_token,
         dry_run=settings.dry_run,
         auto_order=effective_auto_order,
         capital_per_trade=settings.capital_per_trade,
@@ -299,7 +308,7 @@ def run_poller(
         else "Disabled (--no-ai)"
     )
 
-    exec_mode = "DRY-RUN (Simulated)" if settings.dry_run else "LIVE (Real Orders on Dhan)"
+    exec_mode = "VIRTUAL (Simulated)" if settings.dry_run else "LIVE (Real Orders on Dhan)"
     auto_label = "Auto (Autonomous)" if effective_auto_order else "Manual (Prompt Approval)"
     broker_desc = (
         f"Active ({exec_mode} | Order Mode: {auto_label} | Max Cap: {settings.max_shares_per_trade} shares/trade | Min Confidence: >={settings.confidence_threshold}%)"
@@ -313,17 +322,28 @@ def run_poller(
 
     mode_str = "Simulated Feed (--simulate)" if simulate else ("Single Shot (--once)" if once else f"Continuous (every {interval_seconds}s)")
 
+    is_exp, exp_msg, _ = check_token_expiry(executor.access_token)
+    if not executor.access_token:
+        token_desc = "⚪ Not Configured"
+    elif is_exp:
+        token_desc = f"❌ EXPIRED ({exp_msg})"
+    else:
+        token_desc = f"🟢 Active ({exp_msg})"
+
     print("=" * 70)
     print("⚡ Real-Time NSE Corporate Announcements Poller (Console Mode)")
     print(f"   Mode: {mode_str}")
     print(f"   Universe: {universe_desc}")
     print(f"   Persistence: {db_desc}")
+    print(f"   Dhan Token: {token_desc}")
     print(f"   Order Style: {order_style}")
     print(f"   AI Intelligence: {ai_desc}")
     print(f"   Noise Rejection: {'Active (Trading window, share certs, etc. suppressed)' if filter_noise else 'Disabled'}")
     print(f"   Max News Age: {max_age_seconds}s (Stale news circuit breaker)" if max_age_seconds > 0 else "   Max News Age: Disabled")
     print(f"   PDF Extractor: {pypdf_status}")
     print(f"   Broker Execution: {broker_desc}")
+    if is_exp:
+        print("   ⚠️  WARNING: Broker token is EXPIRED! Live order executions will fail.")
     if symbol:
         print(f"   Symbol Filter: {symbol.upper()}")
     print("   Press Ctrl+C to stop.")

@@ -9,11 +9,17 @@ logger = logging.getLogger(__name__)
 
 
 class FilingAnalyzer:
-    """Classifies corporate announcements using Gemini 3.7 Flash."""
+    """Classifies corporate announcements using Gemini 3.1 Flash Lite."""
 
-    def __init__(self, api_key: str = "", model_name: str = "gemini-3.7-flash"):
+    def __init__(
+        self,
+        api_key: str = "",
+        model_name: str = "gemini-3.1-flash-lite",
+        thinking_budget: int = 0,
+    ):
         self.api_key = api_key
         self.model_name = model_name
+        self.thinking_budget = thinking_budget
         self.client = None
         self._init_client()
 
@@ -53,6 +59,8 @@ class FilingAnalyzer:
                     response_mime_type="application/json",
                     response_schema=FilingAudit,
                     temperature=0.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 ),
             )
             if hasattr(response, "parsed") and response.parsed:
@@ -60,16 +68,18 @@ class FilingAnalyzer:
             return FilingAudit.model_validate_json(response.text)
         except Exception as e:
             err_str = str(e)
-            if "404" in err_str and "is no longer available" in err_str and self.model_name != "gemini-flash-latest":
-                logger.warning("Model %s unavailable on this API key. Retrying with gemini-flash-latest...", self.model_name)
+            if ("404" in err_str or "no longer available" in err_str or "NOT_FOUND" in err_str) and self.model_name != "gemini-3.1-flash-lite":
+                logger.warning("Model %s unavailable on this API key. Retrying with gemini-3.1-flash-lite...", self.model_name)
                 try:
                     response = self.client.models.generate_content(
-                        model="gemini-flash-latest",
+                        model="gemini-3.1-flash-lite",
                         contents=[prompt],
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json",
                             response_schema=FilingAudit,
                             temperature=0.0,
+                            thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                         ),
                     )
                     if hasattr(response, "parsed") and response.parsed:

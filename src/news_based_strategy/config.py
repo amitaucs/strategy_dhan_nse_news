@@ -62,7 +62,8 @@ class Settings:
 
     # AI Reasoning
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    gemini_thinking_budget: int = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
     confidence_threshold: int = int(os.getenv("CONFIDENCE_THRESHOLD", "70"))
 
     # Execution & Risk Parameters
@@ -76,6 +77,7 @@ class Settings:
     auto_order: bool = os.getenv("AUTO_ORDER", "true").lower() in ("true", "1", "yes")
     capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "20000.0"))
     max_shares_per_trade: int = int(os.getenv("MAX_SHARES_PER_TRADE", "10"))
+    max_orders_per_day: int = int(os.getenv("MAX_ORDERS_PER_DAY", "3"))
 
     # Super Order (Bracket Order with TP, SL, Trailing Jump)
     super_order_enabled: bool = os.getenv("SUPER_ORDER_ENABLED", "true").lower() in ("true", "1", "yes")

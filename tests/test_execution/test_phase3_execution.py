@@ -39,6 +39,7 @@ class TestPhase3Execution(unittest.TestCase):
     def test_default_config_settings(self):
         """Test that Phase 3 default settings are properly loaded from config/env."""
         self.assertEqual(settings.max_shares_per_trade, 10)
+        self.assertEqual(settings.max_orders_per_day, 3)
         self.assertEqual(settings.confidence_threshold, 70)
         self.assertTrue(settings.super_order_enabled)
         self.assertEqual(settings.target_profit_pct, 3.0)

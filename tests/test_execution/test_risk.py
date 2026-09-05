@@ -160,6 +160,58 @@ class TestRiskManager(unittest.TestCase):
         entry, tp, sl = RiskManager.calculate_super_order_levels(ltp=0.0)
         self.assertEqual((entry, tp, sl), (0.0, 0.0, 0.0))
 
+    def test_is_daily_order_limit_reached(self):
+        """Test daily order limit checking logic."""
+        # Limit 3: count 0, 1, 2 not reached; count 3, 4 reached
+        self.assertFalse(RiskManager.is_daily_order_limit_reached(today_order_count=0, max_orders_per_day=3))
+        self.assertFalse(RiskManager.is_daily_order_limit_reached(today_order_count=2, max_orders_per_day=3))
+        self.assertTrue(RiskManager.is_daily_order_limit_reached(today_order_count=3, max_orders_per_day=3))
+        self.assertTrue(RiskManager.is_daily_order_limit_reached(today_order_count=4, max_orders_per_day=3))
+
+        # Limit <= 0 disables check
+        self.assertFalse(RiskManager.is_daily_order_limit_reached(today_order_count=100, max_orders_per_day=0))
+
+    def test_executor_daily_max_order_limit_enforcement(self):
+        """Test that DhanExecutor enforces the max 3 orders per day limit."""
+        from news_based_strategy.core.models import TradeSignal
+        from news_based_strategy.execution.executor import DhanExecutor
+
+        executor = DhanExecutor(dry_run=True, max_orders_per_day=3)
+        self.assertEqual(executor.get_daily_order_count(), 0)
+
+        def make_signal(sym: str) -> TradeSignal:
+            return TradeSignal(
+                symbol=sym,
+                security_id="383",
+                action="BUY",
+                product_type="CNC",
+                confidence=95,
+                catalyst_type="ORDER_WIN",
+                summary=f"Order win for {sym}",
+            )
+
+        # 1st order -> Allowed
+        r1 = executor.execute_order(make_signal("BEL"), ltp=300.0)
+        self.assertTrue(r1.success)
+        self.assertEqual(executor.get_daily_order_count(), 1)
+
+        # 2nd order -> Allowed
+        r2 = executor.execute_order(make_signal("HAL"), ltp=4500.0)
+        self.assertTrue(r2.success)
+        self.assertEqual(executor.get_daily_order_count(), 2)
+
+        # 3rd order -> Allowed (reaches 3)
+        r3 = executor.execute_order(make_signal("BHEL"), ltp=250.0)
+        self.assertTrue(r3.success)
+        self.assertEqual(executor.get_daily_order_count(), 3)
+
+        # 4th order -> REJECTED due to daily limit (3/3)
+        r4 = executor.execute_order(make_signal("SBIN"), ltp=800.0)
+        self.assertFalse(r4.success)
+        self.assertEqual(r4.quantity, 0)
+        self.assertIn("ORDER REJECTED: Daily order limit reached (3/3 orders placed today)", r4.remarks)
+        self.assertEqual(executor.get_daily_order_count(), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

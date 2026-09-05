@@ -151,6 +151,21 @@ class RiskManager:
 
         return entry_price, target_price, sl_price
 
+    @staticmethod
+    def is_daily_order_limit_reached(today_order_count: int, max_orders_per_day: int = 3) -> bool:
+        """Check if the maximum allowable orders for today have been reached.
+
+        Args:
+            today_order_count: Number of orders already executed today.
+            max_orders_per_day: Maximum allowed orders per trading day (0 or negative disables check).
+
+        Returns:
+            bool: True if order limit reached or exceeded, False otherwise.
+        """
+        if max_orders_per_day <= 0:
+            return False
+        return today_order_count >= max_orders_per_day
+
 
 __all__ = ["RiskManager"]
 

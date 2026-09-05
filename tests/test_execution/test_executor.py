@@ -165,6 +165,46 @@ class TestDhanExecutor(unittest.TestCase):
         self.assertEqual(kwargs["stopLossPrice"], 297.0)
         self.assertEqual(kwargs["trailingJump"], 5.0)
 
+    def test_jwt_expiry_check_valid_and_expired(self):
+        """Test parse_jwt_claims and check_token_expiry with future and past timestamps."""
+        import base64
+        import json
+        import time
+        from news_based_strategy.execution.executor import check_token_expiry, parse_jwt_claims
+
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).decode().rstrip("=")
+
+        # Future token (Valid)
+        future_ts = int(time.time()) + 3600
+        future_payload = base64.urlsafe_b64encode(json.dumps({"exp": future_ts, "dhanClientId": "12345"}).encode()).decode().rstrip("=")
+        future_token = f"{header}.{future_payload}.signature"
+
+        claims = parse_jwt_claims(future_token)
+        self.assertEqual(claims["dhanClientId"], "12345")
+
+        is_exp, msg, exp_ts = check_token_expiry(future_token)
+        self.assertFalse(is_exp)
+        self.assertIn("Valid until", msg)
+        self.assertEqual(exp_ts, future_ts)
+
+        # Past token (Expired)
+        past_ts = int(time.time()) - 3600
+        past_payload = base64.urlsafe_b64encode(json.dumps({"exp": past_ts, "dhanClientId": "12345"}).encode()).decode().rstrip("=")
+        past_token = f"{header}.{past_payload}.signature"
+
+        is_exp_past, msg_past, exp_ts_past = check_token_expiry(past_token)
+        self.assertTrue(is_exp_past)
+        self.assertIn("Token expired on", msg_past)
+        self.assertEqual(exp_ts_past, past_ts)
+
+        # DhanExecutor.validate_token rejects expired token
+        executor = DhanExecutor(client_id="12345", access_token=past_token, dry_run=False)
+        val = executor.validate_token()
+        self.assertFalse(val["valid"])
+        self.assertTrue(val["is_expired"])
+        self.assertIn("EXPIRED", val["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

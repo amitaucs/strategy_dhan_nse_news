@@ -80,11 +80,11 @@ class TestFilingAnalyzer(unittest.TestCase):
         self.assertIsNone(audit)
 
     def test_analyzer_auto_fallback_on_404_deprecation(self):
-        analyzer = FilingAnalyzer(api_key="mock_key", model_name="gemini-2.5-flash")
+        analyzer = FilingAnalyzer(api_key="mock_key", model_name="gemini-1.5-flash-old")
         mock_client = MagicMock()
 
         # First call fails with 404 is no longer available
-        err = RuntimeError("404 NOT_FOUND: This model models/gemini-2.5-flash is no longer available to new users.")
+        err = RuntimeError("404 NOT_FOUND: This model models/gemini-1.5-flash-old is no longer available to new users.")
         fallback_response = MagicMock()
         fallback_response.parsed = FilingAudit(
             sentiment="BULLISH",
@@ -101,6 +101,30 @@ class TestFilingAnalyzer(unittest.TestCase):
         self.assertEqual(audit.sentiment, "BULLISH")
         self.assertEqual(audit.confidence, 85)
         self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+
+    def test_analyzer_thinking_config_budget(self):
+        analyzer = FilingAnalyzer(api_key="mock_key", model_name="gemini-3.7-flash", thinking_budget=0)
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.parsed = FilingAudit(
+            sentiment="NEUTRAL",
+            confidence=90,
+            catalyst_type="COMPLIANCE",
+            material_impact=False,
+            summary="Routine board meeting notice.",
+        )
+        mock_client.models.generate_content.return_value = mock_response
+        analyzer.client = mock_client
+
+        audit = analyzer.audit("INFY", "Board Meeting", "Details")
+        self.assertIsNotNone(audit)
+        
+        # Verify call kwargs include thinking_config with thinking_budget = 0
+        call_kwargs = mock_client.models.generate_content.call_args.kwargs
+        config_arg = call_kwargs.get("config")
+        self.assertIsNotNone(config_arg)
+        self.assertEqual(config_arg.thinking_config.thinking_budget, 0)
 
 
 if __name__ == "__main__":
