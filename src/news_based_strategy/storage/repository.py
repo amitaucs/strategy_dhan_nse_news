@@ -15,6 +15,7 @@ import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import FilingAudit, TradeResult
+from news_based_strategy.execution.risk import get_ist_now
 
 logger = logging.getLogger(__name__)
 
@@ -577,14 +578,15 @@ class StrategyStorage:
 
     @_thread_safe
     def get_today_order_count(self) -> int:
-        """Return the number of successfully placed orders today."""
+        """Return the number of successfully placed orders today in IST."""
         self._ensure_connection()
-        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        today_prefix = get_ist_now().strftime("%Y-%m-%d")
         if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
-                        "SELECT COUNT(*) FROM trade_executions WHERE DATE(timestamp) = CURRENT_DATE AND order_id IS NOT NULL"
+                        "SELECT COUNT(*) FROM trade_executions WHERE DATE(timestamp) = %s AND order_id IS NOT NULL",
+                        (today_prefix,),
                     )
                     row = cursor.fetchone()
                     return int(row[0]) if row else 0
@@ -813,7 +815,7 @@ class StrategyStorage:
             return ""
         self._ensure_connection()
         session_token = secrets.token_urlsafe(48)
-        expires_at = (datetime.now() + timedelta(days=max_age_days)).strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (get_ist_now() + timedelta(days=max_age_days)).strftime("%Y-%m-%d %H:%M:%S")
         try:
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
@@ -840,7 +842,7 @@ class StrategyStorage:
         if not session_token:
             return None
         self._ensure_connection()
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:

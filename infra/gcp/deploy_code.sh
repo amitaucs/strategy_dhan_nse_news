@@ -21,10 +21,19 @@ while [ -h "$SOURCE" ]; do
   [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if [[ -f "${SCRIPT_DIR}/pyproject.toml" || -d "${SCRIPT_DIR}/src/news_based_strategy" ]]; then
+  PROJECT_ROOT="$SCRIPT_DIR"
+  GCP_DIR="${SCRIPT_DIR}/infra/gcp"
+elif [[ -f "${SCRIPT_DIR}/../../pyproject.toml" || -d "${SCRIPT_DIR}/../../src/news_based_strategy" ]]; then
+  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  GCP_DIR="$SCRIPT_DIR"
+else
+  PROJECT_ROOT="$SCRIPT_DIR"
+  GCP_DIR="${SCRIPT_DIR}/infra/gcp"
+fi
 
 # Default Configuration (parsed from terraform.tfvars if available)
-TFVARS="${SCRIPT_DIR}/terraform.tfvars"
+TFVARS="${GCP_DIR}/terraform.tfvars"
 if [[ -f "$TFVARS" ]]; then
   DEFAULT_PROJECT_ID=$(grep -E '^\s*project_id\s*=' "$TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
   DEFAULT_ZONE=$(grep -E '^\s*zone\s*=' "$TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "us-central1-a")

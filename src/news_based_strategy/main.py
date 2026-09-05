@@ -8,7 +8,7 @@ from typing import Optional
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
 from news_based_strategy.execution.executor import DhanExecutor, check_token_expiry
-from news_based_strategy.execution.risk import RiskManager
+from news_based_strategy.execution.risk import RiskManager, get_ist_now
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
 from news_based_strategy.ingestion.monitor import NSEFilingMonitor
@@ -62,7 +62,7 @@ def print_announcement(
         print(f"\n  ↳ [{announcement.symbol}{fno_badge}] 🔇 Filtered out & rejected ({reason}) — {brief}")
         return
 
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = get_ist_now().strftime("%H:%M:%S IST")
     fno_badge = " [F&O]" if announcement.is_fno else ""
     sec_id = resolve_security_id(announcement.symbol)
     sec_badge = f" [Dhan ID: {sec_id}]" if sec_id else ""
@@ -213,7 +213,7 @@ def print_announcement(
 
 def get_simulated_nse_payload() -> list[dict]:
     """Generate realistic live market announcements for simulation."""
-    now_ts = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
+    now_ts = get_ist_now().strftime("%d-%b-%Y %H:%M:%S")
     t_int = int(time.time())
     return [
         # 1. Non-F&O stock (fails F&O gate)
@@ -376,7 +376,7 @@ def run_poller(
     cycle = 1
     try:
         while True:
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST")
             print(f"\n[{now_str}] Cycle #{cycle}: Polling NSE announcements...", end=" ", flush=True)
 
             new_items = monitor.get_new_announcements(

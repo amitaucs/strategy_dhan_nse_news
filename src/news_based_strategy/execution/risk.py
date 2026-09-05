@@ -1,12 +1,19 @@
 """Risk management, market hours validation, and position sizing."""
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import math
 from typing import Optional
 
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_ist_now() -> datetime:
+    """Return current timestamp in Indian Standard Time (IST, UTC+05:30) as a naive datetime."""
+    return datetime.now(timezone.utc).astimezone(IST_TZ).replace(tzinfo=None)
+
 
 class RiskManager:
-    """Enforces market trading rules and capital sizing for Indian equities."""
+    """Enforces market trading rules and capital sizing for Indian equities in IST."""
 
     # Standard NSE Equity trading window (IST)
     MARKET_OPEN_HOUR = 9
@@ -21,9 +28,14 @@ class RiskManager:
     SQUARE_OFF_MINUTE = 0
 
     @classmethod
+    def get_ist_now(cls) -> datetime:
+        """Return current timestamp in Indian Standard Time (IST, UTC+05:30) as a naive datetime."""
+        return get_ist_now()
+
+    @classmethod
     def is_market_open(cls, dt: Optional[datetime] = None) -> bool:
-        """Check if the current time falls within live NSE equity market hours."""
-        now = dt or datetime.now()
+        """Check if the current time falls within live NSE equity market hours (09:15 - 15:30 IST)."""
+        now = dt or cls.get_ist_now()
         # Monday is 0 and Friday is 4. Saturday (5) and Sunday (6) are closed.
         if now.weekday() >= 5:
             return False
@@ -43,13 +55,13 @@ class RiskManager:
         """Check if new trade entries are allowed based on market hours and trade cutoff (default: 02:45 PM IST).
         
         Args:
-            dt: Evaluation datetime (defaults to datetime.now()).
+            dt: Evaluation datetime (defaults to current IST time).
             cutoff_str: Optional cutoff time string (e.g. '14:45').
 
         Returns:
             tuple of (is_allowed: bool, reason: str)
         """
-        now = dt or datetime.now()
+        now = dt or cls.get_ist_now()
         if now.weekday() >= 5:
             return False, "Market is closed (Weekend)"
 
@@ -89,13 +101,13 @@ class RiskManager:
         """Check if current time has reached or passed the automated intraday square-off time (default: 03:00 PM IST).
         
         Args:
-            dt: Evaluation datetime (defaults to datetime.now()).
+            dt: Evaluation datetime (defaults to current IST time).
             square_off_str: Optional square off time string (e.g. '15:00').
 
         Returns:
             bool: True if current time is within square-off window on a weekday, False otherwise.
         """
-        now = dt or datetime.now()
+        now = dt or cls.get_ist_now()
         if now.weekday() >= 5:
             return False
 
@@ -174,7 +186,7 @@ class RiskManager:
         Args:
             an_dt_str: Exchange broadcast timestamp string (e.g. '04-Sep-2026 15:18:43').
             max_age_seconds: Max acceptable age in seconds before news is deemed stale (0 disables check).
-            reference_time: Evaluation time (defaults to datetime.now()).
+            reference_time: Evaluation time (defaults to current IST time).
 
         Returns:
             tuple of (is_fresh: bool, age_seconds: float)
@@ -187,7 +199,7 @@ class RiskManager:
             # If exchange timestamp cannot be parsed, fail open with 0.0 latency
             return True, 0.0
 
-        ref = reference_time or datetime.now()
+        ref = reference_time or cls.get_ist_now()
         age = (ref - exchange_time).total_seconds()
 
         # Handle negative delta due to minor clock skew between exchange and local machine
@@ -252,6 +264,6 @@ class RiskManager:
         return today_order_count >= max_orders_per_day
 
 
-__all__ = ["RiskManager"]
+__all__ = ["RiskManager", "get_ist_now", "IST_TZ"]
 
 

@@ -1,16 +1,19 @@
 # Production Dockerfile for NSE Catalyst Trading Terminal
 FROM python:3.11-slim
 
-# Prevent python from writing pyc files and buffering stdout/stderr
+# Prevent python from writing pyc files and buffering stdout/stderr; configure IST timezone
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    TZ=Asia/Kolkata
 
 WORKDIR /app
 
-# Install system dependencies (curl for healthchecks if needed)
+# Install system dependencies (curl for healthchecks, tzdata for Indian Standard Time)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies first to leverage Docker layer caching

@@ -16,7 +16,7 @@ from news_based_strategy.execution.executor import (
     mask_client_id,
     parse_jwt_claims,
 )
-from news_based_strategy.execution.risk import RiskManager
+from news_based_strategy.execution.risk import RiskManager, get_ist_now
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
 from news_based_strategy.ingestion.universe import (
@@ -178,7 +178,7 @@ class DashboardState:
         self.auto_order = settings.auto_order
         self._poller_task: Optional[asyncio.Task] = None
         self.poll_cycles_count: int = 0
-        self.last_polled_at: Optional[datetime] = datetime.now()
+        self.last_polled_at: Optional[datetime] = get_ist_now()
         self.suppressed_noise_count: int = 0
         self._last_square_off_date = None
 
@@ -212,7 +212,7 @@ class DashboardState:
                 and is_bullish
             )
             created_time_str = str(audit.get("created_at") or "")
-            time_disp = created_time_str[-8:] if len(created_time_str) >= 8 else datetime.now().strftime("%H:%M:%S")
+            time_disp = created_time_str[-8:] if len(created_time_str) >= 8 else get_ist_now().strftime("%H:%M:%S")
             is_fresh, age = RiskManager.is_news_fresh(audit.get("created_at"), max_age_seconds=180)
             loaded_items.append({
                 "seq_id": audit.get("seq_id", ""),
@@ -250,11 +250,11 @@ class DashboardState:
         from news_based_strategy.ingestion.monitor import NSEFilingMonitor
 
         monitor = NSEFilingMonitor(storage=self.storage)
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
+        print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
                 # ⏰ Check for automated 3:00 PM IST Square-Off
-                now = datetime.now()
+                now = get_ist_now()
                 today_date = now.date()
                 if (
                     RiskManager.is_square_off_time(now, square_off_str=self.executor.square_off_time)
@@ -262,11 +262,11 @@ class DashboardState:
                 ):
                     self._last_square_off_date = today_date
                     sq_res = await asyncio.to_thread(self.executor.square_off_all_positions)
-                    print(f"[{now.strftime('%H:%M:%S')}] ⏰ [3:00 PM AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S IST')}] ⏰ [3:00 PM AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
                     await self.broadcast_event("AUTO_SQUARE_OFF", sq_res)
 
                 self.poll_cycles_count += 1
-                self.last_polled_at = datetime.now()
+                self.last_polled_at = get_ist_now()
 
                 def on_filtered(item: Announcement, reason: str):
                     self.suppressed_noise_count += 1
@@ -282,7 +282,7 @@ class DashboardState:
                     extract_pdf=True,
                     on_filtered=on_filtered,
                 )
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
+                print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
                 for ann in new_items:
                     processed = self.process_and_add_announcement(ann)
                     if processed:
@@ -290,7 +290,7 @@ class DashboardState:
 
                 await self.broadcast_event("POLL_CYCLE_COMPLETED", {
                     "cycle": self.poll_cycles_count,
-                    "last_polled_time": self.last_polled_at.strftime("%H:%M:%S"),
+                    "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
                     "last_polled_ts": int(self.last_polled_at.timestamp()),
                     "suppressed_noise_count": self.suppressed_noise_count,
                 })
@@ -409,7 +409,7 @@ class DashboardState:
             order_data["status"] = "SKIPPED_LOW_CONFIDENCE"
             order_data["remarks"] = f"Confidence < {settings.confidence_threshold}% or non-material"
 
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = get_ist_now().strftime("%H:%M:%S IST")
         sec_id_str = f" [Dhan ID: {sec_id}]" if sec_id and sec_id != "0" else ""
         print(f"\n[{ts}] [{ann.symbol} [F&O]{sec_id_str}] 📢 {ann.desc}", flush=True)
         print(f"   ↳ Status: 🟢 PASSED ALL FILTERS ➔ Sent to AI Reasoning Engine", flush=True)
@@ -432,7 +432,7 @@ class DashboardState:
             "desc": ann.desc,
             "details": ann.clean_content,
             "an_dt": ann.an_dt,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": get_ist_now().strftime("%H:%M:%S IST"),
             "is_stale": not is_fresh,
             "age_seconds": int(age),
             "sentiment": sentiment_label,
@@ -872,7 +872,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <!-- Right: Real-Time Telemetry Counters -->
       <div class="flex items-center gap-4 text-gray-400">
         <div class="flex items-center gap-1.5">
-          <span>Last Exchange Check:</span>
+          <span>Last Exchange Check (IST):</span>
           <span id="poller-last-time" class="text-emerald-400 font-mono font-bold">Just now</span>
           <span id="poller-elapsed-tag" class="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded font-mono font-semibold">0s ago</span>
         </div>
@@ -2196,8 +2196,9 @@ def create_app() -> FastAPI:
             "expiry_ts": exp_ts,
             "poll_interval_seconds": settings.poll_interval_seconds,
             "poll_cycles_count": state.poll_cycles_count,
-            "last_polled_time": state.last_polled_at.strftime("%H:%M:%S") if state.last_polled_at else None,
-            "last_polled_ts": int(state.last_polled_at.timestamp()) if state.last_polled_at else int(datetime.now().timestamp()),
+            "last_polled_time": state.last_polled_at.strftime("%H:%M:%S IST") if state.last_polled_at else None,
+            "last_polled_ts": int(state.last_polled_at.timestamp()) if state.last_polled_at else int(get_ist_now().timestamp()),
+            "server_time_ist": get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
             "suppressed_noise_count": state.suppressed_noise_count,
             "fno_universe_size": len(get_fno_symbols()),
             "is_market_open": RiskManager.is_market_open(),
@@ -2520,8 +2521,8 @@ def create_app() -> FastAPI:
                 status_code=403,
                 detail="Simulated feed is disabled. Set IS_SIMULATE_FEED=true in .env to enable simulation mode.",
             )
-        now_ts = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
-        t_int = int(datetime.now().timestamp())
+        now_ts = get_ist_now().strftime("%d-%b-%Y %H:%M:%S")
+        t_int = int(get_ist_now().timestamp())
 
         # Test announcements
         simulated_raw = [
