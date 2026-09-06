@@ -416,30 +416,97 @@ def index_page() -> str:
 
     <!-- Scanner View -->
     <div id="scannerTab" class="tab-content">
-        <div class="flex justify-between items-center mb-4 gap-4">
-            <div class="relative flex-1 max-w-md">
-                <i class="fa-solid fa-search absolute left-3 top-2.5 text-slate-500 text-xs"></i>
-                <input type="text" id="symbolSearch" onkeyup="filterTable()" placeholder="Search symbol (e.g. TCS, RELIANCE)..." 
-                       class="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-4 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+        <!-- Interactive Multi-Gate Filter Toolbar -->
+        <div class="card-bg p-3.5 rounded-xl mb-4 border border-slate-700/80 bg-slate-900/70 flex flex-wrap items-center justify-between gap-3 shadow">
+            <div class="flex flex-wrap items-center gap-2.5 flex-1">
+                <!-- Symbol Search Input -->
+                <div class="relative min-w-[150px] max-w-xs flex-1">
+                    <i class="fa-solid fa-search absolute left-3 top-2.5 text-slate-500 text-xs"></i>
+                    <input type="text" id="symbolSearch" onkeyup="filterTable()" placeholder="Search ticker / sec ID..." 
+                           class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 shadow-inner">
+                </div>
+
+                <!-- Gate 1: EMA Alignment Filter -->
+                <select id="filterEma" onchange="filterTable()" 
+                        class="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-blue-400 cursor-pointer shadow">
+                    <option value="all">All EMA Alignments</option>
+                    <option value="stacked">🟢 20 &gt; 50 &gt; 200 Stacked</option>
+                    <option value="not_stacked">🔴 Not Stacked</option>
+                </select>
+
+                <!-- Gate 2: Nearest EMA & Dip % Filter -->
+                <select id="filterDip" onchange="filterTable()" 
+                        class="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer shadow">
+                    <option value="all">All Dip States</option>
+                    <option value="in_dip">🟢 In Dip (≤ Tolerance)</option>
+                    <option value="out_dip">⚪ Out of Dip (&gt; Tolerance)</option>
+                    <option value="EMA_20">Near 20 EMA</option>
+                    <option value="EMA_50">Near 50 EMA</option>
+                    <option value="EMA_200">Near 200 EMA</option>
+                </select>
+
+                <!-- Gate 3: Heikin Ashi Filter -->
+                <select id="filterHa" onchange="filterTable()" 
+                        class="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-emerald-400 cursor-pointer shadow">
+                    <option value="all">All Heikin Ashi</option>
+                    <option value="green">🟢 Green HA (Bullish)</option>
+                    <option value="red">🔴 Red HA (Pullback)</option>
+                </select>
+
+                <!-- Gate 4: SuperTrend Filter -->
+                <select id="filterSt" onchange="filterTable()" 
+                        class="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-sky-400 cursor-pointer shadow">
+                    <option value="all">All SuperTrend</option>
+                    <option value="bullish">🟢 Bullish (Green)</option>
+                    <option value="bearish">🔴 Bearish (Red)</option>
+                </select>
+
+                <!-- Setup Trigger Filter -->
+                <select id="filterTrigger" onchange="filterTable()" 
+                        class="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs font-medium rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-emerald-400 cursor-pointer shadow">
+                    <option value="all">All Setups</option>
+                    <option value="qualified">🎯 BUY TRIGGER Only</option>
+                    <option value="watching">⏳ Watching Only</option>
+                </select>
             </div>
-            <div class="flex items-center gap-2">
-                <button onclick="filterQualifiedOnly()" id="filterQualBtn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs border border-slate-700">
-                    <i class="fa-solid fa-filter mr-1"></i> Qualified Only
+
+            <!-- Quick Action & Match Count Badge -->
+            <div class="flex items-center gap-2.5">
+                <span id="showingCountBadge" class="text-xs font-mono font-semibold px-2.5 py-1 bg-slate-800/90 text-slate-300 rounded-lg border border-slate-700 whitespace-nowrap">
+                    Showing: 200 / 200
+                </span>
+                <button onclick="resetAllFilters()" title="Clear all filters back to default" 
+                        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold border border-slate-600 transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-rotate-left text-xs"></i> Reset
                 </button>
             </div>
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-slate-700 card-bg">
             <table class="w-full text-left text-xs text-slate-300">
-                <thead class="bg-slate-800/80 text-slate-400 uppercase font-semibold border-b border-slate-700">
+                <thead class="bg-slate-800/80 text-slate-400 uppercase font-semibold border-b border-slate-700 select-none">
                     <tr>
-                        <th class="p-3">Symbol</th>
-                        <th class="p-3">LTP (₹)</th>
-                        <th class="p-3">EMA Alignment</th>
-                        <th class="p-3">Nearest EMA &amp; Dip %</th>
-                        <th class="p-3">Heikin Ashi</th>
-                        <th class="p-3">SuperTrend</th>
-                        <th class="p-3">Setup Trigger</th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('symbol')" title="Sort by Symbol">
+                            Symbol <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('ltp')" title="Sort by LTP">
+                            LTP (₹) <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('ema_alignment')" title="Sort by EMA Alignment">
+                            EMA Alignment <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('nearest_ema')" title="Sort by Dip Distance">
+                            Nearest EMA &amp; Dip % <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('ha')" title="Sort by Heikin Ashi">
+                            Heikin Ashi <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('supertrend')" title="Sort by SuperTrend">
+                            SuperTrend <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
+                        <th class="p-3 cursor-pointer hover:text-white transition" onclick="sortTable('trigger')" title="Sort by Setup Trigger">
+                            Setup Trigger <i class="fa-solid fa-sort text-[10px] ml-1 text-slate-500"></i>
+                        </th>
                         <th class="p-3 text-right">Action</th>
                     </tr>
                 </thead>
@@ -657,6 +724,38 @@ def index_page() -> str:
             }}
         }}
 
+        let sortColumn = 'trigger';
+        let sortAsc = false;
+
+        function sortTable(col) {{
+            if (sortColumn === col) {{
+                sortAsc = !sortAsc;
+            }} else {{
+                sortColumn = col;
+                sortAsc = (col === 'symbol' || col === 'nearest_ema');
+            }}
+            renderScannerTable();
+        }}
+
+        function resetAllFilters() {{
+            const search = document.getElementById('symbolSearch');
+            if (search) search.value = '';
+            const fEma = document.getElementById('filterEma');
+            if (fEma) fEma.value = 'all';
+            const fDip = document.getElementById('filterDip');
+            if (fDip) fDip.value = 'all';
+            const fHa = document.getElementById('filterHa');
+            if (fHa) fHa.value = 'all';
+            const fSt = document.getElementById('filterSt');
+            if (fSt) fSt.value = 'all';
+            const fTrig = document.getElementById('filterTrigger');
+            if (fTrig) fTrig.value = 'all';
+            qualifiedOnly = false;
+            sortColumn = 'trigger';
+            sortAsc = false;
+            renderScannerTable();
+        }}
+
         async function fetchScans() {{
             try {{
                 const res = await fetch('/api/scans');
@@ -669,8 +768,15 @@ def index_page() -> str:
 
         function renderScannerTable() {{
             const tbody = document.getElementById('scannerTableBody');
-            const query = document.getElementById('symbolSearch').value.toUpperCase().trim();
+            const searchInput = document.getElementById('symbolSearch');
+            const query = searchInput ? searchInput.value.toUpperCase().trim() : '';
             
+            const filterEma = document.getElementById('filterEma') ? document.getElementById('filterEma').value : 'all';
+            const filterDip = document.getElementById('filterDip') ? document.getElementById('filterDip').value : 'all';
+            const filterHa = document.getElementById('filterHa') ? document.getElementById('filterHa').value : 'all';
+            const filterSt = document.getElementById('filterSt') ? document.getElementById('filterSt').value : 'all';
+            const filterTrigger = document.getElementById('filterTrigger') ? document.getElementById('filterTrigger').value : 'all';
+
             // Dynamically evaluate dip and setup readiness against active tolerance
             allScans.forEach(item => {{
                 const distNum = Number(item.nearest_ema_dist_pct || 0);
@@ -679,14 +785,73 @@ def index_page() -> str:
             }});
 
             let filtered = [...allScans];
+
+            // 1. Symbol / Sec ID Search Filter
             if (query) {{
-                filtered = filtered.filter(s => s.symbol.toUpperCase().includes(query));
-            }}
-            if (qualifiedOnly) {{
-                filtered = filtered.filter(s => s.is_setup_ready);
+                filtered = filtered.filter(s => s.symbol.toUpperCase().includes(query) || String(s.sec_id || '').includes(query));
             }}
 
-            filtered.sort((a, b) => (b.is_setup_ready ? 1 : 0) - (a.is_setup_ready ? 1 : 0) || a.nearest_ema_dist_pct - b.nearest_ema_dist_pct);
+            // 2. EMA Alignment Filter
+            if (filterEma === 'stacked') {{
+                filtered = filtered.filter(s => s.is_ema_stacked);
+            }} else if (filterEma === 'not_stacked') {{
+                filtered = filtered.filter(s => !s.is_ema_stacked);
+            }}
+
+            // 3. Nearest EMA & Dip % Filter
+            if (filterDip === 'in_dip') {{
+                filtered = filtered.filter(s => s.is_in_dip);
+            }} else if (filterDip === 'out_dip') {{
+                filtered = filtered.filter(s => !s.is_in_dip);
+            }} else if (filterDip === 'EMA_20' || filterDip === 'EMA_50' || filterDip === 'EMA_200') {{
+                filtered = filtered.filter(s => s.nearest_ema === filterDip);
+            }}
+
+            // 4. Heikin Ashi Filter
+            if (filterHa === 'green') {{
+                filtered = filtered.filter(s => s.is_ha_green);
+            }} else if (filterHa === 'red') {{
+                filtered = filtered.filter(s => !s.is_ha_green);
+            }}
+
+            // 5. SuperTrend Filter
+            if (filterSt === 'bullish') {{
+                filtered = filtered.filter(s => s.is_supertrend_green);
+            }} else if (filterSt === 'bearish') {{
+                filtered = filtered.filter(s => !s.is_supertrend_green);
+            }}
+
+            // 6. Setup Trigger Filter
+            if (filterTrigger === 'qualified' || qualifiedOnly) {{
+                filtered = filtered.filter(s => s.is_setup_ready);
+            }} else if (filterTrigger === 'watching') {{
+                filtered = filtered.filter(s => !s.is_setup_ready);
+            }}
+
+            // Sort filtered results
+            filtered.sort((a, b) => {{
+                let valA, valB;
+                if (sortColumn === 'symbol') {{
+                    valA = a.symbol; valB = b.symbol;
+                    return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                }} else if (sortColumn === 'ltp') {{
+                    valA = Number(a.ltp || 0); valB = Number(b.ltp || 0);
+                }} else if (sortColumn === 'ema_alignment') {{
+                    valA = a.is_ema_stacked ? 1 : 0; valB = b.is_ema_stacked ? 1 : 0;
+                }} else if (sortColumn === 'nearest_ema') {{
+                    valA = Number(a.nearest_ema_dist_pct || 0); valB = Number(b.nearest_ema_dist_pct || 0);
+                }} else if (sortColumn === 'ha') {{
+                    valA = a.is_ha_green ? 1 : 0; valB = b.is_ha_green ? 1 : 0;
+                }} else if (sortColumn === 'supertrend') {{
+                    valA = a.is_supertrend_green ? 1 : 0; valB = b.is_supertrend_green ? 1 : 0;
+                }} else {{
+                    // Default trigger sorting: Qualified first, then nearest dip distance
+                    valA = (a.is_setup_ready ? 1000 : 0) - Number(a.nearest_ema_dist_pct || 0);
+                    valB = (b.is_setup_ready ? 1000 : 0) - Number(b.nearest_ema_dist_pct || 0);
+                }}
+                if (valA === valB) return 0;
+                return sortAsc ? (valA > valB ? 1 : -1) : (valA < valB ? 1 : -1);
+            }});
 
             const qualifiedCount = allScans.filter(s => s.is_setup_ready).length;
             document.getElementById('scanCountBadge').innerText = allScans.length;
@@ -694,8 +859,13 @@ def index_page() -> str:
             document.getElementById('metricQualified').innerText = qualifiedCount;
             document.getElementById('signalCountBadge').innerText = qualifiedCount;
 
+            const showingBadge = document.getElementById('showingCountBadge');
+            if (showingBadge) {{
+                showingBadge.innerText = `Showing: ${{filtered.length}} / ${{allScans.length}}`;
+            }}
+
             if (filtered.length === 0) {{
-                tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No matching stocks found.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No matching stocks found for selected filters. <button onclick="resetAllFilters()" class="text-sky-400 underline ml-1">Reset Filters</button></td></tr>';
                 return;
             }}
 
