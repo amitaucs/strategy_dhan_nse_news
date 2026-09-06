@@ -59,7 +59,8 @@ def get_status() -> Dict[str, Any]:
         "dhan_client_id": settings.DHAN_CLIENT_ID or "NOT_CONFIGURED",
         "dhan_connected": bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN),
         "ema_stack": f"{settings.EMA_FAST} > {settings.EMA_MID} > {settings.EMA_SLOW}",
-        "proximity_tolerance_pct": f"{settings.EMA_PROXIMITY_PCT}%",
+        "proximity_tolerance_pct": f"{runner.screener.ema_proximity_pct:.2f}%",
+        "tolerance_value": runner.screener.ema_proximity_pct,
         "supertrend": f"ATR({settings.SUPERTREND_PERIOD}), Mult({settings.SUPERTREND_MULTIPLIER})",
         "risk_reward_ratio": f"1:{settings.RISK_REWARD_RATIO}",
         "capital_per_trade": f"₹{settings.CAPITAL_PER_TRADE:,.2f}",
@@ -68,6 +69,31 @@ def get_status() -> Dict[str, Any]:
         "scanned_count": len(runner.latest_results),
         "triggered_count": len(runner.latest_signals),
     }
+
+
+@app.post("/api/tolerance")
+async def update_tolerance(request: Request, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """Dynamically adjust the EMA Dip Proximity Tolerance (%)."""
+    payload = await request.json()
+    try:
+        new_tol = float(payload.get("tolerance_pct", 0.5))
+        if new_tol <= 0 or new_tol > 20.0:
+            return {"status": "error", "message": "Tolerance must be between 0.01% and 20.0%"}
+
+        runner.screener.ema_proximity_pct = new_tol
+        logger.info("Adjusted EMA Dip Proximity Tolerance to %.2f%%", new_tol)
+        
+        # Trigger an immediate background re-scan with new tolerance
+        background_tasks.add_task(runner.scan_universe)
+        
+        return {
+            "status": "success",
+            "tolerance_pct": new_tol,
+            "message": f"Dip tolerance updated to {new_tol:.2f}% and universe re-scan initiated",
+        }
+    except Exception as e:
+        logger.error("Error updating tolerance: %s", e)
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/scans")
@@ -164,8 +190,14 @@ def index_page() -> str:
         .badge-red {{ background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #dc2626; }}
         .badge-yellow {{ background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #d97706; }}
         .badge-blue {{ background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #2563eb; }}
+        .badge-purple {{ background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid #9333ea; }}
         .card-bg {{ background: #1e293b; border: 1px solid #334155; }}
         .tab-btn.active {{ border-bottom: 2px solid #38bdf8; color: #38bdf8; font-weight: 600; }}
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button {{ 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }}
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
@@ -198,8 +230,56 @@ def index_page() -> str:
         </div>
     </header>
 
+    <!-- Interactive Dip Tolerance Control Banner -->
+    <div class="card-bg p-4 rounded-xl my-6 border border-amber-500/30 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-md">
+        <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 text-lg">
+                    <i class="fa-solid fa-sliders"></i>
+                </div>
+                <div>
+                    <div class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                        Adjustable EMA Dip Proximity Tolerance
+                        <span id="activeTolBadge" class="px-2 py-0.5 text-xs font-mono font-bold rounded badge-yellow">≤ 0.50%</span>
+                    </div>
+                    <p class="text-xs text-slate-400">Controls how close price must pull back or kiss the 20, 50, or 200 EMA to qualify as a dip setup.</p>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                <!-- Preset Quick Buttons -->
+                <div class="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-lg border border-slate-700 text-xs">
+                    <span class="text-[11px] text-slate-400 px-1.5">Presets:</span>
+                    <button onclick="setPresetTolerance(0.2)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.2%</button>
+                    <button onclick="setPresetTolerance(0.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.5%</button>
+                    <button onclick="setPresetTolerance(0.8)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.8%</button>
+                    <button onclick="setPresetTolerance(1.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">1.0%</button>
+                    <button onclick="setPresetTolerance(1.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">1.5%</button>
+                    <button onclick="setPresetTolerance(2.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">2.0%</button>
+                </div>
+
+                <!-- Custom Step Input -->
+                <div class="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+                    <button onclick="stepTolerance(-0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+                        <i class="fa-solid fa-minus"></i>
+                    </button>
+                    <input type="number" id="customTolInput" value="0.5" min="0.05" max="10.0" step="0.05"
+                           class="w-16 bg-transparent text-center text-xs font-mono font-bold text-amber-400 focus:outline-none py-1.5">
+                    <span class="text-xs text-slate-500 pr-2">%</span>
+                    <button onclick="stepTolerance(0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>
+
+                <button onclick="applyCustomTolerance()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition shadow flex items-center gap-1.5">
+                    <i class="fa-solid fa-check"></i> Apply &amp; Re-Scan
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Metrics Strip -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 my-6">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div class="card-bg p-4 rounded-xl shadow">
             <span class="text-xs font-medium text-slate-400">Universe Size</span>
             <div class="text-2xl font-bold text-white mt-1" id="metricUniverse">200</div>
@@ -216,9 +296,9 @@ def index_page() -> str:
             <span class="text-xs text-slate-500">Swing Low Protected SL</span>
         </div>
         <div class="card-bg p-4 rounded-xl shadow">
-            <span class="text-xs font-medium text-slate-400">Dip Tolerance</span>
-            <div class="text-2xl font-bold text-amber-400 mt-1">≤ 0.5%</div>
-            <span class="text-xs text-slate-500">EMA Proximity Band</span>
+            <span class="text-xs font-medium text-slate-400">Active Dip Tolerance</span>
+            <div class="text-2xl font-bold text-amber-400 mt-1" id="metricDipTol">≤ 0.50%</div>
+            <span class="text-xs text-slate-500">Adjustable on screen</span>
         </div>
         <div class="card-bg p-4 rounded-xl shadow">
             <span class="text-xs font-medium text-slate-400">Order Execution</span>
@@ -232,7 +312,7 @@ def index_page() -> str:
         <div class="flex items-center gap-4 flex-wrap">
             <span class="font-semibold text-slate-300"><i class="fa-solid fa-list-check text-blue-400 mr-1.5"></i> Entry Gates:</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">1. Bullish Stack (20 &gt; 50 &gt; 200 EMA)</span>
-            <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">2. Pullback Dip (≤ 0.5% or Touch EMA)</span>
+            <span class="px-2 py-1 bg-slate-800 rounded border border-amber-500/40 text-amber-300 font-semibold" id="ruleBannerDip">2. Pullback Dip (≤ 0.50% or Touch EMA)</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">3. 1st Green Heikin Ashi Candle</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">4. SuperTrend Bullish (Green)</span>
         </div>
@@ -367,6 +447,7 @@ def index_page() -> str:
     <script>
         let allScans = [];
         let qualifiedOnly = false;
+        let currentTolerance = 0.5;
 
         function switchTab(tabId) {{
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -391,6 +472,11 @@ def index_page() -> str:
                 document.getElementById('metricUniverse').innerText = data.scanned_count || '200';
                 document.getElementById('metricQualified').innerText = data.triggered_count || '0';
                 
+                if (data.tolerance_value !== undefined) {{
+                    currentTolerance = data.tolerance_value;
+                    updateToleranceDisplay(currentTolerance);
+                }}
+
                 const toggleBtn = document.getElementById('toggleBtn');
                 const badge = document.getElementById('scannerStatusBadge');
                 if (data.is_scanner_running) {{
@@ -404,6 +490,61 @@ def index_page() -> str:
                 }}
             }} catch(e) {{
                 console.error(e);
+            }}
+        }}
+
+        function updateToleranceDisplay(val) {{
+            const formatted = '≤ ' + parseFloat(val).toFixed(2) + '%';
+            document.getElementById('activeTolBadge').innerText = formatted;
+            document.getElementById('metricDipTol').innerText = formatted;
+            document.getElementById('ruleBannerDip').innerText = '2. Pullback Dip (' + formatted + ' or Touch EMA)';
+            document.getElementById('customTolInput').value = parseFloat(val).toFixed(2);
+        }}
+
+        function stepTolerance(delta) {{
+            let val = parseFloat(document.getElementById('customTolInput').value) || 0.5;
+            val = Math.max(0.05, Math.min(10.0, val + delta));
+            document.getElementById('customTolInput').value = val.toFixed(2);
+        }}
+
+        async function setPresetTolerance(val) {{
+            document.getElementById('customTolInput').value = val.toFixed(2);
+            await sendToleranceUpdate(val);
+        }}
+
+        async function applyCustomTolerance() {{
+            const val = parseFloat(document.getElementById('customTolInput').value);
+            if (isNaN(val) || val <= 0) {{
+                alert('Please enter a valid tolerance percentage (e.g. 0.5)');
+                return;
+            }}
+            await sendToleranceUpdate(val);
+        }}
+
+        async function sendToleranceUpdate(val) {{
+            const icon = document.getElementById('scanIcon');
+            icon.classList.add('animate-spin');
+            try {{
+                const res = await fetch('/api/tolerance', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ tolerance_pct: val }})
+                }});
+                const data = await res.json();
+                if (data.status === 'success') {{
+                    currentTolerance = data.tolerance_pct;
+                    updateToleranceDisplay(currentTolerance);
+                    setTimeout(() => {{
+                        refreshData();
+                        icon.classList.remove('animate-spin');
+                    }}, 1500);
+                }} else {{
+                    alert('Failed to update tolerance: ' + data.message);
+                    icon.classList.remove('animate-spin');
+                }}
+            }} catch(e) {{
+                alert('Tolerance update error: ' + e);
+                icon.classList.remove('animate-spin');
             }}
         }}
 
@@ -518,7 +659,7 @@ def index_page() -> str:
                 const tbody = document.getElementById('positionsTableBody');
 
                 if (positions.length === 0) {{
-                    tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No active positions.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No open positional holdings.</td></tr>';
                     return;
                 }}
 

@@ -23,7 +23,7 @@ class TestServerAPI(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("ST15 Large-Cap Positional Momentum", response.text)
-        self.assertIn("Live Universe Scanner", response.text)
+        self.assertIn("Adjustable EMA Dip Proximity Tolerance", response.text)
 
     def test_api_status(self):
         response = self.client.get("/api/status")
@@ -32,7 +32,25 @@ class TestServerAPI(unittest.TestCase):
         self.assertEqual(data["strategy"], "ST15_LargeCap")
         self.assertEqual(data["universe"], "Nifty 200")
         self.assertIn("proximity_tolerance_pct", data)
-        self.assertIn("supertrend", data)
+        self.assertIn("tolerance_value", data)
+
+    def test_api_tolerance_update(self):
+        # Update to 1.25%
+        res = self.client.post("/api/tolerance", json={"tolerance_pct": 1.25})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["tolerance_pct"], 1.25)
+        self.assertEqual(runner.screener.ema_proximity_pct, 1.25)
+
+        # Verify status endpoint reflects updated tolerance
+        status_res = self.client.get("/api/status")
+        status_data = status_res.json()
+        self.assertEqual(status_data["tolerance_value"], 1.25)
+        self.assertEqual(status_data["proximity_tolerance_pct"], "1.25%")
+
+        # Reset back to 0.5%
+        self.client.post("/api/tolerance", json={"tolerance_pct": 0.5})
 
     def test_api_scans(self):
         response = self.client.get("/api/scans")
