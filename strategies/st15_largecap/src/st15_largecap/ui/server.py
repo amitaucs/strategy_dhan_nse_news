@@ -236,49 +236,56 @@ def index_page() -> str:
     <div class="card-bg p-4 rounded-xl my-6 border border-amber-500/30 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 shadow-md">
         <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
             <div class="flex items-center gap-3">
-                <div class="p-2 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 text-lg">
+                <div class="p-2.5 bg-amber-500/20 text-amber-400 rounded-lg border border-amber-500/30 text-lg">
                     <i class="fa-solid fa-sliders"></i>
                 </div>
                 <div>
                     <div class="text-sm font-bold text-slate-100 flex items-center gap-2">
-                        Adjustable EMA Dip Proximity Tolerance
+                        Proximity Tolerance Adjustment
                         <span id="activeTolBadge" class="px-2 py-0.5 text-xs font-mono font-bold rounded badge-yellow">≤ +0.50%</span>
                     </div>
                     <p class="text-xs text-slate-400">
-                        Positive (+%): Near EMA pullback • 0%: Exact EMA Touch/Kiss • Negative (-%): Penetration dip below EMA.
+                        Select a standard preset from the dropdown or fine-tune with the <span class="text-amber-300 font-mono font-bold">- / +</span> stepper.
                     </p>
                 </div>
             </div>
 
-            <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-                <!-- Preset Quick Buttons -->
-                <div class="flex flex-wrap items-center gap-1 bg-slate-900/80 p-1 rounded-lg border border-slate-700 text-xs">
-                    <span class="text-[11px] text-slate-400 px-1">Presets:</span>
-                    <button onclick="setPresetTolerance(-0.5)" class="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded text-xs font-mono transition border border-rose-800/40">-0.5%</button>
-                    <button onclick="setPresetTolerance(-0.2)" class="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded text-xs font-mono transition border border-rose-800/40">-0.2%</button>
-                    <button onclick="setPresetTolerance(0.0)" class="px-2 py-1 bg-sky-950/50 hover:bg-sky-900/70 text-sky-300 rounded text-xs font-mono font-bold transition border border-sky-800/50">0.0% (Touch)</button>
-                    <button onclick="setPresetTolerance(0.2)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.2%</button>
-                    <button onclick="setPresetTolerance(0.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.5%</button>
-                    <button onclick="setPresetTolerance(0.8)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.8%</button>
-                    <button onclick="setPresetTolerance(1.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+1.0%</button>
-                    <button onclick="setPresetTolerance(1.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+1.5%</button>
-                    <button onclick="setPresetTolerance(2.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+2.0%</button>
+            <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                <!-- Preset Dropdown Selection -->
+                <div class="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-700 shadow-inner">
+                    <label for="tolerancePresetSelect" class="text-xs text-slate-400 font-medium flex items-center gap-1.5 whitespace-nowrap">
+                        <i class="fa-solid fa-chevron-down text-amber-400 text-[10px]"></i> Preset:
+                    </label>
+                    <select id="tolerancePresetSelect" onchange="onPresetDropdownChange()" 
+                            class="bg-slate-800 text-amber-300 font-mono text-xs font-semibold rounded px-2.5 py-1 border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer">
+                        <option value="-0.50">-0.50% (Deep Penetration)</option>
+                        <option value="-0.20">-0.20% (Dip Below EMA)</option>
+                        <option value="0.00">0.00% (Exact Touch / Kiss)</option>
+                        <option value="0.20">+0.20% (Tight Pullback)</option>
+                        <option value="0.50" selected>+0.50% (Standard Dip - Default)</option>
+                        <option value="0.80">+0.80% (Moderate Dip)</option>
+                        <option value="1.00">+1.00% (Wide Dip)</option>
+                        <option value="1.50">+1.50% (Loose Pullback)</option>
+                        <option value="2.00">+2.00% (Broad Zone)</option>
+                        <option value="custom" disabled hidden>Custom</option>
+                    </select>
                 </div>
 
-                <!-- Custom Step Input -->
-                <div class="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-                    <button onclick="stepTolerance(-0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+                <!-- Stepper Adjuster [-] [0.50 %] [+] -->
+                <div class="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden shadow-inner">
+                    <button onclick="stepTolerance(-0.1)" title="Decrease tolerance" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
                         <i class="fa-solid fa-minus"></i>
                     </button>
-                    <input type="number" id="customTolInput" value="0.50" min="-5.0" max="10.0" step="0.05"
+                    <input type="number" id="customTolInput" value="0.50" min="-5.0" max="10.0" step="0.05" onchange="onCustomInputChange()"
                            class="w-16 bg-transparent text-center text-xs font-mono font-bold text-amber-400 focus:outline-none py-1.5">
-                    <span class="text-xs text-slate-500 pr-2">%</span>
-                    <button onclick="stepTolerance(0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+                    <span class="text-xs text-slate-500 pr-2 font-mono">%</span>
+                    <button onclick="stepTolerance(0.1)" title="Increase tolerance" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
                         <i class="fa-solid fa-plus"></i>
                     </button>
                 </div>
 
-                <button onclick="applyCustomTolerance()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition shadow flex items-center gap-1.5">
+                <!-- Apply Button -->
+                <button onclick="applyCustomTolerance()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition shadow flex items-center gap-1.5 whitespace-nowrap">
                     <i class="fa-solid fa-check"></i> Apply &amp; Re-Scan
                 </button>
             </div>
@@ -500,6 +507,45 @@ def index_page() -> str:
             }}
         }}
 
+        function onPresetDropdownChange() {{
+            const select = document.getElementById('tolerancePresetSelect');
+            const val = parseFloat(select.value);
+            if (!isNaN(val)) {{
+                document.getElementById('customTolInput').value = val.toFixed(2);
+                sendToleranceUpdate(val);
+            }}
+        }}
+
+        function onCustomInputChange() {{
+            const val = parseFloat(document.getElementById('customTolInput').value);
+            if (!isNaN(val)) {{
+                syncDropdownWithVal(val);
+            }}
+        }}
+
+        function stepTolerance(delta) {{
+            let val = parseFloat(document.getElementById('customTolInput').value) || 0.0;
+            val = Math.max(-5.0, Math.min(10.0, val + delta));
+            document.getElementById('customTolInput').value = val.toFixed(2);
+            syncDropdownWithVal(val);
+        }}
+
+        function syncDropdownWithVal(val) {{
+            const select = document.getElementById('tolerancePresetSelect');
+            const valStr = parseFloat(val).toFixed(2);
+            let matched = false;
+            for (let opt of select.options) {{
+                if (parseFloat(opt.value).toFixed(2) === valStr) {{
+                    select.value = opt.value;
+                    matched = true;
+                    break;
+                }}
+            }}
+            if (!matched) {{
+                select.value = 'custom';
+            }}
+        }}
+
         function updateToleranceDisplay(val) {{
             const num = parseFloat(val);
             const prefix = num > 0 ? '+' : '';
@@ -508,17 +554,7 @@ def index_page() -> str:
             document.getElementById('metricDipTol').innerText = formatted;
             document.getElementById('ruleBannerDip').innerText = '2. Pullback Dip (' + formatted + ' or Touch EMA)';
             document.getElementById('customTolInput').value = num.toFixed(2);
-        }}
-
-        function stepTolerance(delta) {{
-            let val = parseFloat(document.getElementById('customTolInput').value) || 0.0;
-            val = Math.max(-5.0, Math.min(10.0, val + delta));
-            document.getElementById('customTolInput').value = val.toFixed(2);
-        }}
-
-        async function setPresetTolerance(val) {{
-            document.getElementById('customTolInput').value = parseFloat(val).toFixed(2);
-            await sendToleranceUpdate(val);
+            syncDropdownWithVal(num);
         }}
 
         async function applyCustomTolerance() {{

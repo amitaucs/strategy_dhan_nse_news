@@ -23,7 +23,8 @@ class TestServerAPI(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("ST15 Large-Cap Positional Momentum", response.text)
-        self.assertIn("Adjustable EMA Dip Proximity Tolerance", response.text)
+        self.assertIn("Proximity Tolerance Adjustment", response.text)
+        self.assertIn("tolerancePresetSelect", response.text)
 
     def test_api_status(self):
         response = self.client.get("/api/status")
