@@ -34,35 +34,63 @@ class TestIndicators(unittest.TestCase):
         # 50 < 200 is False
         self.assertFalse(is_ema_stacked_bullish(ema_20=2500.0, ema_50=2100.0, ema_200=2200.0))
 
-    def test_check_ema_proximity(self):
-        # Exact touch: low <= 2500 <= high
+    def test_check_ema_proximity_positive_tolerance(self):
+        # Low is 2505 when EMA is 2500 -> +0.2% distance
         in_dip, name, dist = check_ema_proximity(
-            low=2490.0, high=2520.0, close=2510.0,
+            low=2505.0, high=2530.0, close=2520.0,
             ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
             tolerance_pct=0.5
         )
         self.assertTrue(in_dip)
         self.assertEqual(name, "EMA_20")
-        self.assertEqual(dist, 0.0)
+        self.assertEqual(dist, 0.2)
 
-        # Near dip: low is 2505 when EMA is 2500 -> diff 5 / 2500 = 0.2% <= 0.5%
-        in_dip2, name2, dist2 = check_ema_proximity(
-            low=2505.0, high=2530.0, close=2520.0,
-            ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
-            tolerance_pct=0.5
-        )
-        self.assertTrue(in_dip2)
-        self.assertEqual(name2, "EMA_20")
-        self.assertEqual(dist2, 0.2)
-
-        # Far away: low is 2600 when EMA is 2500 -> diff 100 / 2500 = 4% > 0.5%
-        in_dip3, _, dist3 = check_ema_proximity(
+        # Low is 2600 when EMA is 2500 -> +4.0% distance > +0.5%
+        in_dip_far, _, dist_far = check_ema_proximity(
             low=2600.0, high=2650.0, close=2620.0,
             ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
             tolerance_pct=0.5
         )
-        self.assertFalse(in_dip3)
-        self.assertEqual(dist3, 4.0)
+        self.assertFalse(in_dip_far)
+        self.assertEqual(dist_far, 4.0)
+
+    def test_check_ema_proximity_zero_tolerance(self):
+        # 0.0% tolerance requires exact touch or lower (Low <= EMA)
+        # Low = 2500 -> 0.0%
+        in_dip_touch, _, dist_touch = check_ema_proximity(
+            low=2500.0, high=2520.0, close=2510.0,
+            ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
+            tolerance_pct=0.0
+        )
+        self.assertTrue(in_dip_touch)
+        self.assertEqual(dist_touch, 0.0)
+
+        # Low = 2502 (+0.08% above) -> fails 0.0% tolerance
+        in_dip_above, _, _ = check_ema_proximity(
+            low=2502.0, high=2520.0, close=2510.0,
+            ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
+            tolerance_pct=0.0
+        )
+        self.assertFalse(in_dip_above)
+
+    def test_check_ema_proximity_negative_tolerance(self):
+        # -0.2% tolerance requires price to have dipped at least 0.2% below EMA (Low <= 2500 * 0.998 = 2495)
+        # Low = 2492 -> dist = (2492-2500)/2500 = -0.32% <= -0.2% -> True
+        in_dip_neg, name, dist_neg = check_ema_proximity(
+            low=2492.0, high=2515.0, close=2505.0,
+            ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
+            tolerance_pct=-0.2
+        )
+        self.assertTrue(in_dip_neg)
+        self.assertEqual(dist_neg, -0.32)
+
+        # Low = 2498 -> dist = -0.08% > -0.2% -> False (did not penetrate enough)
+        in_dip_shallow, _, _ = check_ema_proximity(
+            low=2498.0, high=2515.0, close=2505.0,
+            ema_20=2500.0, ema_50=2400.0, ema_200=2200.0,
+            tolerance_pct=-0.2
+        )
+        self.assertFalse(in_dip_shallow)
 
     def test_supertrend_bullish_bearish(self):
         base_time = datetime(2025, 1, 1, 9, 15)

@@ -35,7 +35,7 @@ class TestServerAPI(unittest.TestCase):
         self.assertIn("tolerance_value", data)
 
     def test_api_tolerance_update(self):
-        # Update to 1.25%
+        # 1. Update to positive 1.25%
         res = self.client.post("/api/tolerance", json={"tolerance_pct": 1.25})
         self.assertEqual(res.status_code, 200)
         data = res.json()
@@ -43,11 +43,22 @@ class TestServerAPI(unittest.TestCase):
         self.assertEqual(data["tolerance_pct"], 1.25)
         self.assertEqual(runner.screener.ema_proximity_pct, 1.25)
 
+        # 2. Update to 0.0% (Exact Touch)
+        res_zero = self.client.post("/api/tolerance", json={"tolerance_pct": 0.0})
+        self.assertEqual(res_zero.status_code, 200)
+        self.assertEqual(res_zero.json()["tolerance_pct"], 0.0)
+        self.assertEqual(runner.screener.ema_proximity_pct, 0.0)
+
+        # 3. Update to negative -0.2% (Penetration below EMA)
+        res_neg = self.client.post("/api/tolerance", json={"tolerance_pct": -0.2})
+        self.assertEqual(res_neg.status_code, 200)
+        self.assertEqual(res_neg.json()["tolerance_pct"], -0.2)
+        self.assertEqual(runner.screener.ema_proximity_pct, -0.2)
+
         # Verify status endpoint reflects updated tolerance
         status_res = self.client.get("/api/status")
         status_data = status_res.json()
-        self.assertEqual(status_data["tolerance_value"], 1.25)
-        self.assertEqual(status_data["proximity_tolerance_pct"], "1.25%")
+        self.assertEqual(status_data["tolerance_value"], -0.2)
 
         # Reset back to 0.5%
         self.client.post("/api/tolerance", json={"tolerance_pct": 0.5})

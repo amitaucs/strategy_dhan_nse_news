@@ -50,6 +50,8 @@ def on_shutdown():
 @app.get("/api/status")
 def get_status() -> Dict[str, Any]:
     """Strategy operational status."""
+    tol = runner.screener.ema_proximity_pct
+    prefix = "+" if tol > 0 else ""
     return {
         "strategy": "ST15_LargeCap",
         "universe": "Nifty 200",
@@ -59,8 +61,8 @@ def get_status() -> Dict[str, Any]:
         "dhan_client_id": settings.DHAN_CLIENT_ID or "NOT_CONFIGURED",
         "dhan_connected": bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN),
         "ema_stack": f"{settings.EMA_FAST} > {settings.EMA_MID} > {settings.EMA_SLOW}",
-        "proximity_tolerance_pct": f"{runner.screener.ema_proximity_pct:.2f}%",
-        "tolerance_value": runner.screener.ema_proximity_pct,
+        "proximity_tolerance_pct": f"≤ {prefix}{tol:.2f}%",
+        "tolerance_value": tol,
         "supertrend": f"ATR({settings.SUPERTREND_PERIOD}), Mult({settings.SUPERTREND_MULTIPLIER})",
         "risk_reward_ratio": f"1:{settings.RISK_REWARD_RATIO}",
         "capital_per_trade": f"₹{settings.CAPITAL_PER_TRADE:,.2f}",
@@ -73,12 +75,12 @@ def get_status() -> Dict[str, Any]:
 
 @app.post("/api/tolerance")
 async def update_tolerance(request: Request, background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """Dynamically adjust the EMA Dip Proximity Tolerance (%)."""
+    """Dynamically adjust the EMA Dip Proximity Tolerance (%). Supports positive, 0%, and negative values."""
     payload = await request.json()
     try:
         new_tol = float(payload.get("tolerance_pct", 0.5))
-        if new_tol <= 0 or new_tol > 20.0:
-            return {"status": "error", "message": "Tolerance must be between 0.01% and 20.0%"}
+        if new_tol < -10.0 or new_tol > 20.0:
+            return {"status": "error", "message": "Tolerance must be between -10.0% and +20.0%"}
 
         runner.screener.ema_proximity_pct = new_tol
         logger.info("Adjusted EMA Dip Proximity Tolerance to %.2f%%", new_tol)
@@ -240,22 +242,27 @@ def index_page() -> str:
                 <div>
                     <div class="text-sm font-bold text-slate-100 flex items-center gap-2">
                         Adjustable EMA Dip Proximity Tolerance
-                        <span id="activeTolBadge" class="px-2 py-0.5 text-xs font-mono font-bold rounded badge-yellow">≤ 0.50%</span>
+                        <span id="activeTolBadge" class="px-2 py-0.5 text-xs font-mono font-bold rounded badge-yellow">≤ +0.50%</span>
                     </div>
-                    <p class="text-xs text-slate-400">Controls how close price must pull back or kiss the 20, 50, or 200 EMA to qualify as a dip setup.</p>
+                    <p class="text-xs text-slate-400">
+                        Positive (+%): Near EMA pullback • 0%: Exact EMA Touch/Kiss • Negative (-%): Penetration dip below EMA.
+                    </p>
                 </div>
             </div>
 
-            <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
                 <!-- Preset Quick Buttons -->
-                <div class="flex items-center gap-1.5 bg-slate-900/80 p-1 rounded-lg border border-slate-700 text-xs">
-                    <span class="text-[11px] text-slate-400 px-1.5">Presets:</span>
-                    <button onclick="setPresetTolerance(0.2)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.2%</button>
-                    <button onclick="setPresetTolerance(0.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.5%</button>
-                    <button onclick="setPresetTolerance(0.8)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">0.8%</button>
-                    <button onclick="setPresetTolerance(1.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">1.0%</button>
-                    <button onclick="setPresetTolerance(1.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">1.5%</button>
-                    <button onclick="setPresetTolerance(2.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">2.0%</button>
+                <div class="flex flex-wrap items-center gap-1 bg-slate-900/80 p-1 rounded-lg border border-slate-700 text-xs">
+                    <span class="text-[11px] text-slate-400 px-1">Presets:</span>
+                    <button onclick="setPresetTolerance(-0.5)" class="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded text-xs font-mono transition border border-rose-800/40">-0.5%</button>
+                    <button onclick="setPresetTolerance(-0.2)" class="px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 rounded text-xs font-mono transition border border-rose-800/40">-0.2%</button>
+                    <button onclick="setPresetTolerance(0.0)" class="px-2 py-1 bg-sky-950/50 hover:bg-sky-900/70 text-sky-300 rounded text-xs font-mono font-bold transition border border-sky-800/50">0.0% (Touch)</button>
+                    <button onclick="setPresetTolerance(0.2)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.2%</button>
+                    <button onclick="setPresetTolerance(0.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.5%</button>
+                    <button onclick="setPresetTolerance(0.8)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+0.8%</button>
+                    <button onclick="setPresetTolerance(1.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+1.0%</button>
+                    <button onclick="setPresetTolerance(1.5)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+1.5%</button>
+                    <button onclick="setPresetTolerance(2.0)" class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 rounded text-slate-300 text-xs font-mono transition">+2.0%</button>
                 </div>
 
                 <!-- Custom Step Input -->
@@ -263,7 +270,7 @@ def index_page() -> str:
                     <button onclick="stepTolerance(-0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
                         <i class="fa-solid fa-minus"></i>
                     </button>
-                    <input type="number" id="customTolInput" value="0.5" min="0.05" max="10.0" step="0.05"
+                    <input type="number" id="customTolInput" value="0.50" min="-5.0" max="10.0" step="0.05"
                            class="w-16 bg-transparent text-center text-xs font-mono font-bold text-amber-400 focus:outline-none py-1.5">
                     <span class="text-xs text-slate-500 pr-2">%</span>
                     <button onclick="stepTolerance(0.1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
@@ -297,7 +304,7 @@ def index_page() -> str:
         </div>
         <div class="card-bg p-4 rounded-xl shadow">
             <span class="text-xs font-medium text-slate-400">Active Dip Tolerance</span>
-            <div class="text-2xl font-bold text-amber-400 mt-1" id="metricDipTol">≤ 0.50%</div>
+            <div class="text-2xl font-bold text-amber-400 mt-1" id="metricDipTol">≤ +0.50%</div>
             <span class="text-xs text-slate-500">Adjustable on screen</span>
         </div>
         <div class="card-bg p-4 rounded-xl shadow">
@@ -312,7 +319,7 @@ def index_page() -> str:
         <div class="flex items-center gap-4 flex-wrap">
             <span class="font-semibold text-slate-300"><i class="fa-solid fa-list-check text-blue-400 mr-1.5"></i> Entry Gates:</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">1. Bullish Stack (20 &gt; 50 &gt; 200 EMA)</span>
-            <span class="px-2 py-1 bg-slate-800 rounded border border-amber-500/40 text-amber-300 font-semibold" id="ruleBannerDip">2. Pullback Dip (≤ 0.50% or Touch EMA)</span>
+            <span class="px-2 py-1 bg-slate-800 rounded border border-amber-500/40 text-amber-300 font-semibold" id="ruleBannerDip">2. Pullback Dip (≤ +0.50% or Touch EMA)</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">3. 1st Green Heikin Ashi Candle</span>
             <span class="px-2 py-1 bg-slate-800 rounded border border-slate-700">4. SuperTrend Bullish (Green)</span>
         </div>
@@ -359,7 +366,7 @@ def index_page() -> str:
                         <th class="p-3">Symbol</th>
                         <th class="p-3">LTP (₹)</th>
                         <th class="p-3">EMA Alignment</th>
-                        <th class="p-3">Nearest EMA Dip</th>
+                        <th class="p-3">Nearest EMA &amp; Dip %</th>
                         <th class="p-3">Heikin Ashi</th>
                         <th class="p-3">SuperTrend</th>
                         <th class="p-3">Setup Trigger</th>
@@ -494,28 +501,30 @@ def index_page() -> str:
         }}
 
         function updateToleranceDisplay(val) {{
-            const formatted = '≤ ' + parseFloat(val).toFixed(2) + '%';
+            const num = parseFloat(val);
+            const prefix = num > 0 ? '+' : '';
+            const formatted = '≤ ' + prefix + num.toFixed(2) + '%';
             document.getElementById('activeTolBadge').innerText = formatted;
             document.getElementById('metricDipTol').innerText = formatted;
             document.getElementById('ruleBannerDip').innerText = '2. Pullback Dip (' + formatted + ' or Touch EMA)';
-            document.getElementById('customTolInput').value = parseFloat(val).toFixed(2);
+            document.getElementById('customTolInput').value = num.toFixed(2);
         }}
 
         function stepTolerance(delta) {{
-            let val = parseFloat(document.getElementById('customTolInput').value) || 0.5;
-            val = Math.max(0.05, Math.min(10.0, val + delta));
+            let val = parseFloat(document.getElementById('customTolInput').value) || 0.0;
+            val = Math.max(-5.0, Math.min(10.0, val + delta));
             document.getElementById('customTolInput').value = val.toFixed(2);
         }}
 
         async function setPresetTolerance(val) {{
-            document.getElementById('customTolInput').value = val.toFixed(2);
+            document.getElementById('customTolInput').value = parseFloat(val).toFixed(2);
             await sendToleranceUpdate(val);
         }}
 
         async function applyCustomTolerance() {{
             const val = parseFloat(document.getElementById('customTolInput').value);
-            if (isNaN(val) || val <= 0) {{
-                alert('Please enter a valid tolerance percentage (e.g. 0.5)');
+            if (isNaN(val)) {{
+                alert('Please enter a valid tolerance percentage (e.g. 0.5, 0.0, -0.2)');
                 return;
             }}
             await sendToleranceUpdate(val);
@@ -582,9 +591,11 @@ def index_page() -> str:
                     ? `<span class="badge-green px-2 py-0.5 rounded font-mono text-[11px]"><i class="fa-solid fa-arrow-trend-up mr-1"></i> 20 &gt; 50 &gt; 200</span>`
                     : `<span class="badge-red px-2 py-0.5 rounded font-mono text-[11px]"><i class="fa-solid fa-xmark mr-1"></i> Not Stacked</span>`;
 
+                const distNum = Number(item.nearest_ema_dist_pct || 0);
+                const distPrefix = distNum > 0 ? '+' : '';
                 const dipBadge = item.is_in_dip
-                    ? `<span class="badge-green px-2 py-0.5 rounded font-mono text-[11px]">${{item.nearest_ema}} (${{item.nearest_ema_dist_pct}}%)</span>`
-                    : `<span class="text-slate-400 font-mono text-[11px]">${{item.nearest_ema}} (${{item.nearest_ema_dist_pct}}%)</span>`;
+                    ? `<span class="badge-green px-2 py-0.5 rounded font-mono text-[11px]">${{item.nearest_ema}} (${{distPrefix}}${{distNum.toFixed(2)}}%)</span>`
+                    : `<span class="text-slate-400 font-mono text-[11px]">${{item.nearest_ema}} (${{distPrefix}}${{distNum.toFixed(2)}}%)</span>`;
 
                 const haBadge = item.is_ha_green
                     ? `<span class="text-emerald-400 font-semibold"><i class="fa-solid fa-circle text-[9px] mr-1"></i> Green</span>`

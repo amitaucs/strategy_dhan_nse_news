@@ -44,10 +44,18 @@ def check_ema_proximity(
     ema_200: float,
     tolerance_pct: float = 0.5,
 ) -> Tuple[bool, str, float]:
-    """Check if price has pulled back near or is touching/kissing any of the 3 EMAs.
+    """Check if price has pulled back near, kissed (0%), or dipped below (-%) any of the 3 EMAs.
+    
+    Signed distance:
+      - Positive (+%): Low is above EMA (pulled back near EMA from above)
+      - Zero (0.0%): Low touches EMA exactly
+      - Negative (-%): Low is below EMA (pierced/dipped below EMA)
+    
+    Condition:
+      is_in_dip = signed_dist_pct <= tolerance_pct
     
     Returns:
-        (is_in_dip, nearest_ema_name, min_distance_pct)
+        (is_in_dip, nearest_ema_name, signed_distance_pct)
     """
     emas = [
         ("EMA_20", ema_20),
@@ -55,27 +63,24 @@ def check_ema_proximity(
         ("EMA_200", ema_200),
     ]
 
-    min_dist = float("inf")
+    min_abs_dist = float("inf")
+    best_dist = 999.0
     nearest_name = ""
 
     for name, ema_val in emas:
         if ema_val <= 0:
             continue
 
-        # If candle body/wicks cross or touch the EMA line directly:
-        if low <= ema_val <= high:
-            dist_pct = 0.0
-        else:
-            # Distance from low (pullback from above) or close/high
-            dist_pts = min(abs(low - ema_val), abs(close - ema_val), abs(high - ema_val))
-            dist_pct = (dist_pts / ema_val) * 100.0
+        # Signed distance from EMA to candle low
+        signed_dist = ((low - ema_val) / ema_val) * 100.0
 
-        if dist_pct < min_dist:
-            min_dist = dist_pct
+        if abs(signed_dist) < min_abs_dist:
+            min_abs_dist = abs(signed_dist)
+            best_dist = signed_dist
             nearest_name = name
 
-    if min_dist == float("inf"):
+    if min_abs_dist == float("inf"):
         return False, "", 999.0
 
-    is_in_dip = min_dist <= tolerance_pct
-    return is_in_dip, nearest_name, round(min_dist, 3)
+    is_in_dip = best_dist <= tolerance_pct
+    return is_in_dip, nearest_name, round(best_dist, 2)
