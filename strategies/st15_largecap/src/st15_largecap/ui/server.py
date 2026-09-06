@@ -61,6 +61,7 @@ def get_status() -> Dict[str, Any]:
         "dhan_client_id": settings.DHAN_CLIENT_ID or "NOT_CONFIGURED",
         "dhan_connected": bool(settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN),
         "ema_stack": f"{settings.EMA_FAST} > {settings.EMA_MID} > {settings.EMA_SLOW}",
+        "dip_tolerance_pct": f"≤ {prefix}{tol:.2f}%",
         "proximity_tolerance_pct": f"≤ {prefix}{tol:.2f}%",
         "tolerance_value": tol,
         "supertrend": f"ATR({settings.SUPERTREND_PERIOD}), Mult({settings.SUPERTREND_MULTIPLIER})",
@@ -75,7 +76,7 @@ def get_status() -> Dict[str, Any]:
 
 @app.post("/api/tolerance")
 async def update_tolerance(request: Request, background_tasks: BackgroundTasks) -> Dict[str, Any]:
-    """Dynamically adjust the EMA Dip Proximity Tolerance (%). Supports positive, 0%, and negative values."""
+    """Dynamically adjust the EMA Dip Tolerance (%). Supports positive, 0%, and negative values."""
     payload = await request.json()
     try:
         new_tol = float(payload.get("tolerance_pct", 0.5))
@@ -83,7 +84,7 @@ async def update_tolerance(request: Request, background_tasks: BackgroundTasks) 
             return {"status": "error", "message": "Tolerance must be between -10.0% and +20.0%"}
 
         runner.screener.ema_proximity_pct = new_tol
-        logger.info("Adjusted EMA Dip Proximity Tolerance to %.2f%%", new_tol)
+        logger.info("Adjusted EMA Dip Tolerance to %.2f%%", new_tol)
         
         # Trigger an immediate background re-scan with new tolerance
         background_tasks.add_task(runner.scan_universe)
@@ -241,20 +242,20 @@ def index_page() -> str:
                 </div>
                 <div>
                     <div class="text-sm font-bold text-slate-100 flex items-center gap-2">
-                        Proximity Tolerance Adjustment
+                        Dip Tolerance
                         <span id="activeTolBadge" class="px-2 py-0.5 text-xs font-mono font-bold rounded badge-yellow">≤ +0.50%</span>
                     </div>
                     <p class="text-xs text-slate-400">
-                        Select a standard preset from the dropdown or fine-tune with the <span class="text-amber-300 font-mono font-bold">- / +</span> stepper.
+                        Select a standard dip tolerance from the dropdown or adjust with the <span class="text-amber-300 font-mono font-bold">- / +</span> stepper.
                     </p>
                 </div>
             </div>
 
             <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-                <!-- Preset Dropdown Selection -->
+                <!-- Dip Tolerance Dropdown Selection -->
                 <div class="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-700 shadow-inner">
                     <label for="tolerancePresetSelect" class="text-xs text-slate-400 font-medium flex items-center gap-1.5 whitespace-nowrap">
-                        <i class="fa-solid fa-chevron-down text-amber-400 text-[10px]"></i> Preset:
+                        <i class="fa-solid fa-sliders text-amber-400 text-xs mr-0.5"></i> Dip Tolerance:
                     </label>
                     <select id="tolerancePresetSelect" onchange="onPresetDropdownChange()" 
                             class="bg-slate-800 text-amber-300 font-mono text-xs font-semibold rounded px-2.5 py-1 border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer">
@@ -310,7 +311,7 @@ def index_page() -> str:
             <span class="text-xs text-slate-500">Swing Low Protected SL</span>
         </div>
         <div class="card-bg p-4 rounded-xl shadow">
-            <span class="text-xs font-medium text-slate-400">Active Dip Tolerance</span>
+            <span class="text-xs font-medium text-slate-400">Dip Tolerance</span>
             <div class="text-2xl font-bold text-amber-400 mt-1" id="metricDipTol">≤ +0.50%</div>
             <span class="text-xs text-slate-500">Adjustable on screen</span>
         </div>

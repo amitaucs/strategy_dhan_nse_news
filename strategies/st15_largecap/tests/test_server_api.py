@@ -23,7 +23,7 @@ class TestServerAPI(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("ST15 Large-Cap Positional Momentum", response.text)
-        self.assertIn("Proximity Tolerance Adjustment", response.text)
+        self.assertIn("Dip Tolerance", response.text)
         self.assertIn("tolerancePresetSelect", response.text)
 
     def test_api_status(self):
@@ -32,7 +32,7 @@ class TestServerAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["strategy"], "ST15_LargeCap")
         self.assertEqual(data["universe"], "Nifty 200")
-        self.assertIn("proximity_tolerance_pct", data)
+        self.assertIn("dip_tolerance_pct", data)
         self.assertIn("tolerance_value", data)
 
     def test_api_tolerance_update(self):
