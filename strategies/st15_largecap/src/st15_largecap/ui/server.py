@@ -52,12 +52,15 @@ def get_status() -> Dict[str, Any]:
     """Strategy operational status."""
     tol = runner.screener.ema_proximity_pct
     prefix = "+" if tol > 0 else ""
-    db_signals = repository.get_signals(limit=50)
-    triggered_count = max(
-        len(runner.latest_signals),
-        len([r for r in runner.latest_results if r.is_setup_ready]),
-        len(db_signals),
-    )
+    
+    if runner.latest_results:
+        triggered_count = len([r for r in runner.latest_results if r.is_setup_ready])
+        scanned_count = len(runner.latest_results)
+    else:
+        db_scans = repository.get_latest_scans()
+        scanned_count = len(db_scans) if db_scans else 0
+        triggered_count = sum(1 for s in db_scans if s.get("is_setup_ready")) if db_scans else 0
+
     return {
         "strategy": "ST15_LargeCap",
         "universe": "Nifty 200",
@@ -75,7 +78,7 @@ def get_status() -> Dict[str, Any]:
         "capital_per_trade": f"₹{settings.CAPITAL_PER_TRADE:,.2f}",
         "order_type": settings.ORDER_TYPE,
         "last_scan_time": runner.last_scan_time.isoformat() if runner.last_scan_time else None,
-        "scanned_count": len(runner.latest_results),
+        "scanned_count": scanned_count,
         "triggered_count": triggered_count,
     }
 
@@ -108,72 +111,71 @@ async def update_tolerance(request: Request, background_tasks: BackgroundTasks) 
 @app.get("/api/scans")
 def get_scans() -> List[Dict[str, Any]]:
     """Get latest universe scan results."""
+    if runner.latest_results:
+        return [
+            {
+                "symbol": r.symbol,
+                "sec_id": r.sec_id,
+                "ltp": r.ltp,
+                "ema_20": r.ema_20,
+                "ema_50": r.ema_50,
+                "ema_200": r.ema_200,
+                "is_ema_stacked": r.is_ema_stacked,
+                "is_in_dip": r.is_in_dip,
+                "nearest_ema": r.nearest_ema,
+                "nearest_ema_dist_pct": r.nearest_ema_dist_pct,
+                "is_ha_green": r.is_ha_green,
+                "is_supertrend_green": r.is_supertrend_green,
+                "is_setup_ready": r.is_setup_ready,
+                "swing_low": r.swing_low,
+                "scanned_at": r.scanned_at.isoformat(),
+            }
+            for r in runner.latest_results
+        ]
     db_results = repository.get_latest_scans()
     if db_results:
         return db_results
-    return [
-        {
-            "symbol": r.symbol,
-            "sec_id": r.sec_id,
-            "ltp": r.ltp,
-            "ema_20": r.ema_20,
-            "ema_50": r.ema_50,
-            "ema_200": r.ema_200,
-            "is_ema_stacked": r.is_ema_stacked,
-            "is_in_dip": r.is_in_dip,
-            "nearest_ema": r.nearest_ema,
-            "nearest_ema_dist_pct": r.nearest_ema_dist_pct,
-            "is_ha_green": r.is_ha_green,
-            "is_supertrend_green": r.is_supertrend_green,
-            "is_setup_ready": r.is_setup_ready,
-            "swing_low": r.swing_low,
-            "scanned_at": r.scanned_at.isoformat(),
-        }
-        for r in runner.latest_results
-    ]
+    return []
 
 
 @app.get("/api/signals")
 def get_signals() -> List[Dict[str, Any]]:
     """Get recent setup signals."""
-    for sig in runner.latest_signals:
-        try:
-            repository.save_signal(sig)
-        except Exception:
-            pass
-
-    db_signals = repository.get_signals(limit=50)
-    if db_signals:
-        return db_signals
-
     signals_list = []
     if runner.latest_signals:
         signals_list = runner.latest_signals
     elif runner.latest_results:
         signals_list = [r.signal for r in runner.latest_results if r.is_setup_ready and r.signal]
 
-    return [
-        {
-            "id": i + 1,
-            "symbol": s.symbol,
-            "sec_id": s.sec_id,
-            "setup_time": s.setup_time.isoformat() if isinstance(s.setup_time, datetime) else str(s.setup_time),
-            "trigger_price": s.trigger_price,
-            "stop_loss_price": s.stop_loss_price,
-            "target_profit_price": s.target_profit_price,
-            "risk_per_share": s.risk_per_share,
-            "risk_reward_ratio": s.risk_reward_ratio,
-            "ema_20": s.ema_20,
-            "ema_50": s.ema_50,
-            "ema_200": s.ema_200,
-            "supertrend": s.supertrend,
-            "nearest_ema_name": s.nearest_ema_name,
-            "nearest_ema_dist_pct": s.nearest_ema_dist_pct,
-            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
-            "created_at": datetime.now().isoformat(),
-        }
-        for i, s in enumerate(signals_list)
-    ]
+    if signals_list:
+        return [
+            {
+                "id": i + 1,
+                "symbol": s.symbol,
+                "sec_id": s.sec_id,
+                "setup_time": s.setup_time.isoformat() if isinstance(s.setup_time, datetime) else str(s.setup_time),
+                "trigger_price": s.trigger_price,
+                "stop_loss_price": s.stop_loss_price,
+                "target_profit_price": s.target_profit_price,
+                "risk_per_share": s.risk_per_share,
+                "risk_reward_ratio": s.risk_reward_ratio,
+                "ema_20": s.ema_20,
+                "ema_50": s.ema_50,
+                "ema_200": s.ema_200,
+                "supertrend": s.supertrend,
+                "nearest_ema_name": s.nearest_ema_name,
+                "nearest_ema_dist_pct": s.nearest_ema_dist_pct,
+                "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+                "created_at": datetime.now().isoformat(),
+            }
+            for i, s in enumerate(signals_list)
+        ]
+
+    db_signals = repository.get_signals(limit=50)
+    if db_signals:
+        return db_signals
+
+    return []
 
 
 @app.get("/api/positions")

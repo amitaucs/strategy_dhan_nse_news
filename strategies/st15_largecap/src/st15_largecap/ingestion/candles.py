@@ -180,17 +180,25 @@ def generate_mock_2h_candles(
     symbol: str = "TCS",
     base_price: Optional[float] = None,
     num_candles: int = 100,
-    bullish_trend: bool = True,
-    pullback_at_end: bool = True,
+    bullish_trend: Optional[bool] = None,
+    pullback_at_end: Optional[bool] = None,
 ) -> List[Candle]:
     """Generate realistic synthetic 2H candles for testing and dry-run verification."""
     candles: List[Candle] = []
     current_time = datetime.now() - timedelta(days=num_candles // 3 + 5)
 
+    hash_val = abs(hash(symbol or "STOCK"))
     if base_price is None:
         # Deterministic distinct price based on symbol name
-        hash_val = abs(hash(symbol or "STOCK"))
         base_price = round(200.0 + (hash_val % 3800) + ((hash_val % 99) * 0.1), 2)
+
+    if bullish_trend is None:
+        # ~70% bullish, ~30% bearish across the universe
+        bullish_trend = (hash_val % 10) < 7
+
+    if pullback_at_end is None:
+        # ~20% currently triggering a qualified bounce after dip
+        pullback_at_end = (hash_val % 10) in (0, 1)
 
     current_price = base_price
     slots = [time(9, 15), time(11, 15), time(13, 15)]

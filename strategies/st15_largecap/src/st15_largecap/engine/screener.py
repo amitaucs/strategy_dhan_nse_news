@@ -132,9 +132,10 @@ class ST15Screener:
                 is_in_dip = True
 
         # Gate 3: First Heikin Ashi Green Candle after a dip / red candle
-        # Current HA is green, and (prev HA was red OR current candle is the reversal after dip)
+        # The transition into an entry setup requires the current HA candle to be Green
+        # and the immediately preceding HA candle to have been Red (or a reversal candle)
         is_curr_ha_green = curr_ha.is_green
-        is_first_green = is_curr_ha_green and (prev_ha.is_red or is_in_dip)
+        is_first_green = is_curr_ha_green and (prev_ha.is_red or (curr_idx >= 2 and ha_candles[curr_idx - 2].is_red and abs(prev_ha.close - prev_ha.open) < 0.05 * prev_ha.close))
 
         # Gate 4: SuperTrend Bullish (Green)
         is_supertrend_green = is_st_green
