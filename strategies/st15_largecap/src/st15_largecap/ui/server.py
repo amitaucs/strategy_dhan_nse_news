@@ -11,9 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from st15_largecap.config import settings
-from st15_largecap.core.models import SignalStatus
+from st15_largecap.core.models import SetupSignal, SignalStatus
 from st15_largecap.engine.runner import StrategyRunner
 from st15_largecap.execution.executor import OrderExecutor
+from st15_largecap.indicators.ema import calculate_triple_ema
+from st15_largecap.indicators.supertrend import calculate_supertrend
+from st15_largecap.ingestion.heikin_ashi import calculate_heikin_ashi
+from st15_largecap.ingestion.universe import universe_manager
 from st15_largecap.storage.repository import repository
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,126 @@ def on_startup():
 def on_shutdown():
     logger.info("Stopping ST15 Strategy background services...")
     runner.stop_background_loop()
+
+
+@app.get("/api/chart/{symbol}")
+def get_chart_data(symbol: str) -> Dict[str, Any]:
+    """Get 2H candles, Heikin Ashi, 20/50/200 EMAs, SuperTrend, and signal levels for charting."""
+    sym = symbol.upper().strip()
+    sec_id = universe_manager.get_security_id(sym)
+    candles = runner.fetcher.fetch_2h_candles(
+        security_id=sec_id,
+        symbol=sym,
+        days=settings.HISTORY_DAYS,
+    )
+
+    if not candles:
+        return {"status": "error", "message": f"No candle data available for {sym}"}
+
+    # 1. Raw & Heikin Ashi Candles
+    ha_candles = calculate_heikin_ashi(candles)
+    
+    # 2. Triple EMA (20, 50, 200)
+    closes = [c.close for c in candles]
+    ema_dict = calculate_triple_ema(closes, fast_span=settings.EMA_FAST, mid_span=settings.EMA_MID, slow_span=settings.EMA_SLOW)
+    
+    # 3. SuperTrend
+    st_vals, st_green = calculate_supertrend(candles, period=settings.SUPERTREND_PERIOD, multiplier=settings.SUPERTREND_MULTIPLIER)
+
+    # 4. Format series for Lightweight Charts (UNIX timestamp in seconds)
+    raw_series = []
+    ha_series = []
+    ema_20_series = []
+    ema_50_series = []
+    ema_200_series = []
+    supertrend_series = []
+
+    for i, c in enumerate(candles):
+        ts = int(c.timestamp.timestamp())
+        raw_series.append({
+            "time": ts,
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+            "volume": c.volume,
+        })
+
+        ha = ha_candles[i]
+        ha_series.append({
+            "time": ts,
+            "open": ha.open,
+            "high": ha.high,
+            "low": ha.low,
+            "close": ha.close,
+        })
+
+        if ema_dict["ema_20"][i] > 0:
+            ema_20_series.append({"time": ts, "value": ema_dict["ema_20"][i]})
+        if ema_dict["ema_50"][i] > 0:
+            ema_50_series.append({"time": ts, "value": ema_dict["ema_50"][i]})
+        if ema_dict["ema_200"][i] > 0:
+            ema_200_series.append({"time": ts, "value": ema_dict["ema_200"][i]})
+
+        if st_vals[i] > 0:
+            supertrend_series.append({
+                "time": ts,
+                "value": st_vals[i],
+                "color": "#10b981" if st_green[i] else "#ef4444",
+                "is_green": st_green[i],
+            })
+
+    # Find latest scan / signal info
+    scan_res = next((r for r in runner.latest_results if r.symbol == sym), None)
+    if not scan_res:
+        scan_res = runner.screener.evaluate(symbol=sym, sec_id=sec_id, candles=candles)
+
+    signal_info = None
+    if scan_res and scan_res.signal:
+        signal_info = {
+            "trigger_price": scan_res.signal.trigger_price,
+            "stop_loss": scan_res.signal.stop_loss_price,
+            "target_price": scan_res.signal.target_profit_price,
+            "risk_per_share": scan_res.signal.risk_per_share,
+            "rr_ratio": scan_res.signal.risk_reward_ratio,
+        }
+    elif scan_res and scan_res.is_setup_ready:
+        trig = round(scan_res.ltp * 1.002, 2)
+        sl = round(scan_res.swing_low or (scan_res.ltp * 0.98), 2)
+        risk = round(trig - sl, 2)
+        tgt = round(trig + (risk * settings.RISK_REWARD_RATIO), 2)
+        signal_info = {
+            "trigger_price": trig,
+            "stop_loss": sl,
+            "target_price": tgt,
+            "risk_per_share": risk,
+            "rr_ratio": settings.RISK_REWARD_RATIO,
+        }
+
+    return {
+        "status": "success",
+        "symbol": sym,
+        "sec_id": sec_id,
+        "ltp": candles[-1].close,
+        "timeframe": "2-Hour (120-min)",
+        "candles_count": len(candles),
+        "raw_candles": raw_series,
+        "ha_candles": ha_series,
+        "ema_20": ema_20_series,
+        "ema_50": ema_50_series,
+        "ema_200": ema_200_series,
+        "supertrend": supertrend_series,
+        "scan": {
+            "is_ema_stacked": scan_res.is_ema_stacked if scan_res else False,
+            "is_in_dip": scan_res.is_in_dip if scan_res else False,
+            "nearest_ema": scan_res.nearest_ema if scan_res else "",
+            "nearest_ema_dist_pct": scan_res.nearest_ema_dist_pct if scan_res else 0.0,
+            "is_ha_green": scan_res.is_ha_green if scan_res else False,
+            "is_supertrend_green": scan_res.is_supertrend_green if scan_res else False,
+            "is_setup_ready": scan_res.is_setup_ready if scan_res else False,
+        },
+        "signal": signal_info,
+    }
 
 
 @app.get("/api/status")
@@ -259,6 +383,7 @@ def index_page() -> str:
     <title>ST15 LargeCap Positional Momentum Strategy</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body {{ background-color: #0f172a; color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }}
         .badge-green {{ background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #059669; }}
@@ -588,10 +713,462 @@ def index_page() -> str:
         </div>
     </div>
 
+    <!-- Embedded TradingView Lightweight Chart Modal -->
+    <div id="chartModal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-50 hidden flex items-center justify-center p-2 md:p-6 transition-all duration-200">
+        <div class="card-bg w-full max-w-6xl h-[92vh] rounded-2xl border border-slate-700/80 shadow-2xl flex flex-col overflow-hidden bg-slate-900">
+            <!-- Modal Header -->
+            <div class="px-5 py-3.5 border-b border-slate-700/80 bg-slate-800/80 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 bg-blue-500/20 text-blue-400 rounded-xl border border-blue-500/30">
+                        <i class="fa-solid fa-chart-candlestick text-lg"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2.5">
+                            <h3 id="chartModalSymbol" class="text-lg font-bold text-white tracking-wide">--</h3>
+                            <span id="chartModalSecId" class="text-xs text-slate-400 font-mono">(--)</span>
+                            <span id="chartModalPrice" class="text-base font-mono font-bold text-emerald-400">₹--.--</span>
+                            <span id="chartModalTriggerBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full badge-green">--</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400">2-Hour (120-min) Positional Chart • Triple EMA (20/50/200) • SuperTrend • Unlimited Indicators (TV Engine)</p>
+                    </div>
+                </div>
+
+                <!-- Interactive Toggles & Action -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <!-- Candle Type Toggle -->
+                    <button id="chartTypeBtn" onclick="toggleChartCandleType()" class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-layer-group text-amber-400"></i> <span id="chartTypeLabel">Heikin Ashi</span>
+                    </button>
+
+                    <!-- Indicators Toggles -->
+                    <button id="toggleEmaBtn" onclick="toggleEmas()" class="px-2.5 py-1.5 bg-blue-600/30 text-blue-300 border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-wave-square"></i> EMAs (20/50/200)
+                    </button>
+                    <button id="toggleStBtn" onclick="toggleSuperTrend()" class="px-2.5 py-1.5 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-shield-halved"></i> SuperTrend
+                    </button>
+
+                    <!-- Order Action inside chart -->
+                    <button id="chartBuyBtn" onclick="executeOrderFromChart()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow flex items-center gap-1.5">
+                        <i class="fa-solid fa-crosshairs"></i> Buy Setup
+                    </button>
+
+                    <!-- Close Modal -->
+                    <button onclick="closeChartModal()" class="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/60 transition">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Strategy Signal & Metrics Bar -->
+            <div id="chartMetricsBar" class="px-5 py-2 bg-slate-950/70 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <!-- Multi-Gate Badges -->
+                <div class="flex flex-wrap items-center gap-3">
+                    <span id="cGateEma" class="px-2 py-0.5 rounded font-mono text-[11px] badge-green">EMA: Stacked</span>
+                    <span id="cGateDip" class="px-2 py-0.5 rounded font-mono text-[11px] badge-green">Dip: In Zone</span>
+                    <span id="cGateHa" class="px-2 py-0.5 rounded font-mono text-[11px] text-emerald-400 font-semibold">HA: 1st Green</span>
+                    <span id="cGateSt" class="px-2 py-0.5 rounded font-mono text-[11px] badge-green">SuperTrend: Bullish</span>
+                </div>
+
+                <!-- Signal Levels -->
+                <div id="chartSignalLevels" class="flex flex-wrap items-center gap-3 font-mono text-[11px]">
+                    <span class="text-sky-400 font-semibold">Trigger: <span id="cSignalTrig">₹--</span></span>
+                    <span class="text-rose-400 font-semibold">Stop Loss: <span id="cSignalSL">₹--</span></span>
+                    <span class="text-emerald-400 font-semibold">Target (1:3): <span id="cSignalTgt">₹--</span></span>
+                </div>
+            </div>
+
+            <!-- Dynamic Live Tooltip Legend -->
+            <div class="px-5 py-2 bg-slate-900/90 border-b border-slate-800/80 flex flex-wrap items-center gap-4 text-xs font-mono select-none">
+                <span id="chartLegendOhlc" class="text-slate-300">O: -- H: -- L: -- C: --</span>
+                <span class="text-sky-400 font-semibold flex items-center gap-1"><span class="w-2.5 h-0.5 bg-sky-400 inline-block"></span> 20 EMA: <span id="legEma20">--</span></span>
+                <span class="text-amber-400 font-semibold flex items-center gap-1"><span class="w-2.5 h-0.5 bg-amber-400 inline-block"></span> 50 EMA: <span id="legEma50">--</span></span>
+                <span class="text-purple-400 font-semibold flex items-center gap-1"><span class="w-2.5 h-0.5 bg-purple-400 inline-block"></span> 200 EMA: <span id="legEma200">--</span></span>
+                <span class="text-emerald-400 font-semibold flex items-center gap-1"><span class="w-2.5 h-0.5 bg-emerald-400 inline-block"></span> SuperTrend: <span id="legSt">--</span></span>
+            </div>
+
+            <!-- Chart Canvas Container -->
+            <div class="flex-1 w-full h-full relative bg-slate-950" id="chartWrapper">
+                <div id="tvChartContainer" class="w-full h-full"></div>
+                <div id="chartLoadingOverlay" class="absolute inset-0 bg-slate-950/80 flex items-center justify-center gap-3 text-sm text-slate-400 z-10">
+                    <i class="fa-solid fa-circle-notch animate-spin text-blue-400 text-lg"></i> Loading 2H candles and indicators...
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let allScans = [];
         let qualifiedOnly = false;
         let currentTolerance = 0.5;
+
+        // Chart Global State
+        let chartInstance = null;
+        let candleSeries = null;
+        let ema20Series = null;
+        let ema50Series = null;
+        let ema200Series = null;
+        let superTrendSeries = null;
+        let trigPriceLine = null;
+        let slPriceLine = null;
+        let tgtPriceLine = null;
+        let currentChartSymbol = null;
+        let currentChartData = null;
+        let isHeikinAshi = true;
+        let showEmas = true;
+        let showSuperTrend = true;
+
+        async function openChartModal(symbol) {{
+            currentChartSymbol = symbol;
+            const modal = document.getElementById('chartModal');
+            const overlay = document.getElementById('chartLoadingOverlay');
+            modal.classList.remove('hidden');
+            if (overlay) overlay.classList.remove('hidden');
+
+            document.getElementById('chartModalSymbol').innerText = symbol;
+            document.getElementById('chartModalSecId').innerText = 'Loading...';
+            document.getElementById('chartModalPrice').innerText = '₹--.--';
+
+            try {{
+                const res = await fetch(`/api/chart/${{symbol}}`);
+                const data = await res.json();
+                if (data.status !== 'success') {{
+                    alert(data.message || 'Failed to load chart data');
+                    closeChartModal();
+                    return;
+                }}
+                currentChartData = data;
+                renderTvChart(data);
+            }} catch (e) {{
+                console.error('Failed to fetch chart:', e);
+                alert('Error loading chart: ' + e);
+                closeChartModal();
+            }} finally {{
+                if (overlay) overlay.classList.add('hidden');
+            }}
+        }}
+
+        function closeChartModal() {{
+            const modal = document.getElementById('chartModal');
+            modal.classList.add('hidden');
+            if (chartInstance) {{
+                chartInstance.remove();
+                chartInstance = null;
+                candleSeries = null;
+                ema20Series = null;
+                ema50Series = null;
+                ema200Series = null;
+                superTrendSeries = null;
+            }}
+            currentChartSymbol = null;
+            currentChartData = null;
+        }}
+
+        function renderTvChart(data) {{
+            const container = document.getElementById('tvChartContainer');
+            container.innerHTML = '';
+
+            // Update Header & Badge Stats
+            document.getElementById('chartModalSymbol').innerText = data.symbol;
+            document.getElementById('chartModalSecId').innerText = `(SecID: ${{data.sec_id || 'N/A'}})`;
+            document.getElementById('chartModalPrice').innerText = `₹${{Number(data.ltp || 0).toFixed(2)}}`;
+
+            const trigBadge = document.getElementById('chartModalTriggerBadge');
+            if (data.scan && data.scan.is_setup_ready) {{
+                trigBadge.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full badge-green animate-pulse';
+                trigBadge.innerHTML = '<i class="fa-solid fa-crosshairs mr-1"></i> BUY SETUP READY';
+            }} else {{
+                trigBadge.className = 'text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
+                trigBadge.innerText = 'WATCHING';
+            }}
+
+            // Update Multi-Gate Badges
+            if (data.scan) {{
+                const gEma = document.getElementById('cGateEma');
+                if (data.scan.is_ema_stacked) {{
+                    gEma.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-green';
+                    gEma.innerHTML = '<i class="fa-solid fa-check mr-1"></i> EMA: 20 &gt; 50 &gt; 200';
+                }} else {{
+                    gEma.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-red';
+                    gEma.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i> EMA: Not Stacked';
+                }}
+
+                const gDip = document.getElementById('cGateDip');
+                const dist = Number(data.scan.nearest_ema_dist_pct || 0);
+                const prefix = dist > 0 ? '+' : '';
+                if (data.scan.is_in_dip) {{
+                    gDip.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-green';
+                    gDip.innerHTML = `<i class="fa-solid fa-check mr-1"></i> Dip: ${{data.scan.nearest_ema}} (${{prefix}}${{dist.toFixed(2)}}%)`;
+                }} else {{
+                    gDip.className = 'px-2 py-0.5 rounded font-mono text-[11px] text-slate-400 bg-slate-800/80 border border-slate-700';
+                    gDip.innerHTML = `Dip: ${{data.scan.nearest_ema}} (${{prefix}}${{dist.toFixed(2)}}%)`;
+                }}
+
+                const gHa = document.getElementById('cGateHa');
+                if (data.scan.is_ha_green) {{
+                    gHa.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-green';
+                    gHa.innerHTML = '<i class="fa-solid fa-circle text-[8px] mr-1"></i> HA: Green';
+                }} else {{
+                    gHa.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-red';
+                    gHa.innerHTML = '<i class="fa-solid fa-circle text-[8px] mr-1"></i> HA: Red';
+                }}
+
+                const gSt = document.getElementById('cGateSt');
+                if (data.scan.is_supertrend_green) {{
+                    gSt.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-green';
+                    gSt.innerHTML = '<i class="fa-solid fa-check mr-1"></i> SuperTrend: Bullish';
+                }} else {{
+                    gSt.className = 'px-2 py-0.5 rounded font-mono text-[11px] badge-red';
+                    gSt.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i> SuperTrend: Bearish';
+                }}
+            }}
+
+            // Update Signal Levels
+            if (data.signal) {{
+                document.getElementById('cSignalTrig').innerText = `₹${{Number(data.signal.trigger_price).toFixed(2)}}`;
+                document.getElementById('cSignalSL').innerText = `₹${{Number(data.signal.stop_loss).toFixed(2)}}`;
+                document.getElementById('cSignalTgt').innerText = `₹${{Number(data.signal.target_price).toFixed(2)}}`;
+                document.getElementById('chartSignalLevels').classList.remove('hidden');
+            }} else {{
+                document.getElementById('chartSignalLevels').classList.add('hidden');
+            }}
+
+            // Create Lightweight Chart
+            chartInstance = LightweightCharts.createChart(container, {{
+                layout: {{
+                    background: {{ type: 'solid', color: '#0b0f19' }},
+                    textColor: '#94a3b8',
+                    fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+                }},
+                grid: {{
+                    vertLines: {{ color: 'rgba(51, 65, 85, 0.3)' }},
+                    horzLines: {{ color: 'rgba(51, 65, 85, 0.3)' }},
+                }},
+                crosshair: {{
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                    vertLine: {{
+                        color: '#38bdf8',
+                        width: 1,
+                        style: LightweightCharts.LineStyle.Dashed,
+                        labelBackgroundColor: '#1e293b',
+                    }},
+                    horzLine: {{
+                        color: '#38bdf8',
+                        width: 1,
+                        style: LightweightCharts.LineStyle.Dashed,
+                        labelBackgroundColor: '#1e293b',
+                    }},
+                }},
+                rightPriceScale: {{
+                    borderColor: '#334155',
+                    scaleMargins: {{
+                        top: 0.1,
+                        bottom: 0.15,
+                    }},
+                }},
+                timeScale: {{
+                    borderColor: '#334155',
+                    timeVisible: true,
+                    secondsVisible: false,
+                }},
+            }});
+
+            // 1. Candlestick Series (Heikin Ashi or Raw)
+            candleSeries = chartInstance.addCandlestickSeries({{
+                upColor: '#10b981',
+                downColor: '#ef4444',
+                borderUpColor: '#10b981',
+                borderDownColor: '#ef4444',
+                wickUpColor: '#10b981',
+                wickDownColor: '#ef4444',
+            }});
+
+            const candleData = isHeikinAshi ? data.ha_candles : data.raw_candles;
+            candleSeries.setData(candleData);
+
+            // 2. Triple EMAs Series
+            ema20Series = chartInstance.addLineSeries({{
+                color: '#38bdf8',
+                lineWidth: 2,
+                title: '20 EMA',
+                priceLineVisible: false,
+                lastValueVisible: true,
+            }});
+            ema20Series.setData(data.ema_20 || []);
+
+            ema50Series = chartInstance.addLineSeries({{
+                color: '#fbbf24',
+                lineWidth: 2,
+                title: '50 EMA',
+                priceLineVisible: false,
+                lastValueVisible: true,
+            }});
+            ema50Series.setData(data.ema_50 || []);
+
+            ema200Series = chartInstance.addLineSeries({{
+                color: '#a855f7',
+                lineWidth: 2,
+                title: '200 EMA',
+                priceLineVisible: false,
+                lastValueVisible: true,
+            }});
+            ema200Series.setData(data.ema_200 || []);
+
+            // 3. SuperTrend Series
+            superTrendSeries = chartInstance.addLineSeries({{
+                color: '#10b981',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                title: 'SuperTrend',
+                priceLineVisible: false,
+                lastValueVisible: true,
+            }});
+            if (data.supertrend && data.supertrend.length > 0) {{
+                const stData = data.supertrend.map(st => ({{
+                    time: st.time,
+                    value: st.value,
+                    color: st.color,
+                }}));
+                superTrendSeries.setData(stData);
+            }}
+
+            // 4. Signal Price Lines (Trigger, Stop Loss, Target)
+            if (data.signal) {{
+                trigPriceLine = candleSeries.createPriceLine({{
+                    price: data.signal.trigger_price,
+                    color: '#38bdf8',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TRIGGER ₹${{data.signal.trigger_price}}`,
+                }});
+
+                slPriceLine = candleSeries.createPriceLine({{
+                    price: data.signal.stop_loss,
+                    color: '#f43f5e',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `SL ₹${{data.signal.stop_loss}}`,
+                }});
+
+                tgtPriceLine = candleSeries.createPriceLine({{
+                    price: data.signal.target_price,
+                    color: '#10b981',
+                    lineWidth: 2,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TGT (1:3) ₹${{data.signal.target_price}}`,
+                }});
+            }}
+
+            // 5. Crosshair Legend Tracking
+            chartInstance.subscribeCrosshairMove((param) => {{
+                if (!param.time || !param.seriesPrices) {{
+                    if (candleData.length > 0) {{
+                        const last = candleData[candleData.length - 1];
+                        document.getElementById('chartLegendOhlc').innerText = `O: ${{last.open.toFixed(2)}} H: ${{last.high.toFixed(2)}} L: ${{last.low.toFixed(2)}} C: ${{last.close.toFixed(2)}}`;
+                    }}
+                    return;
+                }}
+
+                const cPrice = param.seriesPrices.get(candleSeries);
+                if (cPrice) {{
+                    document.getElementById('chartLegendOhlc').innerText = `O: ${{cPrice.open?.toFixed(2)}} H: ${{cPrice.high?.toFixed(2)}} L: ${{cPrice.low?.toFixed(2)}} C: ${{cPrice.close?.toFixed(2)}}`;
+                }}
+
+                const e20 = param.seriesPrices.get(ema20Series);
+                document.getElementById('legEma20').innerText = e20 ? `₹${{e20.toFixed(2)}}` : '--';
+
+                const e50 = param.seriesPrices.get(ema50Series);
+                document.getElementById('legEma50').innerText = e50 ? `₹${{e50.toFixed(2)}}` : '--';
+
+                const e200 = param.seriesPrices.get(ema200Series);
+                document.getElementById('legEma200').innerText = e200 ? `₹${{e200.toFixed(2)}}` : '--';
+
+                const st = param.seriesPrices.get(superTrendSeries);
+                document.getElementById('legSt').innerText = st ? `₹${{st.toFixed(2)}}` : '--';
+            }});
+
+            // Set default legend to last candle
+            if (candleData.length > 0) {{
+                const last = candleData[candleData.length - 1];
+                document.getElementById('chartLegendOhlc').innerText = `O: ${{last.open.toFixed(2)}} H: ${{last.high.toFixed(2)}} L: ${{last.low.toFixed(2)}} C: ${{last.close.toFixed(2)}}`;
+                if (data.ema_20 && data.ema_20.length) document.getElementById('legEma20').innerText = `₹${{data.ema_20[data.ema_20.length - 1].value.toFixed(2)}}`;
+                if (data.ema_50 && data.ema_50.length) document.getElementById('legEma50').innerText = `₹${{data.ema_50[data.ema_50.length - 1].value.toFixed(2)}}`;
+                if (data.ema_200 && data.ema_200.length) document.getElementById('legEma200').innerText = `₹${{data.ema_200[data.ema_200.length - 1].value.toFixed(2)}}`;
+                if (data.supertrend && data.supertrend.length) document.getElementById('legSt').innerText = `₹${{data.supertrend[data.supertrend.length - 1].value.toFixed(2)}}`;
+            }}
+
+            chartInstance.timeScale().fitContent();
+        }}
+
+        function toggleChartCandleType() {{
+            if (!currentChartData || !candleSeries) return;
+            isHeikinAshi = !isHeikinAshi;
+            const label = document.getElementById('chartTypeLabel');
+            if (isHeikinAshi) {{
+                label.innerText = 'Heikin Ashi';
+                candleSeries.setData(currentChartData.ha_candles);
+            }} else {{
+                label.innerText = 'Standard Candles';
+                candleSeries.setData(currentChartData.raw_candles);
+            }}
+        }}
+
+        function toggleEmas() {{
+            if (!chartInstance) return;
+            showEmas = !showEmas;
+            const btn = document.getElementById('toggleEmaBtn');
+            if (showEmas) {{
+                btn.className = 'px-2.5 py-1.5 bg-blue-600/30 text-blue-300 border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition';
+                if (ema20Series) ema20Series.applyOptions({{ visible: true }});
+                if (ema50Series) ema50Series.applyOptions({{ visible: true }});
+                if (ema200Series) ema200Series.applyOptions({{ visible: true }});
+            }} else {{
+                btn.className = 'px-2.5 py-1.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition';
+                if (ema20Series) ema20Series.applyOptions({{ visible: false }});
+                if (ema50Series) ema50Series.applyOptions({{ visible: false }});
+                if (ema200Series) ema200Series.applyOptions({{ visible: false }});
+            }}
+        }}
+
+        function toggleSuperTrend() {{
+            if (!chartInstance || !superTrendSeries) return;
+            showSuperTrend = !showSuperTrend;
+            const btn = document.getElementById('toggleStBtn');
+            if (showSuperTrend) {{
+                btn.className = 'px-2.5 py-1.5 bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition';
+                superTrendSeries.applyOptions({{ visible: true }});
+            }} else {{
+                btn.className = 'px-2.5 py-1.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition';
+                superTrendSeries.applyOptions({{ visible: false }});
+            }}
+        }}
+
+        async function executeOrderFromChart() {{
+            if (!currentChartSymbol) return;
+            await executeOrder(currentChartSymbol);
+        }}
+
+        // Window resize and Escape key support
+        window.addEventListener('resize', () => {{
+            if (chartInstance) {{
+                const container = document.getElementById('tvChartContainer');
+                if (container) {{
+                    chartInstance.applyOptions({{
+                        width: container.clientWidth,
+                        height: container.clientHeight,
+                    }});
+                }}
+            }}
+        }});
+
+        window.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape') {{
+                closeChartModal();
+            }}
+        }});
 
         function switchTab(tabId) {{
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -892,15 +1469,28 @@ def index_page() -> str:
                     ? `<span class="badge-green px-2.5 py-1 rounded-full font-bold text-[11px] animate-pulse"><i class="fa-solid fa-crosshairs mr-1"></i> BUY TRIGGER</span>`
                     : `<span class="text-slate-500 text-[11px]">Watching</span>`;
 
-                const actionBtn = item.is_setup_ready
-                    ? `<button onclick="executeOrder('${{item.symbol}}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-[11px] transition shadow">BUY</button>`
-                    : `<button disabled class="px-2.5 py-1 bg-slate-800 text-slate-600 rounded text-[11px] cursor-not-allowed">--</button>`;
+                const actionBtn = `
+                    <div class="flex items-center justify-end gap-1.5">
+                        <button onclick="openChartModal('${{item.symbol}}')" title="Open 2H TradingView Chart" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 rounded border border-slate-700 font-bold text-[11px] transition shadow">
+                            <i class="fa-solid fa-chart-candlestick"></i>
+                        </button>
+                        ${{item.is_setup_ready
+                            ? `<button onclick="executeOrder('${{item.symbol}}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-[11px] transition shadow">BUY</button>`
+                            : `<button disabled class="px-2.5 py-1 bg-slate-800 text-slate-600 rounded text-[11px] cursor-not-allowed">--</button>`
+                        }}
+                    </div>
+                `;
 
                 return `
                     <tr class="hover:bg-slate-800/50 transition">
-                        <td class="p-3 font-bold text-white flex items-center gap-2">
-                            <span>${{item.symbol}}</span>
-                            <span class="text-[10px] text-slate-500 font-mono">(${{item.sec_id || ''}})</span>
+                        <td class="p-3 font-bold text-white">
+                            <div class="flex items-center gap-2">
+                                <button onclick="openChartModal('${{item.symbol}}')" class="text-white hover:text-sky-400 font-bold flex items-center gap-1.5 transition text-left group">
+                                    <i class="fa-solid fa-chart-candlestick text-slate-500 group-hover:text-sky-400 text-xs"></i>
+                                    <span>${{item.symbol}}</span>
+                                </button>
+                                <span class="text-[10px] text-slate-500 font-mono">(${{item.sec_id || ''}})</span>
+                            </div>
                         </td>
                         <td class="p-3 font-mono text-slate-200">₹${{Number(item.ltp || 0).toFixed(2)}}</td>
                         <td class="p-3">${{emaBadge}}</td>
@@ -951,7 +1541,12 @@ def index_page() -> str:
 
                 tbody.innerHTML = signals.map(s => `
                     <tr class="hover:bg-slate-800/50">
-                        <td class="p-3 font-bold text-white">${{s.symbol}}</td>
+                        <td class="p-3 font-bold text-white">
+                            <button onclick="openChartModal('${{s.symbol}}')" class="text-white hover:text-sky-400 font-bold flex items-center gap-1.5 transition text-left group">
+                                <i class="fa-solid fa-chart-candlestick text-slate-500 group-hover:text-sky-400 text-xs"></i>
+                                <span>${{s.symbol}}</span>
+                            </button>
+                        </td>
                         <td class="p-3 font-mono text-emerald-400">₹${{s.trigger_price}}</td>
                         <td class="p-3 font-mono text-rose-400">₹${{s.stop_loss_price}}</td>
                         <td class="p-3 font-mono text-sky-400">₹${{s.target_profit_price}}</td>
@@ -959,7 +1554,12 @@ def index_page() -> str:
                         <td class="p-3 text-slate-300">${{s.nearest_ema_name}}</td>
                         <td class="p-3"><span class="badge-green px-2 py-0.5 rounded text-[11px] font-semibold">${{s.status}}</span></td>
                         <td class="p-3 text-right">
-                            <button onclick="executeOrder('${{s.symbol}}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-xs shadow transition">BUY</button>
+                            <div class="flex items-center justify-end gap-1.5">
+                                <button onclick="openChartModal('${{s.symbol}}')" title="Open 2H TradingView Chart" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 rounded border border-slate-700 font-bold text-xs shadow transition">
+                                    <i class="fa-solid fa-chart-candlestick"></i>
+                                </button>
+                                <button onclick="executeOrder('${{s.symbol}}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-xs shadow transition">BUY</button>
+                            </div>
                         </td>
                     </tr>
                 `).join('');

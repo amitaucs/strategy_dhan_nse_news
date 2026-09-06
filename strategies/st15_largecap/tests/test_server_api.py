@@ -160,6 +160,21 @@ class TestServerAPI(unittest.TestCase):
         self.assertEqual(exec_res.status_code, 200)
         self.assertEqual(exec_res.json()["status"], "success")
 
+    def test_api_chart_endpoint(self):
+        # Fetch chart data for a symbol (will use fetcher with fallback/live data)
+        chart_res = self.client.get("/api/chart/RELIANCE")
+        self.assertEqual(chart_res.status_code, 200)
+        data = chart_res.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["symbol"], "RELIANCE")
+        self.assertIn("raw_candles", data)
+        self.assertIn("ha_candles", data)
+        self.assertIn("ema_20", data)
+        self.assertIn("ema_50", data)
+        self.assertIn("ema_200", data)
+        self.assertIn("supertrend", data)
+        self.assertIn("scan", data)
+
 
 if __name__ == "__main__":
     unittest.main()
