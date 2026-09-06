@@ -58,7 +58,7 @@ class Settings:
     supertrend_multiplier: float = float(os.getenv("SUPERTREND_MULTIPLIER", "3.0"))
     risk_reward_ratio: float = float(os.getenv("RISK_REWARD_RATIO", "3.0"))
     swing_low_lookback: int = int(os.getenv("SWING_LOW_LOOKBACK", "10"))
-    history_days: int = int(os.getenv("HISTORY_DAYS", "60"))
+    history_days: int = int(os.getenv("HISTORY_DAYS", "180"))
 
     # Position Sizing & Execution Controls
     capital_per_position: float = float(os.getenv("CAPITAL_PER_POSITION", os.getenv("CAPITAL_PER_TRADE", "50000.0")))

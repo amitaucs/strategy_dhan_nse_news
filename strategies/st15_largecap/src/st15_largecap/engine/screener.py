@@ -99,12 +99,8 @@ class ST15Screener:
         is_st_green = st_green_list[curr_idx]
         st_val = st_vals[curr_idx]
 
-        # Gate 1: Bullish EMA Alignment (20 > 50 > 200)
-        # Note: If history is shorter than 200 candles, check 20 > 50 and 50 > 200 (if 200 available)
+        # Gate 1: Bullish EMA Alignment (Strict 20 EMA > 50 EMA > 200 EMA)
         is_ema_stacked = is_ema_stacked_bullish(ema_20, ema_50, ema_200)
-        if len(candles) < 200 and ema_20 > ema_50:
-            # For moderate length backtests where 200 EMA is emerging
-            is_ema_stacked = True
 
         # Gate 2: Pullback Dip near or kissing any EMA
         # Check current candle or any of the preceding 3 candles for proximity dip

@@ -120,10 +120,10 @@ class CandleFetcher:
         symbol: str = "",
         exchange_segment: str = "NSE_EQ",
         instrument_type: str = "EQUITY",
-        days: int = 60,
+        days: int = 180,
         force_refresh: bool = False,
     ) -> List[Candle]:
-        """Fetch historical intraday data with smart caching and rate-limiting."""
+        """Fetch historical intraday data with smart chunking (90-day intervals), caching and rate-limiting."""
         cache_key = f"{symbol or security_id}_{days}"
         now = datetime.now()
 
@@ -135,93 +135,107 @@ class CandleFetcher:
 
         if not self.dhan or not security_id:
             logger.debug("Generating realistic synthetic 2H candles for %s (SecID: %s)", symbol, security_id)
-            mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
+            mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=100)
             self._cache[cache_key] = (now, mock_candles)
             return mock_candles
 
-        to_date = now
-        from_date = to_date - timedelta(days=days)
-        from_str = from_date.strftime("%Y-%m-%d")
-        to_str = to_date.strftime("%Y-%m-%d")
+        # Dhan intraday API has a 90-day maximum window per call (DH-905).
+        # We split the requested days into 90-day chunks: [(180, 90), (90, 0)]
+        chunks = []
+        rem = days
+        curr_offset = 0
+        while rem > 0:
+            step = min(90, rem)
+            chunks.append((curr_offset + step, curr_offset))
+            curr_offset += step
+            rem -= step
 
-        # Rate Limiting: enforce minimum interval between Dhan API calls
-        elapsed = time_lib.time() - self._last_call_time
-        if elapsed < self._min_interval:
-            time_lib.sleep(self._min_interval - elapsed)
+        # Fetch older chunks first
+        chunks = sorted(chunks, key=lambda c: c[0], reverse=True)
+        all_records: List[Dict[str, Any]] = []
 
-        max_retries = 2
-        for attempt in range(max_retries + 1):
-            try:
-                self._last_call_time = time_lib.time()
-                response = self.dhan.intraday_minute_data(
-                    security_id=str(security_id),
-                    exchange_segment=exchange_segment,
-                    instrument_type=instrument_type,
-                    from_date=from_str,
-                    to_date=to_str,
-                )
+        for chunk_start, chunk_end in chunks:
+            from_date = (now - timedelta(days=chunk_start)).strftime("%Y-%m-%d")
+            to_date = (now - timedelta(days=chunk_end)).strftime("%Y-%m-%d")
 
-                # Check for rate limit response (DH-904)
-                if isinstance(response, dict) and response.get("error_code") == "DH-904":
-                    if attempt < max_retries:
-                        backoff = 1.0 * (attempt + 1)
-                        logger.warning(
-                            "Rate limited (DH-904) on %s. Backing off %.1fs before retry %d/%d...",
-                            symbol or security_id, backoff, attempt + 1, max_retries
-                        )
-                        time_lib.sleep(backoff)
-                        continue
-                    elif cache_key in self._cache:
-                        logger.warning("Rate limited on %s. Serving cached candles.", symbol or security_id)
-                        return self._cache[cache_key][1]
+            # Rate Limiting: enforce minimum interval between Dhan API calls
+            elapsed = time_lib.time() - self._last_call_time
+            if elapsed < self._min_interval:
+                time_lib.sleep(self._min_interval - elapsed)
 
-                if isinstance(response, dict) and response.get("status") == "success":
-                    data = response.get("data", {})
-                    timestamps = data.get("timestamp", [])
-                    opens = data.get("open", [])
-                    highs = data.get("high", [])
-                    lows = data.get("low", [])
-                    closes = data.get("close", [])
-                    volumes = data.get("volume", [0.0] * len(opens))
+            max_retries = 2
+            chunk_success = False
 
-                    records = []
-                    for i in range(len(timestamps)):
-                        ts_val = timestamps[i]
-                        if isinstance(ts_val, (int, float)):
-                            dt = datetime.fromtimestamp(ts_val)
-                        else:
-                            dt = pd.to_datetime(ts_val)
+            for attempt in range(max_retries + 1):
+                try:
+                    self._last_call_time = time_lib.time()
+                    response = self.dhan.intraday_minute_data(
+                        security_id=str(security_id),
+                        exchange_segment=exchange_segment,
+                        instrument_type=instrument_type,
+                        from_date=from_date,
+                        to_date=to_date,
+                    )
 
-                        records.append({
-                            "timestamp": dt,
-                            "open": float(opens[i]),
-                            "high": float(highs[i]),
-                            "low": float(lows[i]),
-                            "close": float(closes[i]),
-                            "volume": float(volumes[i]) if i < len(volumes) else 0.0,
-                        })
+                    # Check for rate limit response (DH-904)
+                    if isinstance(response, dict) and response.get("error_code") == "DH-904":
+                        if attempt < max_retries:
+                            backoff = 1.0 * (attempt + 1)
+                            logger.warning(
+                                "Rate limited (DH-904) on %s [%s to %s]. Backing off %.1fs...",
+                                symbol or security_id, from_date, to_date, backoff
+                            )
+                            time_lib.sleep(backoff)
+                            continue
 
-                    candles = aggregate_to_2h_candles(records)
-                    if candles:
-                        self._cache[cache_key] = (now, candles)
-                        return candles
+                    if isinstance(response, dict) and response.get("status") == "success":
+                        data = response.get("data", {})
+                        timestamps = data.get("timestamp", [])
+                        opens = data.get("open", [])
+                        highs = data.get("high", [])
+                        lows = data.get("low", [])
+                        closes = data.get("close", [])
+                        volumes = data.get("volume", [0.0] * len(opens))
 
-                logger.warning(
-                    "Dhan API returned empty data for %s (SecID: %s): %s. Falling back to synthetic/cached candles.",
-                    symbol or security_id, security_id, response.get("remarks") or response.get("error_message") if isinstance(response, dict) else response
-                )
-                if cache_key in self._cache:
-                    return self._cache[cache_key][1]
-                mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
-                self._cache[cache_key] = (now, mock_candles)
-                return mock_candles
-            except Exception as e:
-                logger.error("Error fetching intraday candles for %s: %s", symbol or security_id, e)
-                if cache_key in self._cache:
-                    return self._cache[cache_key][1]
-                mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
-                self._cache[cache_key] = (now, mock_candles)
-                return mock_candles
+                        for i in range(len(timestamps)):
+                            ts_val = timestamps[i]
+                            if isinstance(ts_val, (int, float)):
+                                dt = datetime.fromtimestamp(ts_val)
+                            else:
+                                dt = pd.to_datetime(ts_val)
+
+                            all_records.append({
+                                "timestamp": dt,
+                                "open": float(opens[i]),
+                                "high": float(highs[i]),
+                                "low": float(lows[i]),
+                                "close": float(closes[i]),
+                                "volume": float(volumes[i]) if i < len(volumes) else 0.0,
+                            })
+                        chunk_success = True
+                        break
+
+                    logger.debug("Dhan API chunk (%s to %s) returned non-success for %s: %s", from_date, to_date, symbol, response)
+                    break
+                except Exception as e:
+                    logger.warning("Error fetching chunk (%s to %s) for %s: %s", from_date, to_date, symbol, e)
+                    break
+
+        if all_records:
+            # Deduplicate by timestamp and sort
+            df_rec = pd.DataFrame(all_records)
+            df_rec = df_rec.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+            candles = aggregate_to_2h_candles(df_rec.to_dict("records"))
+            if candles:
+                self._cache[cache_key] = (now, candles)
+                return candles
+
+        if cache_key in self._cache:
+            return self._cache[cache_key][1]
+
+        mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=100)
+        self._cache[cache_key] = (now, mock_candles)
+        return mock_candles
 
 
 def generate_mock_2h_candles(
