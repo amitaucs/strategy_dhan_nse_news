@@ -4,15 +4,18 @@ Supports remote MySQL (MariaDB) with transparent local SQLite fallback.
 """
 
 from datetime import datetime, timedelta
+from functools import wraps
 import hashlib
 import logging
 import os
 from pathlib import Path
 import secrets
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import FilingAudit, TradeResult
+from news_based_strategy.execution.risk import get_ist_now
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,15 @@ def verify_password(password: str, salt: str, expected_hash: str) -> bool:
     return secrets.compare_digest(computed_hash, expected_hash)
 
 
+def _thread_safe(method):
+    """Decorator ensuring single-threaded atomic access to database connection."""
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class StrategyStorage:
     """Manages persistent storage with MySQL primary and SQLite fallback."""
 
@@ -44,6 +56,7 @@ class StrategyStorage:
         password: Optional[str] = None,
         database: Optional[str] = None,
     ):
+        self._lock = threading.RLock()
         if use_mysql is None:
             # Default to settings.use_mysql unless a custom db_path is explicitly provided
             self.use_mysql = settings.use_mysql if db_path is None else False
@@ -69,6 +82,7 @@ class StrategyStorage:
 
         self._init_tables()
         self.seed_default_user()
+        self.seed_authorized_clients()
 
     @property
     def conn(self):
@@ -87,6 +101,8 @@ class StrategyStorage:
                 password=self.password,
                 database=self.database,
                 connect_timeout=10,
+                read_timeout=15,
+                write_timeout=15,
                 autocommit=True,
             )
             self.is_mysql_active = True
@@ -117,19 +133,43 @@ class StrategyStorage:
 
     def _ensure_connection(self) -> None:
         """Ensure active database connection with automatic reconnection for MySQL."""
-        if self.is_mysql_active and self._mysql_conn:
-            try:
-                self._mysql_conn.ping(reconnect=True)
-            except Exception as e:
-                logger.warning("MySQL connection ping failed: %s. Falling back to SQLite.", e)
-                self.is_mysql_active = False
-                if not self._sqlite_conn:
-                    self._init_sqlite()
-                    self._init_tables()
+        if self.is_mysql_active:
+            if not self._mysql_conn:
+                if not self._init_mysql():
+                    logger.warning("MySQL reconnect failed. Falling back to SQLite.")
+                    self.is_mysql_active = False
+                    if not self._sqlite_conn:
+                        self._init_sqlite()
+                        self._init_tables()
+            else:
+                try:
+                    self._mysql_conn.ping(reconnect=True)
+                except Exception as e:
+                    logger.warning("MySQL connection ping failed (%s). Reconnecting...", e)
+                    try:
+                        if self._mysql_conn:
+                            try:
+                                self._mysql_conn.close()
+                            except Exception:
+                                pass
+                        self._mysql_conn = None
+                        if not self._init_mysql():
+                            logger.warning("MySQL reconnect failed. Falling back to SQLite.")
+                            self.is_mysql_active = False
+                            if not self._sqlite_conn:
+                                self._init_sqlite()
+                                self._init_tables()
+                    except Exception as re_err:
+                        logger.warning("MySQL reconnect exception: %s. Falling back to SQLite.", re_err)
+                        self.is_mysql_active = False
+                        self._mysql_conn = None
+                        if not self._sqlite_conn:
+                            self._init_sqlite()
+                            self._init_tables()
 
     def _init_tables(self) -> None:
         """Create necessary tables if they do not exist."""
-        if self.is_mysql_active:
+        if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
@@ -207,10 +247,23 @@ class StrategyStorage:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS `Authorized user` (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            client_id VARCHAR(64) UNIQUE NOT NULL,
+                            name VARCHAR(128),
+                            is_active TINYINT NOT NULL DEFAULT 1,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            INDEX idx_client_id (client_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 return
             except Exception as e:
                 logger.warning("Failed creating MySQL tables: %s. Reverting to SQLite.", e)
                 self.is_mysql_active = False
+                self._mysql_conn = None
                 self._init_sqlite()
 
         if self._sqlite_conn:
@@ -285,48 +338,74 @@ class StrategyStorage:
                     )
                     """
                 )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS `Authorized user` (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_id TEXT UNIQUE NOT NULL,
+                        name TEXT,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
 
+    @_thread_safe
     def is_processed(self, seq_id: str) -> bool:
         """Check if an announcement has already been processed."""
         if not seq_id:
             return False
         self._ensure_connection()
-        if self.is_mysql_active:
-            with self._mysql_conn.cursor() as cursor:
-                cursor.execute("SELECT 1 FROM processed_filings WHERE seq_id = %s", (seq_id,))
+        if self.is_mysql_active and self._mysql_conn:
+            try:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT 1 FROM processed_filings WHERE seq_id = %s", (seq_id,))
+                    return cursor.fetchone() is not None
+            except Exception as e:
+                logger.warning("Error checking is_processed in MySQL: %s", e)
+                self._mysql_conn = None
+        if self._sqlite_conn:
+            try:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT 1 FROM processed_filings WHERE seq_id = ?", (seq_id,))
                 return cursor.fetchone() is not None
-        elif self._sqlite_conn:
-            cursor = self._sqlite_conn.cursor()
-            cursor.execute("SELECT 1 FROM processed_filings WHERE seq_id = ?", (seq_id,))
-            return cursor.fetchone() is not None
+            except Exception as e:
+                logger.warning("Error checking is_processed in SQLite: %s", e)
         return False
 
+    @_thread_safe
     def mark_processed(self, seq_id: str, symbol: str, an_dt: str = "") -> None:
         """Record an announcement as processed."""
         if not seq_id:
             return
         self._ensure_connection()
-        if self.is_mysql_active:
+        if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
                         "INSERT IGNORE INTO processed_filings (seq_id, symbol, an_dt) VALUES (%s, %s, %s)",
                         (seq_id, symbol, an_dt),
                     )
+                return
             except Exception as e:
                 logger.warning("Failed to mark_processed in MySQL: %s", e)
-        elif self._sqlite_conn:
-            with self._sqlite_conn:
-                self._sqlite_conn.execute(
-                    "INSERT OR IGNORE INTO processed_filings (seq_id, symbol, an_dt) VALUES (?, ?, ?)",
-                    (seq_id, symbol, an_dt),
-                )
+                self._mysql_conn = None
+        if self._sqlite_conn:
+            try:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        "INSERT OR IGNORE INTO processed_filings (seq_id, symbol, an_dt) VALUES (?, ?, ?)",
+                        (seq_id, symbol, an_dt),
+                    )
+            except Exception as e:
+                logger.warning("Failed to mark_processed in SQLite: %s", e)
 
+    @_thread_safe
     def get_processed_seq_ids(self, limit: int = 2000) -> Set[str]:
         """Preload recently processed sequence IDs into a Python set."""
         self._ensure_connection()
         try:
-            if self.is_mysql_active:
+            if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
                         "SELECT seq_id FROM processed_filings ORDER BY processed_at DESC LIMIT %s",
@@ -342,12 +421,15 @@ class StrategyStorage:
                 return {str(row[0]) for row in cursor.fetchall()}
         except Exception as e:
             logger.warning("Error fetching processed_seq_ids: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return set()
 
+    @_thread_safe
     def save_audit(self, seq_id: str, symbol: str, audit: FilingAudit) -> None:
         """Save an AI filing audit."""
         self._ensure_connection()
-        if self.is_mysql_active:
+        if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
@@ -365,26 +447,32 @@ class StrategyStorage:
                             audit.summary,
                         ),
                     )
+                return
             except Exception as e:
                 logger.warning("Failed to save audit in MySQL: %s", e)
-        elif self._sqlite_conn:
-            with self._sqlite_conn:
-                self._sqlite_conn.execute(
-                    """
-                    INSERT INTO audit_logs (seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        seq_id,
-                        symbol,
-                        audit.sentiment,
-                        int(audit.confidence),
-                        audit.catalyst_type,
-                        1 if audit.material_impact else 0,
-                        audit.summary,
-                    ),
-                )
+                self._mysql_conn = None
+        if self._sqlite_conn:
+            try:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO audit_logs (seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            seq_id,
+                            symbol,
+                            audit.sentiment,
+                            int(audit.confidence),
+                            audit.catalyst_type,
+                            1 if audit.material_impact else 0,
+                            audit.summary,
+                        ),
+                    )
+            except Exception as e:
+                logger.warning("Failed to save audit in SQLite: %s", e)
 
+    @_thread_safe
     def get_recent_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieve recent AI audits from the database."""
         self._ensure_connection()
@@ -412,6 +500,7 @@ class StrategyStorage:
                             "summary": str(row[6]),
                             "created_at": str(row[7]),
                         })
+                    return results
             elif self._sqlite_conn:
                 cursor = self._sqlite_conn.cursor()
                 cursor.execute(
@@ -434,14 +523,18 @@ class StrategyStorage:
                         "summary": str(row[6]),
                         "created_at": str(row[7]),
                     })
+                return results
         except Exception as e:
             logger.warning("Error fetching recent audits: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return results
 
+    @_thread_safe
     def save_trade(self, result: TradeResult) -> None:
         """Log a trade execution attempt."""
         self._ensure_connection()
-        if self.is_mysql_active:
+        if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
@@ -459,56 +552,72 @@ class StrategyStorage:
                             1 if result.dry_run else 0,
                         ),
                     )
+                return
             except Exception as e:
                 logger.warning("Failed to save trade in MySQL: %s", e)
-        elif self._sqlite_conn:
-            with self._sqlite_conn:
-                self._sqlite_conn.execute(
-                    """
-                    INSERT INTO trade_executions (symbol, action, quantity, product_type, order_id, remarks, dry_run)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        result.symbol,
-                        result.action,
-                        result.quantity,
-                        result.product_type,
-                        result.order_id,
-                        result.remarks,
-                        1 if result.dry_run else 0,
-                    ),
-                )
+                self._mysql_conn = None
+        if self._sqlite_conn:
+            try:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO trade_executions (symbol, action, quantity, product_type, order_id, remarks, dry_run)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            result.symbol,
+                            result.action,
+                            result.quantity,
+                            result.product_type,
+                            result.order_id,
+                            result.remarks,
+                            1 if result.dry_run else 0,
+                        ),
+                    )
+            except Exception as e:
+                logger.warning("Failed to save trade in SQLite: %s", e)
 
+    @_thread_safe
     def get_processed_count(self) -> int:
         """Return the total number of processed filings."""
         self._ensure_connection()
-        if self.is_mysql_active:
-            with self._mysql_conn.cursor() as cursor:
+        if self.is_mysql_active and self._mysql_conn:
+            try:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT COUNT(*) FROM processed_filings")
+                    row = cursor.fetchone()
+                    return int(row[0]) if row else 0
+            except Exception as e:
+                logger.warning("Failed querying processed count in MySQL: %s", e)
+                self._mysql_conn = None
+        if self._sqlite_conn:
+            try:
+                cursor = self._sqlite_conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM processed_filings")
                 row = cursor.fetchone()
                 return int(row[0]) if row else 0
-        elif self._sqlite_conn:
-            cursor = self._sqlite_conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM processed_filings")
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
+            except Exception as e:
+                logger.warning("Failed querying processed count in SQLite: %s", e)
         return 0
 
+    @_thread_safe
     def get_today_order_count(self) -> int:
-        """Return the number of successfully placed orders today."""
+        """Return the number of successfully placed orders today in IST."""
         self._ensure_connection()
-        today_prefix = datetime.now().strftime("%Y-%m-%d")
-        if self.is_mysql_active:
+        today_prefix = get_ist_now().strftime("%Y-%m-%d")
+        if self.is_mysql_active and self._mysql_conn:
             try:
                 with self._mysql_conn.cursor() as cursor:
                     cursor.execute(
-                        "SELECT COUNT(*) FROM trade_executions WHERE DATE(timestamp) = CURRENT_DATE AND order_id IS NOT NULL"
+                        "SELECT COUNT(*) FROM trade_executions WHERE DATE(timestamp) = %s AND order_id IS NOT NULL",
+                        (today_prefix,),
                     )
                     row = cursor.fetchone()
                     return int(row[0]) if row else 0
             except Exception as e:
                 logger.warning("Failed querying today order count in MySQL: %s", e)
-        elif self._sqlite_conn:
+                self._mysql_conn = None
+        if self._sqlite_conn:
             try:
                 cursor = self._sqlite_conn.cursor()
                 cursor.execute(
@@ -521,6 +630,7 @@ class StrategyStorage:
                 logger.warning("Failed querying today order count in SQLite: %s", e)
         return 0
 
+    @_thread_safe
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Retrieve a stored setting value by key."""
         if not key:
@@ -539,8 +649,11 @@ class StrategyStorage:
                 return str(row[0]) if row and row[0] is not None else default
         except Exception as e:
             logger.warning("Error fetching setting '%s': %s", key, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return default
 
+    @_thread_safe
     def set_setting(self, key: str, value: str) -> None:
         """Upsert a setting key-value pair into the database."""
         if not key:
@@ -569,7 +682,10 @@ class StrategyStorage:
                     )
         except Exception as e:
             logger.warning("Failed setting '%s' to '%s': %s", key, value, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
 
+    @_thread_safe
     def get_all_settings(self) -> Dict[str, str]:
         """Retrieve all stored settings as a dictionary."""
         self._ensure_connection()
@@ -587,8 +703,11 @@ class StrategyStorage:
                     res[str(row[0])] = str(row[1])
         except Exception as e:
             logger.warning("Error fetching all settings: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return res
 
+    @_thread_safe
     def delete_setting(self, key: str) -> bool:
         """Delete a setting by key."""
         if not key:
@@ -606,10 +725,14 @@ class StrategyStorage:
                     return cursor.rowcount > 0
         except Exception as e:
             logger.warning("Error deleting setting '%s': %s", key, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
     # -------------------------------------------------------------------------
     # User Authentication & Session Management
     # -------------------------------------------------------------------------
 
+    @_thread_safe
     def get_user(self, username: str) -> Optional[dict]:
         """Fetch user record by username."""
         if not username:
@@ -648,8 +771,11 @@ class StrategyStorage:
                     }
         except Exception as e:
             logger.warning("Error fetching user '%s': %s", username, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return None
 
+    @_thread_safe
     def create_user(self, username: str, password_hash: str, salt: str) -> bool:
         """Insert or update a user record."""
         if not username or not password_hash or not salt:
@@ -680,8 +806,11 @@ class StrategyStorage:
                     return True
         except Exception as e:
             logger.warning("Error creating user '%s': %s", username, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return False
 
+    @_thread_safe
     def seed_default_user(self, username: str = "amit", password: str = "Kls@1982") -> None:
         """Seed default user if not already present in the database."""
         try:
@@ -693,6 +822,7 @@ class StrategyStorage:
         except Exception as e:
             logger.warning("Could not seed default user '%s': %s", username, e)
 
+    @_thread_safe
     def verify_user_credentials(self, username: str, plain_password: str) -> bool:
         """Verify plain password against stored user hash."""
         if not username or not plain_password:
@@ -702,13 +832,14 @@ class StrategyStorage:
             return False
         return verify_password(plain_password, user["salt"], user["password_hash"])
 
+    @_thread_safe
     def create_session(self, username: str, max_age_days: int = 7) -> str:
         """Create a new user session token in the database."""
         if not username:
             return ""
         self._ensure_connection()
         session_token = secrets.token_urlsafe(48)
-        expires_at = (datetime.now() + timedelta(days=max_age_days)).strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (get_ist_now() + timedelta(days=max_age_days)).strftime("%Y-%m-%d %H:%M:%S")
         try:
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
@@ -725,14 +856,17 @@ class StrategyStorage:
             return session_token
         except Exception as e:
             logger.warning("Error creating session for user '%s': %s", username, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
             return ""
 
+    @_thread_safe
     def validate_session(self, session_token: str) -> Optional[str]:
         """Validate session token and return username if active and not expired."""
         if not session_token:
             return None
         self._ensure_connection()
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
@@ -752,8 +886,11 @@ class StrategyStorage:
                 return str(row[0]) if row else None
         except Exception as e:
             logger.warning("Error validating session: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return None
 
+    @_thread_safe
     def delete_session(self, session_token: str) -> bool:
         """Delete session token on logout."""
         if not session_token:
@@ -770,9 +907,152 @@ class StrategyStorage:
                     cursor.execute("DELETE FROM user_sessions WHERE session_token = ?", (session_token.strip(),))
                     return cursor.rowcount > 0
         except Exception as e:
-            logger.warning("Error deleting session: %s", key if 'key' in locals() else session_token, e)
+            logger.warning("Error deleting session: %s", session_token, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
         return False
 
+    @_thread_safe
+    def seed_authorized_clients(self, default_client_id: str = "1104872040") -> None:
+        """Seed default authorized client ID into `Authorized user` table if not present."""
+        try:
+            ids_to_seed = [default_client_id]
+            if settings.dhan_client_id and settings.dhan_client_id not in ids_to_seed:
+                ids_to_seed.append(settings.dhan_client_id)
+            for cid in ids_to_seed:
+                if cid and not self.is_client_authorized(cid):
+                    self.add_authorized_client(cid, name="Primary Authorized Account", is_active=1)
+                    logger.info("Seeded authorized client '%s' in `Authorized user` table.", cid)
+        except Exception as e:
+            logger.warning("Could not seed authorized client: %s", e)
+
+    @_thread_safe
+    def is_client_authorized(self, client_id: str) -> bool:
+        """Check if a Dhan client ID is present and active in `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT 1 FROM `Authorized user` WHERE client_id = %s AND is_active = 1",
+                        (cid,),
+                    )
+                    return cursor.fetchone() is not None
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM `Authorized user` WHERE client_id = ? AND is_active = 1",
+                    (cid,),
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.warning("Error checking is_client_authorized for '%s': %s", cid, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def add_authorized_client(self, client_id: str, name: str = "", is_active: int = 1) -> bool:
+        """Add or update an authorized client ID in `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO `Authorized user` (client_id, name, is_active)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE name = VALUES(name), is_active = VALUES(is_active)
+                        """,
+                        (cid, name.strip(), int(is_active)),
+                    )
+                    return True
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO `Authorized user` (client_id, name, is_active)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(client_id) DO UPDATE SET name = excluded.name, is_active = excluded.is_active
+                        """,
+                        (cid, name.strip(), int(is_active)),
+                    )
+                    return True
+        except Exception as e:
+            logger.warning("Error adding authorized client '%s': %s", cid, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def get_authorized_clients(self) -> List[Dict[str, Any]]:
+        """Return all authorized client records from `Authorized user` table."""
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT id, client_id, name, is_active, created_at FROM `Authorized user` ORDER BY id ASC")
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            "id": r[0],
+                            "client_id": str(r[1]),
+                            "name": r[2] or "",
+                            "is_active": bool(r[3]),
+                            "created_at": str(r[4]),
+                        }
+                        for r in rows
+                    ]
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT id, client_id, name, is_active, created_at FROM `Authorized user` ORDER BY id ASC")
+                rows = cursor.fetchall()
+                return [
+                    {
+                        "id": r[0],
+                        "client_id": str(r[1]),
+                        "name": r[2] or "",
+                        "is_active": bool(r[3]),
+                        "created_at": str(r[4]),
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            logger.warning("Error fetching authorized clients: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return []
+
+    @_thread_safe
+    def remove_authorized_client(self, client_id: str) -> bool:
+        """Remove or deactivate an authorized client ID from `Authorized user` table."""
+        if not client_id:
+            return False
+        self._ensure_connection()
+        cid = str(client_id).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM `Authorized user` WHERE client_id = %s", (cid,))
+                    return cursor.rowcount > 0
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    cursor = self._sqlite_conn.cursor()
+                    cursor.execute("DELETE FROM `Authorized user` WHERE client_id = ?", (cid,))
+                    return cursor.rowcount > 0
+        except Exception as e:
+            logger.warning("Error removing authorized client '%s': %s", cid, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
     def get_status_description(self) -> str:
         """Return human-readable connection description for CLI banner."""
         count = self.get_processed_count()
@@ -780,6 +1060,7 @@ class StrategyStorage:
             return f"MySQL ({self.host}:{self.port}/{self.database} | {count} stored filings)"
         return f"SQLite ({self.db_path} | {count} stored filings)"
 
+    @_thread_safe
     def close(self) -> None:
         """Close database connection."""
         if self._mysql_conn:

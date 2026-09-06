@@ -83,6 +83,8 @@ class DhanExecutor:
         stop_loss_pct: Optional[float] = None,
         trailing_jump_points: Optional[float] = None,
         slippage_buffer_pct: Optional[float] = None,
+        trade_cutoff_time: Optional[str] = None,
+        square_off_time: Optional[str] = None,
         approval_callback=None,
     ):
         self.client_id = client_id
@@ -116,19 +118,25 @@ class DhanExecutor:
         self.slippage_buffer_pct = (
             settings.slippage_buffer_pct if slippage_buffer_pct is None else slippage_buffer_pct
         )
+        self.trade_cutoff_time = (
+            settings.trade_cutoff_time if trade_cutoff_time is None else trade_cutoff_time
+        )
+        self.square_off_time = (
+            settings.square_off_time if square_off_time is None else square_off_time
+        )
 
         self._daily_order_timestamps: List[datetime] = []
         self.dhan = None
         self._init_client()
 
     def get_daily_order_count(self, ref_dt: Optional[datetime] = None) -> int:
-        """Return count of orders successfully placed on reference date (defaults to today)."""
-        target_date = (ref_dt or datetime.now()).date()
+        """Return count of orders successfully placed on reference date in IST (defaults to today)."""
+        target_date = (ref_dt or RiskManager.get_ist_now()).date()
         return sum(1 for dt in self._daily_order_timestamps if dt.date() == target_date)
 
     def record_placed_order(self, dt: Optional[datetime] = None) -> None:
-        """Record an executed order timestamp for daily limit tracking."""
-        self._daily_order_timestamps.append(dt or datetime.now())
+        """Record an executed order timestamp for daily limit tracking in IST."""
+        self._daily_order_timestamps.append(dt or RiskManager.get_ist_now())
 
     def reset_daily_order_count(self) -> None:
         """Clear recorded daily order history."""
@@ -346,6 +354,20 @@ class DhanExecutor:
         if not effective_sec_id or effective_sec_id == "0":
             effective_sec_id = resolve_security_id(signal.symbol) or "0"
 
+        if not self.dry_run and (not effective_sec_id or effective_sec_id == "0"):
+            remarks = f"ORDER REJECTED: Could not resolve Dhan security ID for {signal.symbol}"
+            logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+            return TradeResult(
+                success=False,
+                symbol=signal.symbol,
+                action=signal.action,
+                quantity=0,
+                product_type=safe_product,
+                order_id=None,
+                remarks=remarks,
+                dry_run=False,
+            )
+
         # 1. Staleness Circuit Breaker (Disarm if news broadcast is too old)
         if signal.exchange_time:
             is_fresh, age = RiskManager.is_news_fresh(signal.exchange_time, self.max_news_age_seconds)
@@ -364,7 +386,25 @@ class DhanExecutor:
                     dry_run=self.dry_run,
                 )
 
-        # 2. Daily Max Orders Circuit Breaker (Configurable per day limit)
+        # 2. Intraday Trade Cutoff Window (No new trades permitted after 02:45 PM IST)
+        if not self.dry_run:
+            ref_dt = RiskManager.parse_exchange_timestamp(signal.exchange_time) if signal.exchange_time else RiskManager.get_ist_now()
+            is_allowed, cutoff_reason = RiskManager.is_trade_allowed(ref_dt, cutoff_str=self.trade_cutoff_time)
+            if not is_allowed:
+                remarks = f"ORDER REJECTED: {cutoff_reason}"
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
+
+        # 3. Daily Max Orders Circuit Breaker (Configurable per day limit)
         today_order_count = self.get_daily_order_count()
         if RiskManager.is_daily_order_limit_reached(today_order_count, self.max_orders_per_day):
             remarks = (
@@ -383,36 +423,27 @@ class DhanExecutor:
                 dry_run=self.dry_run,
             )
 
-        # 3. Defensive check for live execution: must have a valid non-zero numeric Security ID
-        if not self.dry_run and self.dhan:
-            if not effective_sec_id or effective_sec_id == "0":
-                remarks = f"ORDER REJECTED: Could not resolve Dhan security ID for {signal.symbol}"
-                logger.error("❌ [%s] %s", signal.symbol, remarks)
-                return TradeResult(
-                    success=False,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                    quantity=0,
-                    product_type=safe_product,
-                    order_id=None,
-                    remarks=remarks,
-                    dry_run=False,
-                )
-
+        # 4. Position Sizing
         quantity = RiskManager.calculate_position_size(
-            self.capital_per_trade, ltp, max_quantity=self.max_shares_per_trade
-        )
-
-        # Compute Super Order levels
-        entry_price, target_price, sl_price = RiskManager.calculate_super_order_levels(
+            capital=self.capital_per_trade,
             ltp=ltp,
-            action=signal.action,
-            target_pct=self.target_profit_pct,
-            sl_pct=self.stop_loss_pct,
-            slippage_buffer_pct=self.slippage_buffer_pct,
+            max_quantity=self.max_shares_per_trade,
         )
 
-        # 4. User Approval Gate (if AUTO_ORDER=False)
+        # 5. Bracket Orders (Super Order) Level Calculations
+        if self.super_order_enabled:
+            entry_price, target_price, sl_price = RiskManager.calculate_super_order_levels(
+                ltp=ltp,
+                action=signal.action,
+                target_pct=self.target_profit_pct,
+                sl_pct=self.stop_loss_pct,
+                slippage_buffer_pct=self.slippage_buffer_pct,
+            )
+        else:
+            entry_price = round(ltp * (1.0 + self.slippage_buffer_pct / 100.0), 2)
+            target_price, sl_price = 0.0, 0.0
+
+        # 6. Manual Approval Check
         if not self.auto_order:
             approved = self.request_user_approval(
                 signal=signal,
@@ -424,56 +455,32 @@ class DhanExecutor:
                 ltp=ltp,
             )
             if not approved:
-                remarks = "ORDER SKIPPED: User declined trade approval (AUTO_ORDER=False)"
+                remarks = f"ORDER SKIPPED: User declined trade approval for {signal.symbol}"
                 logger.info("⏸️ [%s] %s", signal.symbol, remarks)
                 return TradeResult(
                     success=False,
                     symbol=signal.symbol,
                     action=signal.action,
                     quantity=quantity,
-                    product_type="INTRADAY" if self.super_order_enabled else safe_product,
+                    product_type=safe_product,
                     order_id=None,
                     remarks=remarks,
                     dry_run=self.dry_run,
                 )
 
-        # 5. Virtual Simulated Execution
-        if self.dry_run:
-            simulated_order_id = f"VIRTUAL_{signal.symbol}_{effective_sec_id}_{int(signal.confidence)}"
+        # 7. Execution: Dry-Run Mode
+        if self.dry_run or not self.dhan:
+            mode_tag = "VIRTUAL_SIMULATED" if self.dry_run else "MOCK_DISCONNECTED"
+            sim_id = f"{mode_tag}_{signal.symbol}_{effective_sec_id}"
             if self.super_order_enabled:
-                logger.info(
-                    "🚀 [VIRTUAL SUPER ORDER] %s %d shares of %s (Dhan SecID: %s) @ Entry Limit ₹%.2f | Target: ₹%.2f (+%.1f%%) | SL: ₹%.2f (-%.1f%%) | Trail: %.1f pts (Catalyst: %s)",
-                    signal.action,
-                    quantity,
-                    signal.symbol,
-                    effective_sec_id,
-                    entry_price,
-                    target_price,
-                    self.target_profit_pct,
-                    sl_price,
-                    self.stop_loss_pct,
-                    self.trailing_jump_points,
-                    signal.catalyst_type,
-                )
                 remarks = (
-                    f"Simulated Super Order: Entry Limit ₹{entry_price:.2f}, "
-                    f"TP ₹{target_price:.2f} (+{self.target_profit_pct}%), "
-                    f"SL ₹{sl_price:.2f} (-{self.stop_loss_pct}%), "
-                    f"Trail {self.trailing_jump_points} pts"
+                    f"Simulated Super Order: Entry Limit ₹{entry_price:.2f} "
+                    f"(TP ₹{target_price:.2f} (+{self.target_profit_pct}%), "
+                    f"SL ₹{sl_price:.2f} (-{self.stop_loss_pct}%), Trail {self.trailing_jump_points} pts)"
                 )
             else:
-                logger.info(
-                    "🚀 [VIRTUAL] Simulated %s %d shares of %s (Dhan SecID: %s | %s) @ ₹%.2f (Catalyst: %s)",
-                    signal.action,
-                    quantity,
-                    signal.symbol,
-                    effective_sec_id,
-                    safe_product,
-                    ltp,
-                    signal.catalyst_type,
-                )
-                remarks = "Simulated virtual order execution"
-
+                remarks = f"Simulated execution for {signal.symbol} (Dry-run mode active)"
+            logger.info("🛡️ [%s] %s (SecID: %s, Qty: %d)", signal.symbol, remarks, effective_sec_id, quantity)
             self.record_placed_order()
             return TradeResult(
                 success=True,
@@ -481,35 +488,18 @@ class DhanExecutor:
                 action=signal.action,
                 quantity=quantity,
                 product_type="INTRADAY" if self.super_order_enabled else safe_product,
-                order_id=simulated_order_id,
+                order_id=sim_id,
                 remarks=remarks,
                 dry_run=True,
             )
 
-        # 6. Live DhanHQ Execution Guard
-        if not self.dhan:
-            logger.error("❌ Live order execution failed: DhanHQ client not initialized or credentials missing.")
-            return TradeResult(
-                success=False,
-                symbol=signal.symbol,
-                action=signal.action,
-                quantity=quantity,
-                product_type="INTRADAY" if self.super_order_enabled else safe_product,
-                order_id=None,
-                remarks="ORDER REJECTED: DhanHQ client not initialized for live trading. Check token/credentials.",
-                dry_run=False,
-            )
-
-        # 7. Live DhanHQ Execution
+        # 8. Execution: Live Dhan Mode
         try:
-            txn_type = self.dhan.BUY if signal.action.upper() == "BUY" else self.dhan.SELL
-
             if self.super_order_enabled:
-                # Dhan Super Orders are strictly Intraday bracket orders with Limit entry
-                order = self.dhan.place_super_order(
+                order_resp = self.dhan.place_super_order(
                     security_id=effective_sec_id,
                     exchange_segment=self.dhan.NSE,
-                    transaction_type=txn_type,
+                    transaction_type=self.dhan.BUY if signal.action == "BUY" else self.dhan.SELL,
                     quantity=quantity,
                     order_type=self.dhan.LIMIT,
                     product_type=self.dhan.INTRA,
@@ -519,35 +509,49 @@ class DhanExecutor:
                     trailingJump=self.trailing_jump_points,
                     tag="news_super",
                 )
-                placed_product = "INTRADAY"
+                order_id = str(order_resp.get("orderId", "UNKNOWN_SUPER_ID")) if isinstance(order_resp, dict) else str(order_resp)
+                remarks = (
+                    f"Dhan Super Order placed successfully! ID: {order_id} "
+                    f"(Entry ₹{entry_price:.2f}, TP ₹{target_price:.2f}, SL ₹{sl_price:.2f})"
+                )
+                logger.info("🚀 [%s] %s", signal.symbol, remarks)
+                self.record_placed_order()
+                return TradeResult(
+                    success=True,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=quantity,
+                    product_type="INTRADAY",
+                    order_id=order_id,
+                    remarks=remarks,
+                    dry_run=False,
+                )
             else:
-                prod_type = self.dhan.INTRA if safe_product == "INTRADAY" else self.dhan.CNC
-                order = self.dhan.place_order(
+                order_resp = self.dhan.place_order(
                     security_id=effective_sec_id,
                     exchange_segment=self.dhan.NSE,
-                    transaction_type=txn_type,
+                    transaction_type=self.dhan.BUY if signal.action == "BUY" else self.dhan.SELL,
                     quantity=quantity,
                     order_type=self.dhan.MARKET,
-                    product_type=prod_type,
+                    product_type=self.dhan.CNC if safe_product == "CNC" else self.dhan.INTRA,
                     price=0,
                 )
-                placed_product = safe_product
-
-            order_id = str(order.get("orderId", "")) if isinstance(order, dict) else str(order)
-            logger.info("✅ Live Dhan order placed for %s: %s", signal.symbol, order)
-            self.record_placed_order()
-            return TradeResult(
-                success=True,
-                symbol=signal.symbol,
-                action=signal.action,
-                quantity=quantity,
-                product_type=placed_product,
-                order_id=order_id,
-                remarks=str(order),
-                dry_run=False,
-            )
+                order_id = str(order_resp.get("orderId", "UNKNOWN_DHAN_ID")) if isinstance(order_resp, dict) else str(order_resp)
+                remarks = f"Dhan order placed successfully! Order ID: {order_id}"
+                logger.info("🚀 [%s] %s", signal.symbol, remarks)
+                self.record_placed_order()
+                return TradeResult(
+                    success=True,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=quantity,
+                    product_type=safe_product,
+                    order_id=order_id,
+                    remarks=remarks,
+                    dry_run=False,
+                )
         except Exception as e:
-            logger.error("❌ Dhan order placement failed for %s: %s", signal.symbol, e)
+            logger.error("❌ [%s] Live order placement failed: %s", signal.symbol, e)
             return TradeResult(
                 success=False,
                 symbol=signal.symbol,
@@ -557,6 +561,137 @@ class DhanExecutor:
                 remarks=str(e),
                 dry_run=False,
             )
+
+    def square_off_all_positions(self) -> dict:
+        """Cancel all pending/open orders and square off all open intraday positions (Long & Short)."""
+        mode_str = "VIRTUAL" if self.dry_run else "LIVE"
+        logger.info("⏰ Triggering Intraday Square-Off routine (Mode: %s)...", mode_str)
+        now_ist = RiskManager.get_ist_now()
+        results = {
+            "success": True,
+            "dry_run": self.dry_run,
+            "timestamp": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+            "orders_cancelled": 0,
+            "positions_squared_off": 0,
+            "cancelled_orders": [],
+            "closed_positions": [],
+            "details": [],
+        }
+
+        if self.dry_run or not self.dhan:
+            msg = "Virtual square-off completed: All virtual intraday positions and orders cleared."
+            logger.info("✅ [VIRTUAL] %s", msg)
+            results["details"].append({"type": "VIRTUAL", "status": "CLEARED", "remarks": msg})
+            return results
+
+        try:
+            # 1. Cancel all open / pending regular orders
+            try:
+                orders_resp = self.dhan.get_order_list()
+                order_list = orders_resp if isinstance(orders_resp, list) else orders_resp.get("data", []) if isinstance(orders_resp, dict) else []
+                for o in order_list:
+                    if isinstance(o, dict):
+                        o_id = str(o.get("orderId", ""))
+                        o_status = str(o.get("orderStatus", "")).upper()
+                        if o_status in ("PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN"):
+                            try:
+                                cancel_res = self.dhan.cancel_order(order_id=o_id)
+                                results["orders_cancelled"] += 1
+                                results["cancelled_orders"].append(o_id)
+                                results["details"].append({
+                                    "type": "CANCEL_ORDER",
+                                    "order_id": o_id,
+                                    "status": "CANCELLED",
+                                    "response": cancel_res,
+                                })
+                                logger.info("🚫 Cancelled open order %s (%s)", o_id, o_status)
+                            except Exception as ce:
+                                logger.warning("Failed to cancel order %s: %s", o_id, ce)
+            except Exception as oe:
+                logger.warning("Error fetching order list during square off: %s", oe)
+
+            # 2. Cancel open Super Orders
+            try:
+                if hasattr(self.dhan, "get_super_order_list") and hasattr(self.dhan, "cancel_super_order"):
+                    so_resp = self.dhan.get_super_order_list()
+                    so_list = so_resp if isinstance(so_resp, list) else so_resp.get("data", []) if isinstance(so_resp, dict) else []
+                    for so in so_list:
+                        if isinstance(so, dict):
+                            so_id = str(so.get("orderId", "") or so.get("superOrderId", ""))
+                            so_status = str(so.get("orderStatus", "")).upper()
+                            if so_status in ("PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN"):
+                                try:
+                                    cancel_so = self.dhan.cancel_super_order(order_id=so_id)
+                                    results["orders_cancelled"] += 1
+                                    results["cancelled_orders"].append(so_id)
+                                    results["details"].append({
+                                        "type": "CANCEL_SUPER_ORDER",
+                                        "order_id": so_id,
+                                        "status": "CANCELLED",
+                                        "response": cancel_so,
+                                    })
+                                    logger.info("🚫 Cancelled open super order %s (%s)", so_id, so_status)
+                                except Exception as cse:
+                                    logger.warning("Failed to cancel super order %s: %s", so_id, cse)
+            except Exception as soe:
+                logger.debug("Super order list check skipped/unsupported: %s", soe)
+
+            # 3. Query open positions and square off intraday positions
+            pos_resp = self.dhan.get_positions()
+            pos_list = pos_resp if isinstance(pos_resp, list) else pos_resp.get("data", []) if isinstance(pos_resp, dict) else []
+
+            for p in pos_list:
+                if not isinstance(p, dict):
+                    continue
+                prod_type = str(p.get("productType", "") or p.get("positionType", "")).upper()
+                sec_id = str(p.get("securityId", ""))
+                symbol = str(p.get("tradingSymbol", "") or sec_id)
+                net_qty = int(p.get("netQty", 0) or 0)
+
+                # Square off open intraday positions
+                if net_qty != 0 and prod_type in ("INTRADAY", "INTRA", ""):
+                    sq_action = self.dhan.SELL if net_qty > 0 else self.dhan.BUY
+                    sq_qty = abs(net_qty)
+                    try:
+                        sq_order = self.dhan.place_order(
+                            security_id=sec_id,
+                            exchange_segment=self.dhan.NSE,
+                            transaction_type=sq_action,
+                            quantity=sq_qty,
+                            order_type=self.dhan.MARKET,
+                            product_type=self.dhan.INTRA,
+                            price=0,
+                        )
+                        results["positions_squared_off"] += 1
+                        results["closed_positions"].append(symbol)
+                        results["details"].append({
+                            "type": "SQUARE_OFF_POSITION",
+                            "symbol": symbol,
+                            "security_id": sec_id,
+                            "action": "SELL" if net_qty > 0 else "BUY",
+                            "quantity": sq_qty,
+                            "order": sq_order,
+                        })
+                        logger.info(
+                            "✅ Squared off intraday position for %s: %s %d shares",
+                            symbol,
+                            "SELL" if net_qty > 0 else "BUY",
+                            sq_qty,
+                        )
+                    except Exception as sq_err:
+                        logger.error("❌ Failed to square off position for %s: %s", symbol, sq_err)
+                        results["details"].append({
+                            "type": "SQUARE_OFF_ERROR",
+                            "symbol": symbol,
+                            "error": str(sq_err),
+                        })
+
+            return results
+        except Exception as e:
+            logger.error("❌ Unexpected error in square_off_all_positions: %s", e)
+            results["success"] = False
+            results["error"] = str(e)
+            return results
 
 
 __all__ = ["DhanExecutor", "check_token_expiry", "parse_jwt_claims"]

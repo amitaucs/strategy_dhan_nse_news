@@ -155,6 +155,27 @@ class TestStrategyStorage(unittest.TestCase):
         self.assertTrue(deleted)
         self.assertIsNone(self.storage.get_setting("dhan_app_secret"))
 
+    def test_authorized_user_crud(self):
+        """Test Authorized user table creation, seeding, adding, checking, and removal."""
+        # 1. Default seed ID 1104872040 must be authorized automatically
+        self.assertTrue(self.storage.is_client_authorized("1104872040"))
+        self.assertFalse(self.storage.is_client_authorized("UNAUTHORIZED_CLIENT_999"))
+
+        # 2. Add new authorized client
+        added = self.storage.add_authorized_client("2200334455", name="Test Account 2", is_active=1)
+        self.assertTrue(added)
+        self.assertTrue(self.storage.is_client_authorized("2200334455"))
+
+        # 3. Retrieve list of authorized clients
+        clients = self.storage.get_authorized_clients()
+        client_ids = [c["client_id"] for c in clients]
+        self.assertIn("1104872040", client_ids)
+        self.assertIn("2200334455", client_ids)
+
+        # 4. Deactivate / Remove client
+        self.storage.remove_authorized_client("2200334455")
+        self.assertFalse(self.storage.is_client_authorized("2200334455"))
+
 
 if __name__ == "__main__":
     unittest.main()

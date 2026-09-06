@@ -31,12 +31,15 @@ class TestUIServer(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_get_index_html(self):
-        """Root GET request with active session should serve dashboard with market status indicator and filter dropdown."""
+        """Root GET request with active session should serve dashboard with market status indicator, cutoff badge, square-off button, and filter dropdown."""
         with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
             res = self.client.get("/")
             self.assertEqual(res.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res.text)
             self.assertIn("market-status-badge", res.text)
+            self.assertIn("cutoff-status-badge", res.text)
+            self.assertIn("square-off-btn", res.text)
+            self.assertIn("Square Off (15:00)", res.text)
             self.assertIn("feed-filter-select", res.text)
             self.assertIn("All Passed", res.text)
             self.assertIn("AUTO ORDER", res.text)
@@ -49,6 +52,9 @@ class TestUIServer(unittest.TestCase):
             self.assertEqual(res_no_sim.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res_no_sim.text)
             self.assertIn("market-status-badge", res_no_sim.text)
+            self.assertIn("cutoff-status-badge", res_no_sim.text)
+            self.assertIn("square-off-btn", res_no_sim.text)
+            self.assertIn("Square Off (15:00)", res_no_sim.text)
             self.assertIn("feed-filter-select", res_no_sim.text)
             self.assertIn("All Passed", res_no_sim.text)
             self.assertIn("AUTO ORDER", res_no_sim.text)
@@ -57,7 +63,7 @@ class TestUIServer(unittest.TestCase):
             self.assertNotIn("Test / Simulate Sample Catalyst Feed", res_no_sim.text)
 
     def test_get_status_api(self):
-        """API status endpoint returns system state including market open/closed status."""
+        """API status endpoint returns system state including market status, cutoff time, and square-off time."""
         res = self.client.get("/api/status")
         self.assertEqual(res.status_code, 200)
         data = res.json()
@@ -65,6 +71,10 @@ class TestUIServer(unittest.TestCase):
         self.assertIn("auto_order", data)
         self.assertIn("is_market_open", data)
         self.assertIn("market_status_label", data)
+        self.assertEqual(data["trade_cutoff_time"], "14:45")
+        self.assertEqual(data["square_off_time"], "15:00")
+        self.assertIn("is_trade_allowed", data)
+        self.assertIn("trade_allowed_reason", data)
         self.assertIn("max_shares_per_trade", data)
         self.assertEqual(data["max_orders_per_day"], 3)
         self.assertIn("today_orders_count", data)
@@ -315,50 +325,69 @@ class TestUIServer(unittest.TestCase):
     @patch("news_based_strategy.ui.server.requests.post")
     def test_dhan_oauth_endpoints(self, mock_post):
         """Test OAuth login initiation and callback consent exchange."""
-        # 1. Missing credentials returns 400
-        res_fail = self.client.get("/api/auth/dhan/login")
-        self.assertEqual(res_fail.status_code, 400)
-        self.assertFalse(res_fail.json()["success"])
+        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="")):
+            app = create_app()
+            client = TestClient(app, cookies={"app_session_token": self.session_token})
 
-        # 2. Save OAuth Keys
-        save_res = self.client.post(
-            "/api/settings/oauth-keys",
-            json={
-                "client_id": "1000998877",
-                "app_id": "app_sample_123",
-                "app_secret": "secret_sample_456",
-            },
-        )
-        self.assertEqual(save_res.status_code, 200)
-        self.assertTrue(save_res.json()["has_app_keys"])
+            # 1. Missing credentials returns 400
+            res_fail = client.get("/api/auth/dhan/login")
+            self.assertEqual(res_fail.status_code, 400)
+            self.assertFalse(res_fail.json()["success"])
 
-        # 3. Initiate Login (Mock Dhan generate-consent)
-        mock_resp_gen = MagicMock()
-        mock_resp_gen.json.return_value = {"consentAppId": "CONSENT_APP_ID_9999"}
-        mock_post.return_value = mock_resp_gen
+            # 2. Save OAuth Keys
+            save_res = client.post(
+                "/api/settings/oauth-keys",
+                json={
+                    "client_id": "1000998877",
+                    "app_id": "app_sample_123",
+                    "app_secret": "secret_sample_456",
+                },
+            )
+            self.assertEqual(save_res.status_code, 200)
+            self.assertTrue(save_res.json()["has_app_keys"])
 
-        res_login = self.client.get("/api/auth/dhan/login")
-        self.assertEqual(res_login.status_code, 200)
-        login_data = res_login.json()
-        self.assertTrue(login_data["success"])
-        self.assertIn("https://auth.dhan.co/login/consentApp-login?consentAppId=CONSENT_APP_ID_9999", login_data["login_url"])
+            # 3. Initiate Login (Mock Dhan generate-consent)
+            mock_resp_gen = MagicMock()
+            mock_resp_gen.json.return_value = {"consentAppId": "CONSENT_APP_ID_9999"}
+            mock_post.return_value = mock_resp_gen
 
-        # 4. Callback (Mock Dhan consume-consent)
-        mock_resp_consume = MagicMock()
-        mock_resp_consume.json.return_value = {
-            "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dhan_oauth_live_session_token.sig"
-        }
-        mock_post.return_value = mock_resp_consume
+            res_login = client.get("/api/auth/dhan/login")
+            self.assertEqual(res_login.status_code, 200)
+            login_data = res_login.json()
+            self.assertTrue(login_data["success"])
+            self.assertIn("https://auth.dhan.co/login/consentApp-login?consentAppId=CONSENT_APP_ID_9999", login_data["login_url"])
 
-        res_cb = self.client.get("/api/auth/dhan/callback?tokenId=DHAN_TOKEN_ID_12345", follow_redirects=False)
-        self.assertEqual(res_cb.status_code, 307)
-        self.assertIn("/?auth_success=true", res_cb.headers["location"])
+            # 4. Callback (Mock Dhan consume-consent)
+            mock_resp_consume = MagicMock()
+            mock_resp_consume.json.return_value = {
+                "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dhan_oauth_live_session_token.sig"
+            }
+            mock_post.return_value = mock_resp_consume
 
-        # 5. Verify executor in-memory token updated
-        token_status = self.client.get("/api/settings/token").json()
-        self.assertTrue(token_status["is_configured"])
-        self.assertIn("eyJhbGci...", token_status["masked_token"])
-        self.assertEqual(token_status["client_id"], "1000998877")
+            res_cb = client.get("/api/auth/dhan/callback?tokenId=DHAN_TOKEN_ID_12345", follow_redirects=False)
+            self.assertEqual(res_cb.status_code, 307)
+            self.assertIn("/?auth_success=true", res_cb.headers["location"])
+
+            # 5. Verify executor in-memory token updated
+            token_status = client.get("/api/settings/token").json()
+            self.assertTrue(token_status["is_configured"])
+            self.assertIn("eyJhbGci...", token_status["masked_token"])
+            self.assertEqual(token_status["client_id"], "1000998877")
+
+            # 6. Unauthorized Dhan Client ID is rejected on callback
+            import base64
+            h_b64 = base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+            p_b64 = base64.urlsafe_b64encode(b'{"dhanClientId":"9999888877"}').decode().rstrip("=")
+            unauth_jwt = f"{h_b64}.{p_b64}.signature"
+
+            mock_resp_unauth = MagicMock()
+            mock_resp_unauth.json.return_value = {"accessToken": unauth_jwt}
+            mock_post.return_value = mock_resp_unauth
+
+            res_unauth = client.get("/api/auth/dhan/callback?tokenId=UNAUTH_TOKEN_999", follow_redirects=False)
+            self.assertEqual(res_unauth.status_code, 307)
+            self.assertIn("/login?error=", res_unauth.headers["location"])
+            self.assertIn("Unauthorized", res_unauth.headers["location"])
 
     def test_database_persistence_across_server_restarts(self):
         """Verify that credentials saved in DB persist when creating a new server instance."""
@@ -376,10 +405,11 @@ class TestUIServer(unittest.TestCase):
 
             # Create new server instance pointing to the same DB
             with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
-                new_app = create_app()
-                new_client = TestClient(new_app)
+                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="", dhan_access_token="")):
+                    new_app = create_app()
+                    new_client = TestClient(new_app)
 
-                token_res = new_client.get("/api/settings/token")
+                    token_res = new_client.get("/api/settings/token")
                 self.assertEqual(token_res.status_code, 200)
                 data = token_res.json()
 
@@ -388,6 +418,31 @@ class TestUIServer(unittest.TestCase):
                 self.assertEqual(data["app_id"], "PERSISTED_APP_999")
                 self.assertEqual(data["client_id"], "PERSISTED_CLIENT_777")
                 self.assertIn("eyJhbGci...", data["masked_token"])
+
+    def test_env_credentials_override_db(self):
+        """Verify that .env credentials take precedence over database credentials."""
+        from news_based_strategy.storage.repository import StrategyStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_db = f"{tmpdir}/persisted.db"
+            storage = StrategyStorage(db_path=test_db)
+            storage.set_setting("dhan_app_id", "OLD_DB_APP_ID")
+            storage.set_setting("dhan_app_secret", "OLD_DB_SECRET")
+            storage.set_setting("dhan_client_id", "OLD_DB_CLIENT_ID")
+            storage.close()
+
+            with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
+                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="ENV_CLIENT_ID", dhan_app_id="ENV_APP_ID", dhan_app_secret="ENV_APP_SECRET")):
+                    new_app = create_app()
+                    new_client = TestClient(new_app)
+
+                    token_res = new_client.get("/api/settings/token")
+                    self.assertEqual(token_res.status_code, 200)
+                    data = token_res.json()
+
+                    self.assertTrue(data["has_app_keys"])
+                    self.assertEqual(data["app_id"], "ENV_APP_ID")
+                    self.assertEqual(data["client_id"], "ENV_CLIENT_ID")
 
 
     def test_token_expiry_detected_on_ui_start(self):
@@ -502,6 +557,16 @@ class TestUIServer(unittest.TestCase):
         mdata = me_res.json()
         self.assertEqual(mdata["masked_client_id"], "••••2040")
         self.assertEqual(mdata["client_name"], "Amit Datta")
+
+    def test_square_off_endpoint(self):
+        """Emergency square-off endpoint executes position flattening and cancels orders."""
+        res = self.client.post("/api/trades/square-off")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertIn("result", data)
+        self.assertIn("closed_positions", data["result"])
+        self.assertIn("cancelled_orders", data["result"])
 
 
 if __name__ == "__main__":

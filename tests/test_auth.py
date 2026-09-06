@@ -75,6 +75,7 @@ class TestAuthentication(unittest.TestCase):
         self.assertIn("Username or Email", res.text)
         self.assertIn("Log In with Dhan", res.text)
         self.assertIn("Don't have an account?", res.text)
+        self.assertIn("https://join.dhan.co/?invite=VEVQU13117", res.text)
 
     def test_login_api_invalid_credentials(self):
         """POST /api/auth/login with wrong credentials returns HTTP 401."""

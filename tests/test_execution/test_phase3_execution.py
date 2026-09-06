@@ -113,24 +113,25 @@ class TestPhase3Execution(unittest.TestCase):
             summary="Defense order",
         )
 
-        result = executor.execute_order(signal, ltp=300.0)
-        self.assertTrue(result.success)
-        self.assertEqual(result.quantity, 10)
-        self.assertEqual(result.order_id, "LIVE_SUPER_789")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            result = executor.execute_order(signal, ltp=300.0)
+            self.assertTrue(result.success)
+            self.assertEqual(result.quantity, 10)
+            self.assertEqual(result.order_id, "LIVE_SUPER_789")
 
-        mock_dhan.place_super_order.assert_called_once_with(
-            security_id="383",
-            exchange_segment="NSE_EQ",
-            transaction_type="BUY",
-            quantity=10,
-            order_type="LIMIT",
-            product_type="INTRA",
-            price=300.6,
-            targetPrice=309.0,
-            stopLossPrice=297.0,
-            trailingJump=5.0,
-            tag="news_super",
-        )
+            mock_dhan.place_super_order.assert_called_once_with(
+                security_id="383",
+                exchange_segment="NSE_EQ",
+                transaction_type="BUY",
+                quantity=10,
+                order_type="LIMIT",
+                product_type="INTRA",
+                price=300.6,
+                targetPrice=309.0,
+                stopLossPrice=297.0,
+                trailingJump=5.0,
+                tag="news_super",
+            )
 
     def test_strategy_engine_bullish_high_conviction_triggers_trade(self):
         """Bullish + confidence >= 70% + material_impact=True MUST trigger order execution."""

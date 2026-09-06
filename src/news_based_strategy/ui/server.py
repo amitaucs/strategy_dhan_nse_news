@@ -16,7 +16,7 @@ from news_based_strategy.execution.executor import (
     mask_client_id,
     parse_jwt_claims,
 )
-from news_based_strategy.execution.risk import RiskManager
+from news_based_strategy.execution.risk import RiskManager, get_ist_now
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
 from news_based_strategy.ingestion.universe import (
@@ -138,15 +138,15 @@ class DashboardState:
     def __init__(self):
         self.storage = StrategyStorage()
 
-        # Load persisted settings from DB with fallback to config / environment
+        # Load credentials from config / environment (.env) with fallback to DB
         db_app_id = self.storage.get_setting("dhan_app_id")
         db_app_secret = self.storage.get_setting("dhan_app_secret")
         db_client_id = self.storage.get_setting("dhan_client_id")
         db_access_token = self.storage.get_setting("dhan_access_token")
 
-        self.app_id = db_app_id if db_app_id is not None else settings.dhan_app_id
-        self.app_secret = db_app_secret if db_app_secret is not None else settings.dhan_app_secret
-        eff_client_id = db_client_id if db_client_id is not None else settings.dhan_client_id
+        self.app_id = settings.dhan_app_id or db_app_id
+        self.app_secret = settings.dhan_app_secret or db_app_secret
+        eff_client_id = settings.dhan_client_id or db_client_id
         eff_access_token = db_access_token if db_access_token is not None else settings.dhan_access_token
 
         db_dry_run = self.storage.get_setting("dry_run")
@@ -178,8 +178,9 @@ class DashboardState:
         self.auto_order = settings.auto_order
         self._poller_task: Optional[asyncio.Task] = None
         self.poll_cycles_count: int = 0
-        self.last_polled_at: Optional[datetime] = datetime.now()
+        self.last_polled_at: Optional[datetime] = get_ist_now()
         self.suppressed_noise_count: int = 0
+        self._last_square_off_date = None
 
     def load_recent_audits_from_db(self) -> None:
         """Load recent actionable audits from database into feed_items on startup."""
@@ -211,7 +212,7 @@ class DashboardState:
                 and is_bullish
             )
             created_time_str = str(audit.get("created_at") or "")
-            time_disp = created_time_str[-8:] if len(created_time_str) >= 8 else datetime.now().strftime("%H:%M:%S")
+            time_disp = created_time_str[-8:] if len(created_time_str) >= 8 else get_ist_now().strftime("%H:%M:%S")
             is_fresh, age = RiskManager.is_news_fresh(audit.get("created_at"), max_age_seconds=180)
             loaded_items.append({
                 "seq_id": audit.get("seq_id", ""),
@@ -249,13 +250,29 @@ class DashboardState:
         from news_based_strategy.ingestion.monitor import NSEFilingMonitor
 
         monitor = NSEFilingMonitor(storage=self.storage)
+        print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
+                # ⏰ Check for automated 15:00 IST Square-Off
+                now = get_ist_now()
+                today_date = now.date()
+                if (
+                    RiskManager.is_square_off_time(now, square_off_str=self.executor.square_off_time)
+                    and self._last_square_off_date != today_date
+                ):
+                    self._last_square_off_date = today_date
+                    sq_res = await asyncio.to_thread(self.executor.square_off_all_positions)
+                    print(f"[{now.strftime('%H:%M:%S IST')}] ⏰ [15:00 AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
+                    await self.broadcast_event("AUTO_SQUARE_OFF", sq_res)
+
                 self.poll_cycles_count += 1
-                self.last_polled_at = datetime.now()
+                self.last_polled_at = get_ist_now()
 
                 def on_filtered(item: Announcement, reason: str):
                     self.suppressed_noise_count += 1
+                    brief = (item.desc or item.details or "").strip().split()
+                    brief_str = " ".join(brief[:5]) if brief else "Routine filing"
+                    print(f"  ↳ [{item.symbol}] 🔇 Filtered out ({reason}) — {brief_str}", flush=True)
 
                 new_items = await asyncio.to_thread(
                     monitor.get_new_announcements,
@@ -265,6 +282,7 @@ class DashboardState:
                     extract_pdf=True,
                     on_filtered=on_filtered,
                 )
+                print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
                 for ann in new_items:
                     processed = self.process_and_add_announcement(ann)
                     if processed:
@@ -272,7 +290,7 @@ class DashboardState:
 
                 await self.broadcast_event("POLL_CYCLE_COMPLETED", {
                     "cycle": self.poll_cycles_count,
-                    "last_polled_time": self.last_polled_at.strftime("%H:%M:%S"),
+                    "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
                     "last_polled_ts": int(self.last_polled_at.timestamp()),
                     "suppressed_noise_count": self.suppressed_noise_count,
                 })
@@ -391,6 +409,21 @@ class DashboardState:
             order_data["status"] = "SKIPPED_LOW_CONFIDENCE"
             order_data["remarks"] = f"Confidence < {settings.confidence_threshold}% or non-material"
 
+        ts = get_ist_now().strftime("%H:%M:%S IST")
+        sec_id_str = f" [Dhan ID: {sec_id}]" if sec_id and sec_id != "0" else ""
+        print(f"\n[{ts}] [{ann.symbol} [F&O]{sec_id_str}] 📢 {ann.desc}", flush=True)
+        print(f"   ↳ Status: 🟢 PASSED ALL FILTERS ➔ Sent to AI Reasoning Engine", flush=True)
+        if ann.an_dt:
+            badge = ann.freshness_badge(max_age_seconds=180)
+            badge_str = f" {badge}" if badge else ""
+            print(f"   ↳ Exchange Time: {ann.an_dt}{badge_str}", flush=True)
+        print(f"   🎯 VERDICT: {sentiment_label} (Confidence: {audit.confidence}% | Category: {audit.catalyst_type})", flush=True)
+        print(f"   📝 AI Summary: \"{audit.summary}\"", flush=True)
+        if is_conviction:
+            print(f"   🚀 CONVICTION TRIGGER: {order_data['status']} ({qty} shares @ ₹{ltp} | TP: ₹{tp_price}, SL: ₹{sl_price})", flush=True)
+        else:
+            print(f"   ⏸️ ORDER: {order_data['status']} ({order_data['remarks']})", flush=True)
+
         is_fresh, age = RiskManager.is_news_fresh(ann.an_dt, max_age_seconds=180)
         feed_item = {
             "seq_id": ann.seq_id,
@@ -399,7 +432,7 @@ class DashboardState:
             "desc": ann.desc,
             "details": ann.clean_content,
             "an_dt": ann.an_dt,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": get_ist_now().strftime("%H:%M:%S IST"),
             "is_stale": not is_fresh,
             "age_seconds": int(age),
             "sentiment": sentiment_label,
@@ -500,7 +533,7 @@ def get_login_html() -> str:
       <!-- Footer: Don't have an account? Create One -->
       <div class="pt-2 text-center text-xs text-gray-400">
         <span>Don't have an account?</span>
-        <a href="https://invite.dhan.co" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline font-semibold ml-1">Create One</a>
+        <a href="https://join.dhan.co/?invite=VEVQU13117" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline font-semibold ml-1">Create One</a>
       </div>
 
     </div>
@@ -679,6 +712,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <span id="market-status-dot" class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
               <span id="market-status-text">MARKET CLOSED</span>
             </span>
+            <!-- Dynamic Cutoff Status Badge -->
+            <span id="cutoff-status-badge" class="px-2.5 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full flex items-center gap-1.5 shadow-sm transition-all duration-300" title="New Trades Cutoff: 14:45 IST | Intraday Square-Off: 15:00 IST">
+              <span id="cutoff-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span id="cutoff-status-text">CUTOFF 14:45</span>
+            </span>
           </div>
           <div class="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
             <span>Model: <span class="text-indigo-400 font-mono font-semibold">gemini-3.7-flash</span></span>
@@ -712,6 +750,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <span id="auto-status-label">LOADING...</span>
             </button>
           </div>
+
+          <!-- Emergency Square-Off Button -->
+          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Auto-scheduled for 15:00 IST)">
+            <span>🛑</span>
+            <span>Square Off (15:00)</span>
+          </button>
 
           __SIM_HEADER_BTN__
 
@@ -828,7 +872,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <!-- Right: Real-Time Telemetry Counters -->
       <div class="flex items-center gap-4 text-gray-400">
         <div class="flex items-center gap-1.5">
-          <span>Last Exchange Check:</span>
+          <span>Last Exchange Check (IST):</span>
           <span id="poller-last-time" class="text-emerald-400 font-mono font-bold">Just now</span>
           <span id="poller-elapsed-tag" class="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded font-mono font-semibold">0s ago</span>
         </div>
@@ -977,34 +1021,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           Redirects to Dhan to log in securely via Mobile + OTP/TOTP. Token is automatically fetched & activated with zero copy-pasting.
         </p>
 
-        <div class="pt-1 flex items-center gap-2">
-          <button onclick="launchDhanOAuth()" id="btn-oauth-login" class="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center justify-center gap-2 transition active:scale-95">
+        <div class="pt-1">
+          <button onclick="launchDhanOAuth()" id="btn-oauth-login" class="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs py-2.5 px-4 rounded-lg shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center justify-center gap-2 transition active:scale-95">
             <span>🚀 Log In via Dhan Portal</span>
           </button>
-          <button onclick="toggleOAuthSettings()" class="px-2.5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs border border-gray-700 transition" title="Configure App ID & Secret">
-            ⚙️ Keys
-          </button>
-        </div>
-
-        <!-- Collapsible OAuth Keys Config -->
-        <div id="oauth-keys-drawer" class="hidden pt-3 space-y-2.5 border-t border-emerald-500/20 text-xs">
-          <div>
-            <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan Client ID</label>
-            <input type="text" id="input-client-id" placeholder="e.g. 100028912" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan App ID (API Key)</label>
-              <input type="text" id="input-app-id" placeholder="App ID" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
-            </div>
-            <div>
-              <label class="block text-[11px] font-semibold text-gray-300 mb-1">Dhan App Secret</label>
-              <input type="password" id="input-app-secret" placeholder="App Secret" class="w-full bg-[#0b0f19] border border-gray-700 text-xs text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 font-mono">
-            </div>
-          </div>
-          <div class="flex justify-end pt-1">
-            <button onclick="saveOAuthKeys()" class="text-[11px] bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-3 py-1.5 rounded-lg transition">Save Credentials to DB</button>
-          </div>
         </div>
       </div>
 
@@ -1047,49 +1067,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }, 3500);
     }
 
-    function toggleOAuthSettings() {
-      const drawer = document.getElementById('oauth-keys-drawer');
-      drawer.classList.toggle('hidden');
-    }
-
-    async function saveOAuthKeys() {
-      const clientId = (document.getElementById('input-client-id').value || '').trim();
-      const appId = (document.getElementById('input-app-id').value || '').trim();
-      const appSecret = (document.getElementById('input-app-secret').value || '').trim();
-      const feedback = document.getElementById('modal-feedback');
-
-      if (!appId || !appSecret) {
-        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
-        feedback.textContent = '⚠️ Please enter both Dhan App ID and App Secret.';
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/settings/oauth-keys', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, app_id: appId, app_secret: appSecret })
-        });
-        const data = await res.json();
-        if (res.ok && data.success) {
-          feedback.className = 'block bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs p-2.5 rounded-lg';
-          feedback.textContent = '✅ App ID & Secret saved. Ready for 1-Click Login.';
-          showToast('OAuth App credentials saved!', '🔑');
-          document.getElementById('oauth-keys-drawer').classList.add('hidden');
-        } else {
-          feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
-          feedback.textContent = `❌ ${data.message || 'Failed saving keys'}`;
-        }
-      } catch (err) {
-        feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
-        feedback.textContent = '❌ Request failed to connect.';
-      }
-    }
-
     async function launchDhanOAuth() {
-      const clientId = (document.getElementById('input-client-id').value || '').trim();
-      const appId = (document.getElementById('input-app-id').value || '').trim();
-      const appSecret = (document.getElementById('input-app-secret').value || '').trim();
       const feedback = document.getElementById('modal-feedback');
       const btn = document.getElementById('btn-oauth-login');
 
@@ -1098,16 +1076,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       btn.innerHTML = '<span>⏳ Connecting to Dhan...</span>';
 
       try {
-        let qs = '';
-        if (clientId || appId || appSecret) {
-          const params = new URLSearchParams();
-          if (clientId) params.append('client_id', clientId);
-          if (appId) params.append('app_id', appId);
-          if (appSecret) params.append('app_secret', appSecret);
-          qs = '?' + params.toString();
-        }
-
-        const res = await fetch(`/api/auth/dhan/login${qs}`);
+        const res = await fetch('/api/auth/dhan/login');
         const data = await res.json();
 
         if (res.ok && data.success && data.login_url) {
@@ -1117,8 +1086,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           }, 400);
         } else {
           feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
-          feedback.textContent = `❌ ${data.message || 'Failed to initiate login. Please check App ID & Secret.'}`;
-          document.getElementById('oauth-keys-drawer').classList.remove('hidden');
+          feedback.textContent = `❌ ${data.message || 'Failed to initiate login. Please check server .env configuration.'}`;
         }
       } catch (err) {
         feedback.className = 'block bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs p-2.5 rounded-lg';
@@ -1126,7 +1094,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } finally {
         btn.disabled = false;
         btn.classList.remove('opacity-50');
-        btn.innerHTML = '<span>🚀 Authenticate on Dhan</span>';
+        btn.innerHTML = '<span>🚀 Log In via Dhan Portal</span>';
       }
     }
 
@@ -1279,17 +1247,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             if (sessionAlert) {
               sessionAlert.className = 'block bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs p-3 rounded-xl font-medium';
               sessionAlert.innerHTML = `ℹ️ <b>Dhan Login Required:</b> Connect your DhanHQ trading account via 1-Click OAuth.`;
-            }
-          }
-
-          if (document.getElementById('input-client-id') && data.client_id) {
-            if (!document.getElementById('input-client-id').value) {
-              document.getElementById('input-client-id').value = data.client_id;
-            }
-          }
-          if (document.getElementById('input-app-id') && data.app_id) {
-            if (!document.getElementById('input-app-id').value) {
-              document.getElementById('input-app-id').value = data.app_id;
             }
           }
         }
@@ -1447,6 +1404,25 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    function renderCutoffUI(isAllowed, cutoffTime, reason) {
+      const badge = document.getElementById('cutoff-status-badge');
+      const dot = document.getElementById('cutoff-status-dot');
+      const text = document.getElementById('cutoff-status-text');
+      if (!badge || !dot || !text) return;
+
+      if (isAllowed) {
+        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1.5 shadow-sm';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+        text.textContent = `CUTOFF ${cutoffTime || '14:45'}`;
+        badge.title = `Trades allowed until ${cutoffTime || '14:45'} IST. Auto Square-off at 15:00 IST.`;
+      } else {
+        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-full flex items-center gap-1.5 shadow-sm';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+        text.textContent = 'TRADES CUTOFF (14:45)';
+        badge.title = reason || `Trades blocked past ${cutoffTime || '14:45'} IST cutoff.`;
+      }
+    }
+
     async function fetchStatus() {
       try {
         const res = await fetch('/api/status');
@@ -1458,6 +1434,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           updateExecutionModeUI();
           const isOpen = (typeof data.is_market_open === 'boolean') ? data.is_market_open : computeMarketStatusClient();
           renderMarketStatusUI(isOpen);
+          if (data.is_trade_allowed !== undefined) {
+            renderCutoffUI(data.is_trade_allowed, data.trade_cutoff_time, data.trade_allowed_reason);
+          }
           const dbStatus = document.getElementById('db-status');
           if (dbStatus && data.db_description) {
             dbStatus.textContent = data.db_description;
@@ -1888,6 +1867,38 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    async function confirmEmergencySquareOff() {
+      if (!confirm("⚠️ Are you sure you want to SQUARE OFF all open intraday positions and cancel all pending orders immediately?")) {
+        return;
+      }
+      const btn = document.getElementById('square-off-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-50');
+      }
+      showToast('Initiating intraday square-off sequence...', '🛑');
+      try {
+        const res = await fetch('/api/trades/square-off', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
+          const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
+          showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
+          fetchFeed();
+        } else {
+          const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
+          showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+        }
+      } catch (err) {
+        showToast('Failed to trigger square-off request', '❌');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-50');
+        }
+      }
+    }
+
     function connectSSE() {
       const evtSource = new EventSource('/api/events');
       evtSource.onmessage = function(event) {
@@ -1896,6 +1907,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED' || payload.type === 'MODE_TOGGLED' || payload.type === 'FEED_CLEARED' || payload.type === 'FEED_HISTORY_LOADED') {
             fetchFeed();
             fetchTokenStatus();
+            fetchStatus();
+          } else if (payload.type === 'AUTO_SQUARE_OFF' || payload.type === 'MANUAL_SQUARE_OFF') {
+            const label = payload.type === 'AUTO_SQUARE_OFF' ? '⏰ 15:00 Auto Square-Off' : '🛑 Manual Square-Off';
+            showToast(`${label} executed! Intraday positions flattened.`, '⚠️');
+            fetchFeed();
             fetchStatus();
           } else if (payload.type === 'POLL_CYCLE_COMPLETED') {
             if (payload.data && payload.data.last_polled_ts) {
@@ -2093,12 +2109,17 @@ def create_app() -> FastAPI:
             "expiry_ts": exp_ts,
             "poll_interval_seconds": settings.poll_interval_seconds,
             "poll_cycles_count": state.poll_cycles_count,
-            "last_polled_time": state.last_polled_at.strftime("%H:%M:%S") if state.last_polled_at else None,
-            "last_polled_ts": int(state.last_polled_at.timestamp()) if state.last_polled_at else int(datetime.now().timestamp()),
+            "last_polled_time": state.last_polled_at.strftime("%H:%M:%S IST") if state.last_polled_at else None,
+            "last_polled_ts": int(state.last_polled_at.timestamp()) if state.last_polled_at else int(get_ist_now().timestamp()),
+            "server_time_ist": get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
             "suppressed_noise_count": state.suppressed_noise_count,
             "fno_universe_size": len(get_fno_symbols()),
             "is_market_open": RiskManager.is_market_open(),
             "market_status_label": "MARKET OPEN" if RiskManager.is_market_open() else "MARKET CLOSED",
+            "trade_cutoff_time": state.executor.trade_cutoff_time,
+            "square_off_time": state.executor.square_off_time,
+            "is_trade_allowed": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[0],
+            "trade_allowed_reason": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[1],
         }
 
     @app.get("/api/settings/token")
@@ -2210,27 +2231,24 @@ def create_app() -> FastAPI:
         app_id: Optional[str] = None,
         app_secret: Optional[str] = None,
     ):
-        eff_client_id = (client_id or state.executor.client_id or state.storage.get_setting("dhan_client_id") or settings.dhan_client_id or "").strip()
-        eff_app_id = (app_id or state.app_id or state.storage.get_setting("dhan_app_id") or settings.dhan_app_id or "").strip()
-        eff_app_secret = (app_secret or state.app_secret or state.storage.get_setting("dhan_app_secret") or settings.dhan_app_secret or "").strip()
+        eff_client_id = (settings.dhan_client_id or state.executor.client_id or client_id or state.storage.get_setting("dhan_client_id") or "").strip()
+        eff_app_id = (settings.dhan_app_id or state.app_id or app_id or state.storage.get_setting("dhan_app_id") or "").strip()
+        eff_app_secret = (settings.dhan_app_secret or state.app_secret or app_secret or state.storage.get_setting("dhan_app_secret") or "").strip()
 
         if not (eff_client_id and eff_app_id and eff_app_secret):
             return JSONResponse(
                 status_code=400,
                 content={
                     "success": False,
-                    "message": "Missing Dhan credentials. Please configure Client ID, App ID, and App Secret in the modal or database.",
+                    "message": "Missing Dhan credentials. Please configure DHAN_CLIENT_ID, DHAN_APP_ID, and DHAN_APP_SECRET in server .env file.",
                 },
             )
 
-        # Update in-memory state and persist to DB
+        # Update in-memory state
         state.app_id = eff_app_id
         state.app_secret = eff_app_secret
         if eff_client_id:
             state.executor.client_id = eff_client_id
-        state.storage.set_setting("dhan_app_id", eff_app_id)
-        state.storage.set_setting("dhan_app_secret", eff_app_secret)
-        state.storage.set_setting("dhan_client_id", eff_client_id)
 
         success, result = generate_dhan_consent_url(
             client_id=eff_client_id,
@@ -2256,11 +2274,11 @@ def create_app() -> FastAPI:
             err_text = error_description or error or "Authentication cancelled or no tokenId received from Dhan"
             return RedirectResponse(url=f"/login?error={err_text}")
 
-        eff_app_id = state.app_id or state.storage.get_setting("dhan_app_id") or settings.dhan_app_id
-        eff_app_secret = state.app_secret or state.storage.get_setting("dhan_app_secret") or settings.dhan_app_secret
+        eff_app_id = settings.dhan_app_id or state.app_id or state.storage.get_setting("dhan_app_id")
+        eff_app_secret = settings.dhan_app_secret or state.app_secret or state.storage.get_setting("dhan_app_secret")
 
         if not (eff_app_id and eff_app_secret):
-            return RedirectResponse(url="/login?error=Dhan+App+ID+and+Secret+not+configured")
+            return RedirectResponse(url="/login?error=Dhan+App+ID+and+Secret+not+configured+in+.env")
 
         success, token_or_err, _ = consume_dhan_consent(
             token_id=tokenId,
@@ -2272,14 +2290,24 @@ def create_app() -> FastAPI:
         if not success:
             return RedirectResponse(url=f"/login?error={token_or_err}")
 
+        # Extract client ID from token claims
+        claims = parse_jwt_claims(token_or_err)
+        token_client_id = str(claims.get("dhanClientId") or claims.get("client_id") or state.executor.client_id or "").strip()
+
+        # Enforce Client ID authorization against `Authorized user` database table
+        if not token_client_id or not state.storage.is_client_authorized(token_client_id):
+            logger.warning("Unauthorized Dhan login attempt for Client ID '%s'", token_client_id)
+            import urllib.parse
+            err_msg = f"Unauthorized Dhan Account (Client ID {token_client_id or 'unknown'}). Only authorized client IDs in `Authorized user` table are permitted."
+            return RedirectResponse(url=f"/login?error={urllib.parse.quote(err_msg)}")
+
         # Update live executor credentials & persist to DB
-        state.executor.update_credentials(access_token=token_or_err, dry_run=False)
+        state.executor.update_credentials(client_id=token_client_id, access_token=token_or_err, dry_run=False)
         state.storage.set_setting("dhan_access_token", token_or_err)
-        if state.executor.client_id:
-            state.storage.set_setting("dhan_client_id", state.executor.client_id)
+        state.storage.set_setting("dhan_client_id", token_client_id)
 
         # Establish app session for SSO
-        session_user = state.executor.client_id or "amit"
+        session_user = token_client_id or "amit"
         session_token = state.storage.create_session(session_user)
 
         await state.broadcast_event("TOKEN_UPDATED", {
@@ -2306,6 +2334,7 @@ def create_app() -> FastAPI:
             c_id = req.client_id.strip()
             state.executor.client_id = c_id
             state.storage.set_setting("dhan_client_id", c_id)
+            state.storage.add_authorized_client(c_id, name="Configured OAuth Key")
 
         a_id = req.app_id.strip()
         a_sec = req.app_secret.strip()
@@ -2399,6 +2428,13 @@ def create_app() -> FastAPI:
             "remarks": result.remarks,
         }
 
+    @app.post("/api/trades/square-off")
+    async def trigger_manual_square_off():
+        """Emergency endpoint to immediately cancel all open orders and square off all intraday positions."""
+        result = await asyncio.to_thread(state.executor.square_off_all_positions)
+        await state.broadcast_event("MANUAL_SQUARE_OFF", result)
+        return JSONResponse(content={"success": result.get("success", True), "result": result})
+
     @app.post("/api/simulate")
     async def run_simulation():
         if not settings.is_simulate_feed:
@@ -2406,8 +2442,8 @@ def create_app() -> FastAPI:
                 status_code=403,
                 detail="Simulated feed is disabled. Set IS_SIMULATE_FEED=true in .env to enable simulation mode.",
             )
-        now_ts = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
-        t_int = int(datetime.now().timestamp())
+        now_ts = get_ist_now().strftime("%d-%b-%Y %H:%M:%S")
+        t_int = int(get_ist_now().timestamp())
 
         # Test announcements
         simulated_raw = [
@@ -2511,5 +2547,5 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
         print("   ⚠️  ERROR: Dhan access token is EXPIRED! Please 1-Click Login or update token in GUI.")
     print("   Press Ctrl+C to shutdown the server.")
     print("=" * 70)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
 

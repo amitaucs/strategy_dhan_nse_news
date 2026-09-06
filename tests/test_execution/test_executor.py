@@ -48,12 +48,13 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="CONTRACT",
             summary="Test",
         )
-        res = executor.execute_order(signal, ltp=100.0)
-        self.assertFalse(res.success)
-        self.assertEqual(res.quantity, 0)
-        self.assertIn("ORDER REJECTED: Could not resolve Dhan security ID", res.remarks)
-        # Verify Dhan place_order was NEVER called
-        self.assertFalse(mock_dhan.place_order.called)
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, ltp=100.0)
+            self.assertFalse(res.success)
+            self.assertEqual(res.quantity, 0)
+            self.assertIn("ORDER REJECTED: Could not resolve Dhan security ID", res.remarks)
+            # Verify Dhan place_order was NEVER called
+            self.assertFalse(mock_dhan.place_order.called)
 
     def test_live_mode_places_order_with_resolved_security_id(self):
         """In live mode, valid symbol resolves SecID and passes it to Dhan API."""
@@ -81,15 +82,16 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Defense order",
         )
-        res = executor.execute_order(signal, ltp=300.0)
-        self.assertTrue(res.success)
-        self.assertEqual(res.order_id, "DHAN_ORDER_9999")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, ltp=300.0)
+            self.assertTrue(res.success)
+            self.assertEqual(res.order_id, "DHAN_ORDER_9999")
 
-        # Verify place_order was invoked with security_id="383"
-        mock_dhan.place_order.assert_called_once()
-        _, kwargs = mock_dhan.place_order.call_args
-        self.assertEqual(kwargs["security_id"], "383")
-        self.assertEqual(kwargs["transaction_type"], "BUY")
+            # Verify place_order was invoked with security_id="383"
+            mock_dhan.place_order.assert_called_once()
+            _, kwargs = mock_dhan.place_order.call_args
+            self.assertEqual(kwargs["security_id"], "383")
+            self.assertEqual(kwargs["transaction_type"], "BUY")
 
     def test_dry_run_super_order_formatting(self):
         """Dry-run mode with Super Order enabled should format bracket order details."""
@@ -148,22 +150,23 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Major order win",
         )
-        res = executor.execute_order(signal, ltp=300.0)
-        self.assertTrue(res.success)
-        self.assertEqual(res.order_id, "SUPER_ORDER_12345")
-        self.assertEqual(res.product_type, "INTRADAY")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, ltp=300.0)
+            self.assertTrue(res.success)
+            self.assertEqual(res.order_id, "SUPER_ORDER_12345")
+            self.assertEqual(res.product_type, "INTRADAY")
 
-        mock_dhan.place_super_order.assert_called_once()
-        _, kwargs = mock_dhan.place_super_order.call_args
-        self.assertEqual(kwargs["security_id"], "383")
-        self.assertEqual(kwargs["exchange_segment"], "NSE_EQ")
-        self.assertEqual(kwargs["transaction_type"], "BUY")
-        self.assertEqual(kwargs["order_type"], "LIMIT")
-        self.assertEqual(kwargs["product_type"], "INTRA")
-        self.assertEqual(kwargs["price"], 300.6)
-        self.assertEqual(kwargs["targetPrice"], 309.0)
-        self.assertEqual(kwargs["stopLossPrice"], 297.0)
-        self.assertEqual(kwargs["trailingJump"], 5.0)
+            mock_dhan.place_super_order.assert_called_once()
+            _, kwargs = mock_dhan.place_super_order.call_args
+            self.assertEqual(kwargs["security_id"], "383")
+            self.assertEqual(kwargs["exchange_segment"], "NSE_EQ")
+            self.assertEqual(kwargs["transaction_type"], "BUY")
+            self.assertEqual(kwargs["order_type"], "LIMIT")
+            self.assertEqual(kwargs["product_type"], "INTRA")
+            self.assertEqual(kwargs["price"], 300.6)
+            self.assertEqual(kwargs["targetPrice"], 309.0)
+            self.assertEqual(kwargs["stopLossPrice"], 297.0)
+            self.assertEqual(kwargs["trailingJump"], 5.0)
 
     def test_jwt_expiry_check_valid_and_expired(self):
         """Test parse_jwt_claims and check_token_expiry with future and past timestamps."""
@@ -203,6 +206,121 @@ class TestDhanExecutor(unittest.TestCase):
         self.assertFalse(val["valid"])
         self.assertTrue(val["is_expired"])
         self.assertIn("EXPIRED", val["message"])
+
+    def test_cutoff_time_order_rejection(self):
+        """Orders placed after trade cutoff time (14:45 IST) must be rejected defensively."""
+        executor = DhanExecutor(dry_run=False, trade_cutoff_time="14:45", max_news_age_seconds=0)
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="CNC",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Major order win",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(False, "Trade cutoff reached (14:45 IST). No new trades permitted.")):
+            res = executor.execute_order(signal, ltp=300.0)
+            self.assertFalse(res.success)
+            self.assertEqual(res.quantity, 0)
+            self.assertIn("ORDER REJECTED: Trade cutoff reached", res.remarks)
+
+    def test_square_off_all_positions_dry_run(self):
+        """In dry-run mode, square_off_all_positions should return simulated square-off summary."""
+        executor = DhanExecutor(dry_run=True)
+        res = executor.square_off_all_positions()
+        self.assertTrue(res["success"])
+        self.assertTrue(res["dry_run"])
+        self.assertEqual(res["orders_cancelled"], 0)
+        self.assertEqual(res["positions_squared_off"], 0)
+
+    def test_square_off_all_positions_live(self):
+        """In live mode, square_off_all_positions must cancel open orders and close positions."""
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+        )
+        mock_dhan = MagicMock()
+        mock_dhan.BUY = "BUY"
+        mock_dhan.SELL = "SELL"
+        mock_dhan.NSE = "NSE_EQ"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.MARKET = "MARKET"
+
+        # Mock open orders (2 regular orders)
+        mock_dhan.get_order_list.return_value = {
+            "status": "success",
+            "data": [
+                {"orderId": "ORD_101", "orderStatus": "PENDING", "legName": "ENTRY_LEG", "superOrderId": None},
+                {"orderId": "ORD_102", "orderStatus": "TRANSIT", "legName": "STOP_LOSS_LEG", "superOrderId": None},
+            ]
+        }
+        mock_dhan.cancel_order.return_value = {"status": "success"}
+        # Mock open super orders (1 super order)
+        mock_dhan.get_super_order_list.return_value = {
+            "status": "success",
+            "data": [
+                {"orderId": "SO_201", "orderStatus": "PENDING"},
+            ]
+        }
+        mock_dhan.cancel_super_order.return_value = {"status": "success"}
+
+        # Mock open positions: 1 Long (BEL: +10), 1 Short (TATAMOTORS: -5), 1 Closed (INFY: 0)
+        mock_dhan.get_positions.return_value = {
+            "status": "success",
+            "data": [
+                {
+                    "tradingSymbol": "BEL",
+                    "securityId": "383",
+                    "exchangeSegment": "NSE_EQ",
+                    "positionType": "INTRADAY",
+                    "netQty": 10,
+                },
+                {
+                    "tradingSymbol": "TATAMOTORS",
+                    "securityId": "3456",
+                    "exchangeSegment": "NSE_EQ",
+                    "positionType": "INTRADAY",
+                    "netQty": -5,
+                },
+                {
+                    "tradingSymbol": "INFY",
+                    "securityId": "1594",
+                    "exchangeSegment": "NSE_EQ",
+                    "positionType": "INTRADAY",
+                    "netQty": 0,
+                },
+            ]
+        }
+        mock_dhan.place_order.return_value = {"orderId": "CLOSE_ORD_999"}
+        executor.dhan = mock_dhan
+        executor.dry_run = False
+
+        res = executor.square_off_all_positions()
+        self.assertTrue(res["success"])
+        self.assertEqual(len(res["cancelled_orders"]), 3)
+        self.assertEqual(len(res["closed_positions"]), 2)
+        self.assertEqual(len(res["closed_positions"]), 2)
+
+        # Verify regular order cancellation
+        mock_dhan.cancel_order.assert_any_call(order_id="ORD_101")
+        # Verify super order cancellation
+        mock_dhan.cancel_super_order.assert_called_with(order_id="SO_201")
+
+        # Verify counter orders placed (2 calls: 1 SELL for BEL, 1 BUY for TATAMOTORS)
+        self.assertEqual(mock_dhan.place_order.call_count, 2)
+        call1_kwargs = mock_dhan.place_order.call_args_list[0][1]
+        self.assertEqual(call1_kwargs["security_id"], "383")
+        self.assertEqual(call1_kwargs["transaction_type"], "SELL")
+        self.assertEqual(call1_kwargs["quantity"], 10)
+        self.assertEqual(call1_kwargs["product_type"], "INTRA")
+
+        call2_kwargs = mock_dhan.place_order.call_args_list[1][1]
+        self.assertEqual(call2_kwargs["security_id"], "3456")
+        self.assertEqual(call2_kwargs["transaction_type"], "BUY")
+        self.assertEqual(call2_kwargs["quantity"], 5)
+        self.assertEqual(call2_kwargs["product_type"], "INTRA")
 
 
 if __name__ == "__main__":

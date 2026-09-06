@@ -1,8 +1,15 @@
 """Core domain models for news filings, AI audits, and trade signals."""
 
-from dataclasses import dataclass, asdict
-from datetime import datetime
+from dataclasses import dataclass, asdict, field
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_ist_now() -> datetime:
+    """Return current timestamp in Indian Standard Time (IST, UTC+05:30) as a naive datetime."""
+    return datetime.now(timezone.utc).astimezone(IST_TZ).replace(tzinfo=None)
 
 try:
     from pydantic import BaseModel, Field
@@ -47,7 +54,7 @@ class Announcement:
     extraction_error: Optional[str] = None
     is_fno: bool = False
     raw_data: Optional[dict] = None
-    created_at: str = datetime.now().isoformat()
+    created_at: str = field(default_factory=lambda: get_ist_now().isoformat())
 
     @property
     def attachment_url(self) -> Optional[str]:
@@ -134,7 +141,7 @@ class TradeSignal:
     catalyst_type: str
     summary: str
     exchange_time: Optional[str] = None
-    created_at: str = datetime.now().isoformat()
+    created_at: str = field(default_factory=lambda: get_ist_now().isoformat())
 
 
 
@@ -150,7 +157,7 @@ class TradeResult:
     order_id: Optional[str] = None
     remarks: Optional[str] = None
     dry_run: bool = False
-    timestamp: str = datetime.now().isoformat()
+    timestamp: str = field(default_factory=lambda: get_ist_now().isoformat())
 
 
-__all__ = ["FilingAudit", "Announcement", "TradeSignal", "TradeResult"]
+__all__ = ["FilingAudit", "Announcement", "TradeSignal", "TradeResult", "get_ist_now", "IST_TZ"]

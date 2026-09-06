@@ -87,6 +87,10 @@ class Settings:
     trailing_jump_points: float = float(os.getenv("TRAILING_JUMP_POINTS", "5.0"))
     slippage_buffer_pct: float = float(os.getenv("SLIPPAGE_BUFFER_PCT", "0.2"))
 
+    # Intraday Timing & Auto Square-Off Controls (IST)
+    trade_cutoff_time: str = os.getenv("TRADE_CUTOFF_TIME", "14:45")
+    square_off_time: str = os.getenv("SQUARE_OFF_TIME", "15:00")
+
     # Storage & Database (MySQL with SQLite fallback)
     database_path: str = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "strategy.db"))
     mysql_host: str = os.getenv("MYSQL_HOST", "")
