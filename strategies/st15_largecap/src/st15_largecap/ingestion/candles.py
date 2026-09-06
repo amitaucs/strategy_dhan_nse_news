@@ -2,7 +2,8 @@
 
 from datetime import datetime, timedelta, time
 import logging
-from typing import Any, Dict, List, Optional
+import time as time_lib
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from st15_largecap.core.models import Candle
@@ -91,10 +92,19 @@ from st15_largecap.config import settings
 
 
 class CandleFetcher:
-    """Fetches intraday data from DhanHQ and transforms to 2H candles."""
+    """Fetches intraday data from DhanHQ, caches historical candles, and transforms to 2H candles."""
 
-    def __init__(self, dhan_client: Optional[Any] = None):
+    def __init__(
+        self,
+        dhan_client: Optional[Any] = None,
+        cache_ttl_seconds: int = 300,
+    ):
         self.dhan = dhan_client
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self._cache: Dict[str, Tuple[datetime, List[Candle]]] = {}
+        self._last_call_time: float = 0.0
+        self._min_interval: float = 0.12  # Max ~8 requests/sec to honor Dhan rate limits
+
         if not self.dhan and settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
             try:
                 from dhanhq import DhanContext, dhanhq
@@ -111,69 +121,107 @@ class CandleFetcher:
         exchange_segment: str = "NSE_EQ",
         instrument_type: str = "EQUITY",
         days: int = 60,
+        force_refresh: bool = False,
     ) -> List[Candle]:
-        """Fetch historical intraday data for the past `days` and aggregate to 2H candles."""
+        """Fetch historical intraday data with smart caching and rate-limiting."""
+        cache_key = f"{symbol or security_id}_{days}"
+        now = datetime.now()
+
+        # Check Cache
+        if not force_refresh and cache_key in self._cache:
+            cached_time, cached_candles = self._cache[cache_key]
+            if (now - cached_time).total_seconds() < self.cache_ttl_seconds and cached_candles:
+                return cached_candles
+
         if not self.dhan or not security_id:
             logger.debug("Generating realistic synthetic 2H candles for %s (SecID: %s)", symbol, security_id)
-            return generate_mock_2h_candles(symbol=symbol, num_candles=80)
+            mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
+            self._cache[cache_key] = (now, mock_candles)
+            return mock_candles
 
-        to_date = datetime.now()
+        to_date = now
         from_date = to_date - timedelta(days=days)
-
         from_str = from_date.strftime("%Y-%m-%d")
         to_str = to_date.strftime("%Y-%m-%d")
 
-        try:
-            response = self.dhan.intraday_minute_data(
-                security_id=str(security_id),
-                exchange_segment=exchange_segment,
-                instrument_type=instrument_type,
-                from_date=from_str,
-                to_date=to_str,
-            )
+        # Rate Limiting: enforce minimum interval between Dhan API calls
+        elapsed = time_lib.time() - self._last_call_time
+        if elapsed < self._min_interval:
+            time_lib.sleep(self._min_interval - elapsed)
 
-            if isinstance(response, dict) and response.get("status") == "success":
-                data = response.get("data", {})
-                timestamps = data.get("timestamp", [])
-                opens = data.get("open", [])
-                highs = data.get("high", [])
-                lows = data.get("low", [])
-                closes = data.get("close", [])
-                volumes = data.get("volume", [0.0] * len(opens))
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                self._last_call_time = time_lib.time()
+                response = self.dhan.intraday_minute_data(
+                    security_id=str(security_id),
+                    exchange_segment=exchange_segment,
+                    instrument_type=instrument_type,
+                    from_date=from_str,
+                    to_date=to_str,
+                )
 
-                records = []
-                for i in range(len(timestamps)):
-                    ts_val = timestamps[i]
-                    if isinstance(ts_val, (int, float)):
-                        dt = datetime.fromtimestamp(ts_val)
-                    else:
-                        dt = pd.to_datetime(ts_val)
+                # Check for rate limit response (DH-904)
+                if isinstance(response, dict) and response.get("error_code") == "DH-904":
+                    if attempt < max_retries:
+                        backoff = 1.0 * (attempt + 1)
+                        logger.warning(
+                            "Rate limited (DH-904) on %s. Backing off %.1fs before retry %d/%d...",
+                            symbol or security_id, backoff, attempt + 1, max_retries
+                        )
+                        time_lib.sleep(backoff)
+                        continue
+                    elif cache_key in self._cache:
+                        logger.warning("Rate limited on %s. Serving cached candles.", symbol or security_id)
+                        return self._cache[cache_key][1]
 
-                    records.append({
-                        "timestamp": dt,
-                        "open": float(opens[i]),
-                        "high": float(highs[i]),
-                        "low": float(lows[i]),
-                        "close": float(closes[i]),
-                        "volume": float(volumes[i]) if i < len(volumes) else 0.0,
-                    })
+                if isinstance(response, dict) and response.get("status") == "success":
+                    data = response.get("data", {})
+                    timestamps = data.get("timestamp", [])
+                    opens = data.get("open", [])
+                    highs = data.get("high", [])
+                    lows = data.get("low", [])
+                    closes = data.get("close", [])
+                    volumes = data.get("volume", [0.0] * len(opens))
 
-                candles = aggregate_to_2h_candles(records)
-                if candles:
-                    logger.info(
-                        "Fetched and aggregated %d 2H candles for %s (SecID: %s | LTP: ₹%.2f)",
-                        len(candles), symbol or security_id, security_id, candles[-1].close
-                    )
-                    return candles
+                    records = []
+                    for i in range(len(timestamps)):
+                        ts_val = timestamps[i]
+                        if isinstance(ts_val, (int, float)):
+                            dt = datetime.fromtimestamp(ts_val)
+                        else:
+                            dt = pd.to_datetime(ts_val)
 
-            logger.warning(
-                "Dhan API returned empty data for %s (SecID: %s): %s. Falling back to synthetic candles.",
-                symbol or security_id, security_id, response.get("remarks") if isinstance(response, dict) else response
-            )
-            return generate_mock_2h_candles(symbol=symbol, num_candles=80)
-        except Exception as e:
-            logger.error("Error fetching intraday candles for %s: %s", symbol or security_id, e)
-            return generate_mock_2h_candles(symbol=symbol, num_candles=80)
+                        records.append({
+                            "timestamp": dt,
+                            "open": float(opens[i]),
+                            "high": float(highs[i]),
+                            "low": float(lows[i]),
+                            "close": float(closes[i]),
+                            "volume": float(volumes[i]) if i < len(volumes) else 0.0,
+                        })
+
+                    candles = aggregate_to_2h_candles(records)
+                    if candles:
+                        self._cache[cache_key] = (now, candles)
+                        return candles
+
+                logger.warning(
+                    "Dhan API returned empty data for %s (SecID: %s): %s. Falling back to synthetic/cached candles.",
+                    symbol or security_id, security_id, response.get("remarks") or response.get("error_message") if isinstance(response, dict) else response
+                )
+                if cache_key in self._cache:
+                    return self._cache[cache_key][1]
+                mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
+                self._cache[cache_key] = (now, mock_candles)
+                return mock_candles
+            except Exception as e:
+                logger.error("Error fetching intraday candles for %s: %s", symbol or security_id, e)
+                if cache_key in self._cache:
+                    return self._cache[cache_key][1]
+                mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=80)
+                self._cache[cache_key] = (now, mock_candles)
+                return mock_candles
 
 
 def generate_mock_2h_candles(
