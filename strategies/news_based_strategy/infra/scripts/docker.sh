@@ -2,12 +2,12 @@
 # ==============================================================================
 # Docker Management Helper for NSE Catalyst Trading Terminal
 # Usage:
-#   ./infra/docker/docker.sh up [-d] [-p PORT] [--build]
-#   ./infra/docker/docker.sh down
-#   ./infra/docker/docker.sh restart [-d] [-p PORT]
-#   ./infra/docker/docker.sh logs [-f] [--tail N]
-#   ./infra/docker/docker.sh ps
-#   ./infra/docker/docker.sh poller
+#   ./infra/scripts/docker.sh up [-d] [-p PORT] [--build]
+#   ./infra/scripts/docker.sh down
+#   ./infra/scripts/docker.sh restart [-d] [-p PORT]
+#   ./infra/scripts/docker.sh logs [-f] [--tail N]
+#   ./infra/scripts/docker.sh ps
+#   ./infra/scripts/docker.sh poller
 # ==============================================================================
 
 set -e
@@ -15,7 +15,7 @@ set -e
 # Resolve directories relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
+COMPOSE_FILE="${PROJECT_ROOT}/infra/docker/docker-compose.yml"
 
 # Default port if not provided
 DEFAULT_PORT=8000
@@ -46,19 +46,19 @@ Options for 'up' / 'restart':
 
 Examples:
   # Start in background on default port 8000
-  ./infra/docker/docker.sh up -d
+  ./infra/scripts/docker.sh up -d
 
   # Start in background on custom port 9000 with image rebuild
-  ./infra/docker/docker.sh up -d -p 9000 --build
+  ./infra/scripts/docker.sh up -d -p 9000 --build
 
   # Start in foreground (streaming logs directly to console)
-  ./infra/docker/docker.sh up -p 9000
+  ./infra/scripts/docker.sh up -p 9000
 
   # View live streaming logs
-  ./infra/docker/docker.sh logs
+  ./infra/scripts/docker.sh logs
 
   # Stop container
-  ./infra/docker/docker.sh down
+  ./infra/scripts/docker.sh down
 EOF
 }
 
@@ -105,7 +105,7 @@ case "$COMMAND" in
     if [[ -n "$DETACH" ]]; then
       echo "✅ Container started successfully!"
       echo "🌐 Web Dashboard: http://localhost:${PORT}"
-      echo "📜 View live logs: ./infra/docker/docker.sh logs"
+      echo "📜 View live logs: ./infra/scripts/docker.sh logs"
     fi
     ;;
 

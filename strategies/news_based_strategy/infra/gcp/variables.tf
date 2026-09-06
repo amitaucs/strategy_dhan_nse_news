@@ -78,4 +78,16 @@ variable "schedule_stop" {
   default     = "45 15 * * 1-5"
 }
 
+variable "strategy_name" {
+  description = "Identifier for the strategy."
+  type        = string
+  default     = "news_based_strategy"
+}
+
+variable "remote_deploy_dir" {
+  description = "Directory on the remote VM where this strategy is deployed."
+  type        = string
+  default     = "/opt/nse_trading_terminal"
+}
+
 

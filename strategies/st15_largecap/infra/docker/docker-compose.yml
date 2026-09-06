@@ -1,0 +1,17 @@
+services:
+  st15-terminal:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    container_name: st15_largecap_terminal
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8015}:8015"
+    env_file:
+      - ../../.env
+    volumes:
+      - ../../data:/app/data
+    environment:
+      - APP_ENV=production
+      - PYTHONUNBUFFERED=1
+

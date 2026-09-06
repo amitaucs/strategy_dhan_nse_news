@@ -1,0 +1,11 @@
+# ==============================================================================
+# Strategy Specific GCP Configuration: st15_largecap
+# ==============================================================================
+# Common GCP host parameters (project_id, region, zone, instance_name)
+# are defined in 'infra/terraform/terraform_common.tfvars'.
+# Specify only strategy-specific overrides below:
+# ==============================================================================
+
+strategy_name     = "st15_largecap"
+app_port          = 8015
+remote_deploy_dir = "/opt/st15_largecap"

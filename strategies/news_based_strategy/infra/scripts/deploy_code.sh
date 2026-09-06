@@ -6,48 +6,55 @@
 # and rebuild the Docker container without re-running Terraform / changing infra.
 #
 # Usage:
-#   ./deploy_code.sh
-#   ./infra/gcp/deploy_code.sh
-#   ./infra/gcp/deploy_code.sh --zone us-central1-a --instance nse-trading-terminal
+#   ./infra/scripts/deploy_code.sh
+#   ./infra/scripts/deploy_code.sh --zone us-central1-a --instance nse-trading-terminal
 # ==============================================================================
 
 set -e
 
-# Resolve script directory even when executed via symlink
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do
-  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-  SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Resolve repository root
+CUR="$PROJECT_ROOT"
+while [[ "$CUR" != "/" && ! -d "$CUR/infra/terraform" ]]; do
+  CUR="$(dirname "$CUR")"
 done
-SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/pyproject.toml" || -d "${SCRIPT_DIR}/src/news_based_strategy" ]]; then
-  PROJECT_ROOT="$SCRIPT_DIR"
-  GCP_DIR="${SCRIPT_DIR}/infra/gcp"
-elif [[ -f "${SCRIPT_DIR}/../../pyproject.toml" || -d "${SCRIPT_DIR}/../../src/news_based_strategy" ]]; then
-  PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-  GCP_DIR="$SCRIPT_DIR"
-else
-  PROJECT_ROOT="$SCRIPT_DIR"
-  GCP_DIR="${SCRIPT_DIR}/infra/gcp"
+REPO_ROOT="$CUR"
+
+COMMON_TFVARS="${REPO_ROOT}/infra/terraform/terraform_common.tfvars"
+STRATEGY_TFVARS="${PROJECT_ROOT}/infra/gcp/terraform.tfvars"
+
+# Default Configuration (parsed from common + strategy tfvars)
+DEFAULT_PROJECT_ID=""
+DEFAULT_ZONE="us-central1-a"
+DEFAULT_INSTANCE="nse-trading-terminal"
+DEFAULT_REMOTE_DIR="/opt/nse_trading_terminal"
+
+if [[ -f "$COMMON_TFVARS" ]]; then
+  COMMON_PID=$(grep -E '^\s*project_id\s*=' "$COMMON_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  COMMON_ZONE=$(grep -E '^\s*zone\s*=' "$COMMON_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  COMMON_INST=$(grep -E '^\s*instance_name\s*=' "$COMMON_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  [[ -n "$COMMON_PID" ]] && DEFAULT_PROJECT_ID="$COMMON_PID"
+  [[ -n "$COMMON_ZONE" ]] && DEFAULT_ZONE="$COMMON_ZONE"
+  [[ -n "$COMMON_INST" ]] && DEFAULT_INSTANCE="$COMMON_INST"
 fi
 
-# Default Configuration (parsed from terraform.tfvars if available)
-TFVARS="${GCP_DIR}/terraform.tfvars"
-if [[ -f "$TFVARS" ]]; then
-  DEFAULT_PROJECT_ID=$(grep -E '^\s*project_id\s*=' "$TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
-  DEFAULT_ZONE=$(grep -E '^\s*zone\s*=' "$TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "us-central1-a")
-  DEFAULT_INSTANCE=$(grep -E '^\s*instance_name\s*=' "$TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "nse-trading-terminal")
-else
-  DEFAULT_PROJECT_ID=""
-  DEFAULT_ZONE="us-central1-a"
-  DEFAULT_INSTANCE="nse-trading-terminal"
+if [[ -f "$STRATEGY_TFVARS" ]]; then
+  STRAT_PID=$(grep -E '^\s*project_id\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_ZONE=$(grep -E '^\s*zone\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_INST=$(grep -E '^\s*instance_name\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_DIR=$(grep -E '^\s*remote_deploy_dir\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  [[ -n "$STRAT_PID" ]] && DEFAULT_PROJECT_ID="$STRAT_PID"
+  [[ -n "$STRAT_ZONE" ]] && DEFAULT_ZONE="$STRAT_ZONE"
+  [[ -n "$STRAT_INST" ]] && DEFAULT_INSTANCE="$STRAT_INST"
+  [[ -n "$STRAT_DIR" ]] && DEFAULT_REMOTE_DIR="$STRAT_DIR"
 fi
 
 PROJECT_ID="${PROJECT_ID:-$DEFAULT_PROJECT_ID}"
 ZONE="${ZONE:-$DEFAULT_ZONE}"
 INSTANCE_NAME="${INSTANCE_NAME:-$DEFAULT_INSTANCE}"
-REMOTE_DIR="/opt/nse_trading_terminal"
+REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"
 BUNDLE_TMP="/tmp/nse_app_bundle.tar.gz"
 
 # Parse optional command line flags
@@ -144,8 +151,8 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" $GCLOUD_PROJECT_FLAG --comman
   sudo tar -xzf /tmp/nse_app_bundle.tar.gz -C ${REMOTE_DIR}
   rm -f /tmp/nse_app_bundle.tar.gz
   cd ${REMOTE_DIR}
-  sudo chmod +x infra/docker/docker.sh
-  sudo ./infra/docker/docker.sh up -d --build
+  sudo chmod +x infra/scripts/docker.sh
+  sudo ./infra/scripts/docker.sh up -d --build
 "
 
 # 5. Verify container health & status
@@ -167,5 +174,5 @@ echo ""
 echo "======================================================================"
 echo "🎉 Code deployment successfully finished!"
 echo "🌐 Terminal Dashboard: https://stnse.amitdatta.co.in"
-echo "📜 View live logs:     gcloud compute ssh $INSTANCE_NAME --zone=$ZONE $GCLOUD_PROJECT_FLAG --command=\"cd $REMOTE_DIR && sudo ./infra/docker/docker.sh logs\""
+echo "📜 View live logs:     gcloud compute ssh $INSTANCE_NAME --zone=$ZONE $GCLOUD_PROJECT_FLAG --command=\"cd $REMOTE_DIR && sudo ./infra/scripts/docker.sh logs\""
 echo "======================================================================"

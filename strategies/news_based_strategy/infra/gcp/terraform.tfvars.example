@@ -1,0 +1,11 @@
+# ==============================================================================
+# Strategy Specific GCP Configuration: news_based_strategy
+# ==============================================================================
+# Common GCP host parameters (project_id, region, zone, instance_name)
+# are defined in 'infra/terraform/terraform_common.tfvars'.
+# Specify only strategy-specific overrides below:
+# ==============================================================================
+
+strategy_name     = "news_based_strategy"
+app_port          = 8000
+remote_deploy_dir = "/opt/nse_trading_terminal"

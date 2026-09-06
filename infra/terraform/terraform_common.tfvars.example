@@ -1,10 +1,9 @@
 # ==============================================================================
-# Terraform Variables Example for NSE Catalyst Trading Terminal on GCP
-# Copy this file to 'terraform.tfvars' and replace with your GCP Project ID:
-#   cp terraform.tfvars.example terraform.tfvars
+# Common GCP Host Infrastructure Configuration (Shared Template)
+# Copy this file to terraform_common.tfvars and fill in your project ID.
 # ==============================================================================
 
-# Required: Your Google Cloud Project ID
+# Required: Set your Google Cloud Project ID
 project_id = "your-gcp-project-id"
 
 # ------------------------------------------------------------------------------
@@ -12,28 +11,23 @@ project_id = "your-gcp-project-id"
 # ------------------------------------------------------------------------------
 region            = "us-central1"
 zone              = "us-central1-a"
+instance_name     = "nse-trading-terminal"
 machine_type      = "e2-micro"
 boot_disk_size_gb = 30
 boot_disk_type    = "pd-standard"
 
 # ------------------------------------------------------------------------------
 # OPTION 2: Low-Latency India Region (Mumbai) — (~₹650 INR/month)
-# To use Mumbai, uncomment the lines below:
+# To switch to Mumbai, comment out Option 1 and uncomment below:
 # ------------------------------------------------------------------------------
 # region            = "asia-south1"
 # zone              = "asia-south1-a"
+# instance_name     = "nse-trading-terminal"
 # machine_type      = "e2-micro"
 # boot_disk_size_gb = 10
 # boot_disk_type    = "pd-standard"
 
-# ------------------------------------------------------------------------------
-# Application Configuration
-# ------------------------------------------------------------------------------
-instance_name = "nse-trading-terminal"
-app_port      = 8000
-
-# Security: Restrict Web UI access to your home/office IP for maximum security:
-# allowed_ingress_cidrs = ["YOUR_HOME_PUBLIC_IP/32"]
+# Network Firewall Ingress
 allowed_ingress_cidrs = ["0.0.0.0/0"]
 
 # ------------------------------------------------------------------------------
@@ -45,5 +39,4 @@ enable_schedule   = false
 schedule_timezone = "Asia/Kolkata"
 schedule_start    = "00 09 * * 1-5"   # 09:00 AM IST Mon-Fri
 schedule_stop     = "45 15 * * 1-5"   # 03:45 PM IST Mon-Fri
-
 

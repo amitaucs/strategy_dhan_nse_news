@@ -20,6 +20,6 @@ output "ssh_command" {
 
 output "deployment_instructions" {
   description = "Next steps to deploy the application onto the instance."
-  value       = "Run './infra/gcp/deploy.sh' to sync code and launch Docker on the remote VM."
+  value       = "Run './infra/scripts/deploy.sh' or './infra/scripts/deploy_code.sh' to sync code and launch Docker on the remote VM."
 }
 

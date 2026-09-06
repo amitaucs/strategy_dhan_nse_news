@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "news-based-strategy"
 version = "0.1.0"
 description = "News-based algorithmic trading strategy"
-readme = "README.md"
+readme = "readme/README.md"
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0.0",
