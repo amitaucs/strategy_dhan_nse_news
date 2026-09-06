@@ -253,7 +253,7 @@ class DashboardState:
         print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
-                # ⏰ Check for automated 3:00 PM IST Square-Off
+                # ⏰ Check for automated 15:00 IST Square-Off
                 now = get_ist_now()
                 today_date = now.date()
                 if (
@@ -262,7 +262,7 @@ class DashboardState:
                 ):
                     self._last_square_off_date = today_date
                     sq_res = await asyncio.to_thread(self.executor.square_off_all_positions)
-                    print(f"[{now.strftime('%H:%M:%S IST')}] ⏰ [3:00 PM AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
+                    print(f"[{now.strftime('%H:%M:%S IST')}] ⏰ [15:00 AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
                     await self.broadcast_event("AUTO_SQUARE_OFF", sq_res)
 
                 self.poll_cycles_count += 1
@@ -752,9 +752,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           </div>
 
           <!-- Emergency Square-Off Button -->
-          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Auto-scheduled for 3:00 PM IST)">
+          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Auto-scheduled for 15:00 IST)">
             <span>🛑</span>
-            <span>Square Off (3 PM)</span>
+            <span>Square Off (15:00)</span>
           </button>
 
           __SIM_HEADER_BTN__
@@ -1909,7 +1909,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             fetchTokenStatus();
             fetchStatus();
           } else if (payload.type === 'AUTO_SQUARE_OFF' || payload.type === 'MANUAL_SQUARE_OFF') {
-            const label = payload.type === 'AUTO_SQUARE_OFF' ? '⏰ 3:00 PM Auto Square-Off' : '🛑 Manual Square-Off';
+            const label = payload.type === 'AUTO_SQUARE_OFF' ? '⏰ 15:00 Auto Square-Off' : '🛑 Manual Square-Off';
             showToast(`${label} executed! Intraday positions flattened.`, '⚠️');
             fetchFeed();
             fetchStatus();
