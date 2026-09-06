@@ -235,13 +235,16 @@ def index_page() -> str:
 
     <!-- Interactive Dip Tolerance Control Bar -->
     <div class="card-bg px-4 py-3 rounded-xl my-6 border border-slate-700/80 bg-slate-900/60 shadow flex flex-wrap items-center justify-between gap-4">
-        <!-- Dip Tolerance Dropdown Selection -->
-        <div class="flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-700 shadow-inner">
-            <label for="tolerancePresetSelect" class="text-xs text-slate-300 font-medium flex items-center gap-1.5 whitespace-nowrap">
-                <i class="fa-solid fa-sliders text-amber-400 text-xs mr-0.5"></i> Dip Tolerance:
-            </label>
+        <!-- Unified Dip Tolerance Input Cluster -->
+        <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                <i class="fa-solid fa-sliders text-amber-400"></i>
+                <span>Dip Tolerance:</span>
+            </div>
+
+            <!-- Dropdown Selection -->
             <select id="tolerancePresetSelect" onchange="onPresetDropdownChange()" 
-                    class="bg-slate-800 text-amber-300 font-mono text-xs font-semibold rounded px-2.5 py-1 border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer">
+                    class="bg-slate-800 text-amber-300 font-mono text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-slate-600 focus:outline-none focus:border-amber-400 cursor-pointer shadow-inner">
                 <option value="-0.50">-0.50% (Deep Penetration)</option>
                 <option value="-0.20">-0.20% (Dip Below EMA)</option>
                 <option value="0.00">0.00% (Exact Touch / Kiss)</option>
@@ -253,18 +256,16 @@ def index_page() -> str:
                 <option value="2.00">+2.00% (Broad Zone)</option>
                 <option value="custom" disabled hidden>Custom</option>
             </select>
-        </div>
 
-        <div class="flex items-center gap-3">
             <!-- Stepper Adjuster [-] [0.50 %] [+] -->
-            <div class="flex items-center bg-slate-900 rounded-lg border border-slate-700 overflow-hidden shadow-inner">
-                <button onclick="stepTolerance(-0.1)" title="Decrease tolerance" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
+            <div class="flex items-center bg-slate-950 rounded-lg border border-slate-700 overflow-hidden shadow-inner">
+                <button onclick="stepTolerance(-0.1)" title="Decrease tolerance" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition">
                     <i class="fa-solid fa-minus"></i>
                 </button>
                 <input type="number" id="customTolInput" value="0.50" min="-5.0" max="10.0" step="0.05" onchange="onCustomInputChange()"
                        class="w-16 bg-transparent text-center text-xs font-mono font-bold text-amber-400 focus:outline-none py-1">
                 <span class="text-xs text-slate-500 pr-2 font-mono">%</span>
-                <button onclick="stepTolerance(0.1)" title="Increase tolerance" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">
+                <button onclick="stepTolerance(0.1)" title="Increase tolerance" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition">
                     <i class="fa-solid fa-plus"></i>
                 </button>
             </div>
@@ -273,6 +274,12 @@ def index_page() -> str:
             <button onclick="applyCustomTolerance()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition shadow flex items-center gap-1.5 whitespace-nowrap">
                 <i class="fa-solid fa-check"></i> Apply &amp; Re-Scan
             </button>
+        </div>
+
+        <!-- Strategy Info Pill on Right -->
+        <div class="text-xs text-slate-400 items-center gap-1.5 hidden lg:flex">
+            <i class="fa-solid fa-circle-info text-sky-400 text-xs"></i>
+            <span>Pullback threshold across 20, 50, and 200 EMAs</span>
         </div>
     </div>
 
