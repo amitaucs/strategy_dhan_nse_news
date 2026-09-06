@@ -13,7 +13,7 @@ class TestUniverseAndCandles(unittest.TestCase):
         self.assertEqual(mgr.get_security_id("RELIANCE"), "2885")
         self.assertEqual(mgr.get_security_id("TCS"), "11536")
         self.assertEqual(mgr.get_security_id("HDFCBANK"), "1333")
-        self.assertGreaterEqual(len(mgr.get_universe()), 150)
+        self.assertEqual(len(mgr.get_universe()), 200)
 
     def test_bucket_indian_market_2h(self):
         d = datetime(2025, 1, 15)

@@ -188,3 +188,4 @@ class ScanResult:
     signal: Optional[SetupSignal] = None
     candles_count: int = 0
     scanned_at: datetime = field(default_factory=datetime.now)
+

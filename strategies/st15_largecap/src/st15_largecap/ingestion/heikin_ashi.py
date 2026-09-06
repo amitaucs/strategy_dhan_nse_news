@@ -42,3 +42,4 @@ def calculate_heikin_ashi(candles: List[Candle]) -> List[HeikinAshiCandle]:
         )
 
     return ha_candles
+
