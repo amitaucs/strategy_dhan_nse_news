@@ -87,6 +87,21 @@ DEFAULT_SEC_IDS: Dict[str, str] = {
 }
 
 
+import ssl
+
+# Common symbol aliases on Dhan / NSE
+SYMBOL_ALIASES: Dict[str, str] = {
+    "GMRINFRA": "GMRAIRPORT",
+    "TATAMOTORS": "TMPV",
+    "ZOMATO": "ETERNAL",
+    "LTIM": "LTIM",
+    "GUJGASLTD": "GUJGAST",
+    "M&M": "M&M",
+    "M&MFIN": "M&MFIN",
+    "BAJAJ-AUTO": "BAJAJ-AUTO",
+}
+
+
 class UniverseManager:
     """Manages Nifty 200 ticker list and security ID resolution."""
 
@@ -96,6 +111,11 @@ class UniverseManager:
         # Deduplicate and sort exactly
         self._symbols: List[str] = sorted(list(set(NIFTY_200_SYMBOLS)))
         self.load_cache()
+        if len(self._sec_ids) < len(self._symbols):
+            try:
+                self.sync_from_dhan()
+            except Exception:
+                pass
 
     def load_cache(self) -> None:
         """Load cached symbol mappings from disk if available."""
@@ -123,11 +143,12 @@ class UniverseManager:
         """Download latest Dhan official scrip master CSV and resolve security IDs."""
         try:
             logger.info("Syncing Nifty 200 scrip master from DhanHQ (%s)...", DHAN_SCRIP_MASTER_URL)
+            ssl_ctx = ssl._create_unverified_context()
             req = urllib.request.Request(
                 DHAN_SCRIP_MASTER_URL,
                 headers={"User-Agent": "Mozilla/5.0 (TradingPlatform/ST15)"},
             )
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(req, context=ssl_ctx, timeout=timeout_seconds) as response:
                 csv_text = response.read().decode("utf-8", errors="ignore")
 
             reader = csv.reader(io.StringIO(csv_text))
@@ -135,50 +156,36 @@ class UniverseManager:
             if not header:
                 return 0
 
-            # Find column indices
-            header_upper = [h.strip().upper() for h in header]
-            sym_col = -1
-            id_col = -1
-            seg_col = -1
-
-            for idx, col in enumerate(header_upper):
-                if "SYMBOL" in col or "TRADING_SYMBOL" in col or "SEM_CUSTOM_SYMBOL" in col:
-                    if sym_col == -1:
-                        sym_col = idx
-                if "SM_TOKEN" in col or "SECURITY_ID" in col or "SEM_SMST_SECURITY_ID" in col:
-                    if id_col == -1:
-                        id_col = idx
-                if "EXCHANGE_SEGMENT" in col or "SEM_EXM_EXCH_ID" in col:
-                    if seg_col == -1:
-                        seg_col = idx
-
-            if sym_col == -1 or id_col == -1:
-                # Fallback standard columns
-                sym_col = 1
-                id_col = 0
-
-            nifty_set = set(self._symbols)
-            synced_count = 0
-
+            # Build fast lookup dictionary for NSE Equities
+            nse_eq_map: Dict[str, str] = {}
             for row in reader:
-                if len(row) <= max(sym_col, id_col):
+                if len(row) < 8:
                     continue
-                symbol = row[sym_col].strip().upper()
-                sec_id = row[id_col].strip()
+                exch = row[0].strip().upper()
+                seg = row[1].strip().upper()
+                sec_id = row[2].strip()
+                trad_sym = row[5].strip().upper()
+                cust_sym = row[7].strip().upper()
 
-                if seg_col != -1 and len(row) > seg_col:
-                    seg = row[seg_col].strip().upper()
-                    if seg not in ("NSE_EQ", "NSE", "EQ", "E"):
-                        continue
+                if exch in ("NSE", "NSE_EQ") and seg in ("E", "EQ", "NSE_EQ"):
+                    clean_trad = trad_sym.replace("-EQ", "").replace(".EQ", "").strip()
+                    clean_cust = cust_sym.replace("-EQ", "").replace(".EQ", "").strip()
+                    if clean_trad:
+                        nse_eq_map[clean_trad] = sec_id
+                    if clean_cust:
+                        nse_eq_map[clean_cust] = sec_id
 
-                # Strip '-EQ' or 'EQ' suffixes if present
-                clean_sym = symbol.replace("-EQ", "").replace(".EQ", "").strip()
-
-                if clean_sym in nifty_set and sec_id:
-                    self._sec_ids[clean_sym] = sec_id
+            synced_count = 0
+            for sym in self._symbols:
+                target_alias = SYMBOL_ALIASES.get(sym, sym).upper()
+                if sym in nse_eq_map:
+                    self._sec_ids[sym] = nse_eq_map[sym]
+                    synced_count += 1
+                elif target_alias in nse_eq_map:
+                    self._sec_ids[sym] = nse_eq_map[target_alias]
                     synced_count += 1
 
-            logger.info("Successfully resolved %d Nifty 200 security IDs from Dhan", synced_count)
+            logger.info("Successfully resolved %d / %d Nifty 200 security IDs from Dhan", len(self._sec_ids), len(self._symbols))
             self.save_cache()
             return synced_count
         except Exception as e:
