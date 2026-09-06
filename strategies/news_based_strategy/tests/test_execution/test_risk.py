@@ -13,17 +13,23 @@ class TestRiskManager(unittest.TestCase):
         qty1 = RiskManager.calculate_position_size(capital=20000, ltp=9000)
         self.assertEqual(qty1, 2)
 
-        # ₹20,000 capital @ ₹300 price (BEL) with default max_quantity=10 -> Capped at 10 shares
-        qty2 = RiskManager.calculate_position_size(capital=20000, ltp=300)
+        # ₹6,600 trade capital (33% of 20k) @ ₹300 price (BEL) with default max_quantity=10 -> Capped at 10 shares
+        qty2 = RiskManager.calculate_position_size(capital=6600, ltp=300)
         self.assertEqual(qty2, 10)
+
+        # ₹6,600 trade capital @ ₹1,100 price -> 6 shares (whatever covered by 6600)
+        qty_mid = RiskManager.calculate_position_size(capital=6600, ltp=1100)
+        self.assertEqual(qty_mid, 6)
 
         # ₹20,000 capital @ ₹300 price with max_quantity=1000 -> 66 shares
         qty2_uncapped = RiskManager.calculate_position_size(capital=20000, ltp=300, max_quantity=1000)
         self.assertEqual(qty2_uncapped, 66)
 
-        # Minimum quantity is 1
+        # When LTP > capital, returns 0 shares (order rejected)
         qty3 = RiskManager.calculate_position_size(capital=20000, ltp=50000)
-        self.assertEqual(qty3, 1)
+        self.assertEqual(qty3, 0)
+        qty4 = RiskManager.calculate_position_size(capital=6600, ltp=9000)
+        self.assertEqual(qty4, 0)
 
     def test_safe_product_type_enforcement(self):
         # SELL must ALWAYS be forced to INTRADAY

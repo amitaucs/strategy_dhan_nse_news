@@ -76,7 +76,9 @@ class Settings:
     dhan_redirect_url: str = os.getenv("DHAN_REDIRECT_URL", "http://localhost:8000/api/auth/dhan/callback")
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     auto_order: bool = os.getenv("AUTO_ORDER", "true").lower() in ("true", "1", "yes")
-    capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "20000.0"))
+    total_capital: float = float(os.getenv("TOTAL_CAPITAL", "20000.0"))
+    capital_allocation_pct: float = float(os.getenv("CAPITAL_ALLOCATION_PCT", "33.0"))
+    capital_per_trade: float = float(os.getenv("CAPITAL_PER_TRADE", "6600.0"))
     max_shares_per_trade: int = int(os.getenv("MAX_SHARES_PER_TRADE", "10"))
     max_orders_per_day: int = int(os.getenv("MAX_ORDERS_PER_DAY", "3"))
 

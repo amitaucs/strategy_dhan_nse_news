@@ -429,6 +429,22 @@ class DhanExecutor:
             ltp=ltp,
             max_quantity=self.max_shares_per_trade,
         )
+        if quantity <= 0:
+            remarks = (
+                f"ORDER REJECTED: Insufficient trade capital (₹{self.capital_per_trade:,.2f}) "
+                f"to purchase 1 share of {signal.symbol} at LTP ₹{ltp:,.2f}"
+            )
+            logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+            return TradeResult(
+                success=False,
+                symbol=signal.symbol,
+                action=signal.action,
+                quantity=0,
+                product_type=safe_product,
+                order_id=None,
+                remarks=remarks,
+                dry_run=self.dry_run,
+            )
 
         # 5. Bracket Orders (Super Order) Level Calculations
         if self.super_order_enabled:

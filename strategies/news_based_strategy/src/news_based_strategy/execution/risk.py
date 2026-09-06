@@ -129,17 +129,24 @@ class RiskManager:
     def calculate_position_size(capital: float, ltp: float, max_quantity: int = 10) -> int:
         """Calculate number of shares based on allocated capital and current price.
         
+        Quantity is calculated as: min(max_quantity, floor(capital / ltp)).
+        If capital is insufficient to purchase at least 1 share (LTP > capital), returns 0.
+        
         Args:
-            capital: Allocated INR capital for this trade (e.g. 20,000).
+            capital: Allocated INR capital for this trade (e.g. 6,600).
             ltp: Last Traded Price of the stock.
             max_quantity: Safety ceiling for quantity (default: 10).
+
+        Returns:
+            int: Number of shares to purchase (0 if capital < ltp).
         """
         if ltp <= 0 or capital <= 0:
-            return min(1, max_quantity)
+            return 0
 
         qty = math.floor(capital / ltp)
-        qty = max(1, min(qty, max_quantity))
-        return qty
+        if qty < 1:
+            return 0
+        return min(qty, max_quantity)
 
     @staticmethod
     def get_safe_product_type(action: str, preferred_buy_product: str = "INTRADAY") -> str:

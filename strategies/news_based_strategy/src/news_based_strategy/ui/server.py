@@ -2084,6 +2084,8 @@ def create_app() -> FastAPI:
         return {
             "dry_run": state.executor.dry_run,
             "auto_order": state.auto_order,
+            "total_capital": settings.total_capital,
+            "capital_allocation_pct": settings.capital_allocation_pct,
             "capital_per_trade": state.executor.capital_per_trade,
             "max_shares_per_trade": state.executor.max_shares_per_trade,
             "max_orders_per_day": state.executor.max_orders_per_day,

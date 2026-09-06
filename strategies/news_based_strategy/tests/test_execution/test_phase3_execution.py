@@ -15,22 +15,22 @@ class TestPhase3Execution(unittest.TestCase):
     """Test suite for Phase 3 Super Order placement, max 10 share cap, and trigger gates."""
 
     def test_max_shares_per_trade_cap(self):
-        """Test that position sizing never exceeds the max_shares_per_trade cap (10 shares)."""
-        # Low price stock (₹50) with ₹20,000 capital: 400 shares -> Capped to 10
-        qty_low_price = RiskManager.calculate_position_size(capital=20000.0, ltp=50.0, max_quantity=10)
+        """Test that position sizing never exceeds the max_shares_per_trade cap (10 shares) and handles ₹6,600 allocation."""
+        # Low price stock (₹50) with ₹6,600 trade capital: 132 shares -> Capped to 10
+        qty_low_price = RiskManager.calculate_position_size(capital=6600.0, ltp=50.0, max_quantity=10)
         self.assertEqual(qty_low_price, 10)
 
-        # Mid price stock (₹300) with ₹20,000 capital: 66 shares -> Capped to 10
-        qty_mid_price = RiskManager.calculate_position_size(capital=20000.0, ltp=300.0, max_quantity=10)
-        self.assertEqual(qty_mid_price, 10)
+        # Mid price stock (₹1,100) with ₹6,600 trade capital: 6 shares -> 6 shares (<= 10)
+        qty_mid_price = RiskManager.calculate_position_size(capital=6600.0, ltp=1100.0, max_quantity=10)
+        self.assertEqual(qty_mid_price, 6)
 
         # High price stock (₹5,000) with ₹20,000 capital: 4 shares -> 4 shares (<= 10)
         qty_high_price = RiskManager.calculate_position_size(capital=20000.0, ltp=5000.0, max_quantity=10)
         self.assertEqual(qty_high_price, 4)
 
-        # Very high price stock (₹25,000) with ₹20,000 capital: 0 shares -> Floored to 1 share (<= 10)
+        # Very high price stock (₹25,000) with ₹20,000 capital: LTP > capital -> 0 shares (rejected)
         qty_very_high_price = RiskManager.calculate_position_size(capital=20000.0, ltp=25000.0, max_quantity=10)
-        self.assertEqual(qty_very_high_price, 1)
+        self.assertEqual(qty_very_high_price, 0)
 
         # Custom cap (e.g. 5 shares)
         qty_custom_cap = RiskManager.calculate_position_size(capital=20000.0, ltp=100.0, max_quantity=5)
