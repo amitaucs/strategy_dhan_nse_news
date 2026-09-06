@@ -84,7 +84,7 @@ def get_status() -> Dict[str, Any]:
 
 
 @app.post("/api/tolerance")
-async def update_tolerance(request: Request, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+async def update_tolerance(request: Request) -> Dict[str, Any]:
     """Dynamically adjust the EMA Dip Tolerance (%). Supports positive, 0%, and negative values."""
     payload = await request.json()
     try:
@@ -92,16 +92,16 @@ async def update_tolerance(request: Request, background_tasks: BackgroundTasks) 
         if new_tol < -10.0 or new_tol > 20.0:
             return {"status": "error", "message": "Tolerance must be between -10.0% and +20.0%"}
 
-        runner.screener.ema_proximity_pct = new_tol
-        logger.info("Adjusted EMA Dip Tolerance to %.2f%%", new_tol)
-        
-        # Trigger an immediate background re-scan with new tolerance
-        background_tasks.add_task(runner.scan_universe)
+        logger.info("Adjusted EMA Dip Tolerance to %.2f%% and re-evaluating universe...", new_tol)
+        updated_scans = runner.re_evaluate_with_tolerance(new_tol)
+        triggered_count = len(runner.latest_signals)
         
         return {
             "status": "success",
             "tolerance_pct": new_tol,
-            "message": f"Dip tolerance updated to {new_tol:.2f}% and universe re-scan initiated",
+            "triggered_count": triggered_count,
+            "scanned_count": len(updated_scans),
+            "message": f"Dip tolerance updated to {new_tol:.2f}%. {triggered_count} setups qualified.",
         }
     except Exception as e:
         logger.error("Error updating tolerance: %s", e)
@@ -633,28 +633,27 @@ def index_page() -> str:
 
         async function sendToleranceUpdate(val) {{
             const icon = document.getElementById('scanIcon');
-            icon.classList.add('animate-spin');
+            if (icon) icon.classList.add('animate-spin');
+            currentTolerance = parseFloat(val);
+            updateToleranceDisplay(currentTolerance);
+            renderScannerTable();
+
             try {{
                 const res = await fetch('/api/tolerance', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ tolerance_pct: val }})
+                    body: JSON.stringify({{ tolerance_pct: currentTolerance }})
                 }});
                 const data = await res.json();
                 if (data.status === 'success') {{
-                    currentTolerance = data.tolerance_pct;
-                    updateToleranceDisplay(currentTolerance);
-                    setTimeout(() => {{
-                        refreshData();
-                        icon.classList.remove('animate-spin');
-                    }}, 1500);
+                    await refreshData();
                 }} else {{
                     alert('Failed to update tolerance: ' + data.message);
-                    icon.classList.remove('animate-spin');
                 }}
             }} catch(e) {{
-                alert('Tolerance update error: ' + e);
-                icon.classList.remove('animate-spin');
+                console.error('Tolerance update error:', e);
+            }} finally {{
+                if (icon) icon.classList.remove('animate-spin');
             }}
         }}
 
@@ -672,7 +671,14 @@ def index_page() -> str:
             const tbody = document.getElementById('scannerTableBody');
             const query = document.getElementById('symbolSearch').value.toUpperCase().trim();
             
-            let filtered = allScans;
+            // Dynamically evaluate dip and setup readiness against active tolerance
+            allScans.forEach(item => {{
+                const distNum = Number(item.nearest_ema_dist_pct || 0);
+                item.is_in_dip = distNum <= currentTolerance;
+                item.is_setup_ready = Boolean(item.is_ema_stacked && item.is_in_dip && item.is_ha_green && item.is_supertrend_green);
+            }});
+
+            let filtered = [...allScans];
             if (query) {{
                 filtered = filtered.filter(s => s.symbol.toUpperCase().includes(query));
             }}
@@ -680,13 +686,13 @@ def index_page() -> str:
                 filtered = filtered.filter(s => s.is_setup_ready);
             }}
 
+            filtered.sort((a, b) => (b.is_setup_ready ? 1 : 0) - (a.is_setup_ready ? 1 : 0) || a.nearest_ema_dist_pct - b.nearest_ema_dist_pct);
+
             const qualifiedCount = allScans.filter(s => s.is_setup_ready).length;
             document.getElementById('scanCountBadge').innerText = allScans.length;
             document.getElementById('metricUniverse').innerText = allScans.length || '200';
             document.getElementById('metricQualified').innerText = qualifiedCount;
-            if (qualifiedCount > 0) {{
-                document.getElementById('signalCountBadge').innerText = qualifiedCount;
-            }}
+            document.getElementById('signalCountBadge').innerText = qualifiedCount;
 
             if (filtered.length === 0) {{
                 tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No matching stocks found.</td></tr>';

@@ -97,10 +97,10 @@ class SetupSignal:
     ema_50: float
     ema_200: float
     supertrend: float
-    ha_close: float
-    ha_open: float
-    nearest_ema_name: str
-    nearest_ema_dist_pct: float
+    ha_close: float = 0.0
+    ha_open: float = 0.0
+    nearest_ema_name: str = ""
+    nearest_ema_dist_pct: float = 0.0
     status: SignalStatus = SignalStatus.PENDING
 
     @property

@@ -8,7 +8,7 @@ import time
 from typing import Callable, Dict, List, Optional
 
 from st15_largecap.config import settings
-from st15_largecap.core.models import ScanResult, SetupSignal
+from st15_largecap.core.models import ScanResult, SetupSignal, SignalStatus
 from st15_largecap.engine.screener import ST15Screener
 from st15_largecap.ingestion.candles import CandleFetcher
 from st15_largecap.ingestion.universe import UniverseManager, universe_manager
@@ -108,6 +108,111 @@ class StrategyRunner:
             len(results), len(signals)
         )
         return results
+
+    def re_evaluate_with_tolerance(self, new_tolerance_pct: float) -> List[ScanResult]:
+        """Re-evaluate the existing universe results in-memory instantly with a new dip tolerance."""
+        self.screener.ema_proximity_pct = new_tolerance_pct
+        if not self._latest_results and self.repository:
+            db_scans = self.repository.get_latest_scans()
+            if db_scans:
+                self._latest_results = [
+                    ScanResult(
+                        symbol=s["symbol"],
+                        sec_id=s["sec_id"],
+                        ltp=s["ltp"],
+                        ema_20=s["ema_20"],
+                        ema_50=s["ema_50"],
+                        ema_200=s["ema_200"],
+                        is_ema_stacked=bool(s["is_ema_stacked"]),
+                        is_in_dip=bool(s["is_in_dip"]),
+                        nearest_ema=s["nearest_ema"],
+                        nearest_ema_dist_pct=s["nearest_ema_dist_pct"],
+                        is_ha_green=bool(s["is_ha_green"]),
+                        is_supertrend_green=bool(s["is_supertrend_green"]),
+                        is_setup_ready=bool(s["is_setup_ready"]),
+                        swing_low=s.get("swing_low", 0.0),
+                    )
+                    for s in db_scans
+                ]
+
+        if not self._latest_results:
+            # Trigger full scan if no previous results exist
+            return self.scan_universe()
+
+        updated_results: List[ScanResult] = []
+        updated_signals: List[SetupSignal] = []
+
+        for r in self._latest_results:
+            is_in_dip = r.nearest_ema_dist_pct <= new_tolerance_pct
+            is_setup_ready = (
+                r.is_ema_stacked
+                and is_in_dip
+                and r.is_ha_green
+                and r.is_supertrend_green
+            )
+
+            signal = r.signal
+            if is_setup_ready and not signal:
+                trigger_price = round(r.ltp * 1.002, 2)
+                stop_loss = round(r.swing_low or (r.ltp * 0.98), 2)
+                risk = round(trigger_price - stop_loss, 2)
+                target = round(trigger_price + (risk * self.screener.risk_reward_ratio), 2)
+                signal = SetupSignal(
+                    symbol=r.symbol,
+                    sec_id=r.sec_id,
+                    setup_time=datetime.now(),
+                    trigger_price=trigger_price,
+                    stop_loss_price=stop_loss,
+                    target_profit_price=target,
+                    risk_per_share=risk,
+                    risk_reward_ratio=self.screener.risk_reward_ratio,
+                    ema_20=r.ema_20,
+                    ema_50=r.ema_50,
+                    ema_200=r.ema_200,
+                    supertrend=0.0,
+                    nearest_ema_name=r.nearest_ema,
+                    nearest_ema_dist_pct=r.nearest_ema_dist_pct,
+                    status=SignalStatus.TRIGGERED,
+                )
+
+            new_res = ScanResult(
+                symbol=r.symbol,
+                sec_id=r.sec_id,
+                ltp=r.ltp,
+                ema_20=r.ema_20,
+                ema_50=r.ema_50,
+                ema_200=r.ema_200,
+                is_ema_stacked=r.is_ema_stacked,
+                is_in_dip=is_in_dip,
+                nearest_ema=r.nearest_ema,
+                nearest_ema_dist_pct=r.nearest_ema_dist_pct,
+                is_ha_green=r.is_ha_green,
+                is_supertrend_green=r.is_supertrend_green,
+                is_setup_ready=is_setup_ready,
+                swing_low=r.swing_low,
+                signal=signal if is_setup_ready else None,
+                candles_count=r.candles_count,
+                scanned_at=datetime.now(),
+            )
+            updated_results.append(new_res)
+            if is_setup_ready and signal:
+                updated_signals.append(signal)
+
+        updated_results.sort(key=lambda r: (not r.is_setup_ready, r.nearest_ema_dist_pct))
+        self._latest_results = updated_results
+        self._latest_signals = updated_signals
+
+        if self.repository:
+            try:
+                self.repository.save_scan_results(updated_results)
+            except Exception as e:
+                logger.error("Error saving updated scan results: %s", e)
+
+        logger.info(
+            "Re-evaluated %d symbols with tolerance %.2f%%: %d Qualified Setups",
+            len(updated_results), new_tolerance_pct, len(updated_signals)
+        )
+        return updated_results
 
     def _loop(self, interval_seconds: int):
         logger.info("Background scanner loop started (Interval: %ds)", interval_seconds)
