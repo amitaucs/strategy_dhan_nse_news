@@ -13,11 +13,31 @@ logger = logging.getLogger(__name__)
 
 
 class OrderExecutor:
-    """Dispatches trade orders to DhanHQ broker or handles simulated DRY_RUN execution."""
+    """Dispatches trade orders to DhanHQ broker (LIVE) or handles simulated (VIRTUAL) execution."""
 
     def __init__(self, dhan_client: Optional[Any] = None, dry_run: bool = settings.DRY_RUN):
         self.dhan = dhan_client
         self.dry_run = dry_run
+        if not self.dhan and settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+            try:
+                from dhanhq import DhanContext, dhanhq
+                ctx = DhanContext(settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+                self.dhan = dhanhq(ctx)
+                logger.info("OrderExecutor initialized with DhanHQ client for ID: %s", settings.DHAN_CLIENT_ID)
+            except Exception as e:
+                logger.warning("OrderExecutor could not initialize DhanHQ client: %s", e)
+
+    def set_mode(self, dry_run: bool) -> None:
+        """Switch between VIRTUAL (dry_run=True) and LIVE (dry_run=False) mode."""
+        self.dry_run = dry_run
+        if not dry_run and not self.dhan and settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
+            try:
+                from dhanhq import DhanContext, dhanhq
+                ctx = DhanContext(settings.DHAN_CLIENT_ID, settings.DHAN_ACCESS_TOKEN)
+                self.dhan = dhanhq(ctx)
+            except Exception as e:
+                logger.error("Failed to connect Dhan client for LIVE trading: %s", e)
+        logger.info("Trading Execution Mode set to: %s", "VIRTUAL (Paper Trading)" if self.dry_run else "LIVE (Real Money)")
 
     def execute_signal(
         self,
@@ -49,9 +69,9 @@ class OrderExecutor:
             )
 
         if self.dry_run or not self.dhan:
-            simulated_id = f"SIM-ST15-{uuid.uuid4().hex[:10].upper()}"
+            simulated_id = f"VIRTUAL-ST15-{uuid.uuid4().hex[:10].upper()}"
             logger.info(
-                "🧪 [DRY RUN] Simulating %s Order: %s x %d @ %.2f (SL: %.2f, Target: %.2f)",
+                "🟡 [VIRTUAL] Simulating %s Order: %s x %d @ %.2f (SL: %.2f, Target: %.2f)",
                 order_type_preference, signal.symbol, qty, signal.trigger_price,
                 signal.stop_loss_price, signal.target_profit_price,
             )
@@ -69,7 +89,7 @@ class OrderExecutor:
                 status="SIMULATED",
                 dry_run=True,
                 placed_at=datetime.now(),
-                remarks="Dry run simulation execution",
+                remarks="Virtual simulation execution",
             )
 
         # Live DhanHQ Order Placement

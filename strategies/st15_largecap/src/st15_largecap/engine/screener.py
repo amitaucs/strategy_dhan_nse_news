@@ -103,46 +103,98 @@ class ST15Screener:
         is_ema_stacked = is_ema_stacked_bullish(ema_20, ema_50, ema_200)
 
         # Gate 2: Pullback Dip near or kissing any EMA
-        # Check current candle or any of the preceding 3 candles for proximity dip
+        # Only valid if Gate 1 (Bullish EMA stack) passes
         is_in_dip = False
         nearest_ema = ""
         min_dist_pct = 999.0
 
-        lookback_dip = min(4, len(candles))
-        for offset in range(lookback_dip):
-            idx = curr_idx - offset
-            c = candles[idx]
-            dip_ok, name, dist = check_ema_proximity(
-                low=c.low,
-                high=c.high,
-                close=c.close,
-                ema_20=ema_20_list[idx],
-                ema_50=ema_50_list[idx],
-                ema_200=ema_200_list[idx],
+        if is_ema_stacked:
+            lookback_dip = min(4, len(candles))
+            for offset in range(lookback_dip):
+                idx = curr_idx - offset
+                c = candles[idx]
+                dip_ok, name, dist = check_ema_proximity(
+                    low=c.low,
+                    high=c.high,
+                    close=c.close,
+                    ema_20=ema_20_list[idx],
+                    ema_50=ema_50_list[idx],
+                    ema_200=ema_200_list[idx],
+                    tolerance_pct=self.ema_proximity_pct,
+                )
+                if dist < min_dist_pct:
+                    min_dist_pct = dist
+                    nearest_ema = name
+                if dip_ok:
+                    is_in_dip = True
+        else:
+            # When EMA is inverted/not stacked, compute nearest EMA for informational distance only
+            _, nearest_ema, min_dist_pct = check_ema_proximity(
+                low=curr_candle.low,
+                high=curr_candle.high,
+                close=curr_candle.close,
+                ema_20=ema_20,
+                ema_50=ema_50,
+                ema_200=ema_200,
                 tolerance_pct=self.ema_proximity_pct,
             )
-            if dist < min_dist_pct:
-                min_dist_pct = dist
-                nearest_ema = name
-            if dip_ok:
-                is_in_dip = True
+            is_in_dip = False
 
-        # Gate 3: First Heikin Ashi Green Candle after a dip / red candle
-        # The transition into an entry setup requires the current HA candle to be Green
-        # and the immediately preceding HA candle to have been Red (or a reversal candle)
-        is_curr_ha_green = curr_ha.is_green
-        is_first_green = is_curr_ha_green and (prev_ha.is_red or (curr_idx >= 2 and ha_candles[curr_idx - 2].is_red and abs(prev_ha.close - prev_ha.open) < 0.05 * prev_ha.close))
+        # Gate 3 & 4: First Heikin Ashi Green Candle after pullback & SuperTrend Timing
+        # Rule: Buy signal only generates on:
+        #   Case A: 1st Green HA candle after pullback, when SuperTrend is already Green (or turns green)
+        #   Case B: When SuperTrend becomes Green (bullish flip) after the 1st green HA candle (candles 1-3 of bounce)
+        is_curr_ha_green = curr_ha.is_green or (curr_ha.close >= curr_ha.open)
+        consecutive_green_ha = 0
+        if is_curr_ha_green:
+            for k in range(curr_idx, -1, -1):
+                if ha_candles[k].is_green or (ha_candles[k].close >= ha_candles[k].open):
+                    consecutive_green_ha += 1
+                else:
+                    break
 
-        # Gate 4: SuperTrend Bullish (Green)
+        # SuperTrend Status
+        is_st_green = bool(st_green_list[curr_idx])
+        prev_st_green = bool(st_green_list[curr_idx - 1]) if curr_idx > 0 else False
+        st_just_turned_green = is_st_green and not prev_st_green
+
+        # Trigger conditions
+        trigger_first_green = (consecutive_green_ha == 1) and is_st_green
+        trigger_st_flip_after_green = st_just_turned_green and (1 <= consecutive_green_ha <= 3)
+        is_trigger_event = trigger_first_green or trigger_st_flip_after_green
+
         is_supertrend_green = is_st_green
 
-        # Overall Setup Trigger Verification
+        # Overall Setup Trigger Verification & Invalidation Reason Determination
         is_setup_ready = (
             is_ema_stacked
             and is_in_dip
-            and is_first_green
-            and is_supertrend_green
+            and is_curr_ha_green
+            and is_st_green
+            and is_trigger_event
         )
+
+        invalidation_reason = ""
+        if not is_ema_stacked:
+            if ema_200 > ema_50 and ema_50 > ema_20:
+                invalidation_reason = f"EMA: Inverted (200 > 50 > 20 EMA: ₹{ema_200:.1f} > ₹{ema_50:.1f} > ₹{ema_20:.1f})"
+            elif ema_200 > ema_50:
+                invalidation_reason = f"EMA: 200 EMA (₹{ema_200:.1f}) > 50 EMA (₹{ema_50:.1f})"
+            elif ema_50 > ema_20:
+                invalidation_reason = f"EMA: 50 EMA (₹{ema_50:.1f}) > 20 EMA (₹{ema_20:.1f})"
+            else:
+                invalidation_reason = "EMA: 20/50/200 EMAs Not Stacked"
+        elif not is_in_dip:
+            invalidation_reason = f"Dip: Distance ({min_dist_pct:+.2f}%) exceeds tolerance"
+        elif not is_curr_ha_green:
+            invalidation_reason = "HA: Candle is Red (In Pullback)"
+        elif not is_st_green:
+            invalidation_reason = "SuperTrend: Bearish (Red - waiting for flip)"
+        elif not is_trigger_event:
+            if consecutive_green_ha > 1:
+                invalidation_reason = f"HA: Move in-progress ({consecutive_green_ha}th green candle, trigger was on 1st candle or ST flip)"
+            else:
+                invalidation_reason = "Trigger: Waiting for 1st green HA or SuperTrend flip"
 
         # Calculate Swing Low for Protective SL
         swing_low = calculate_swing_low(
@@ -182,6 +234,7 @@ class ST15Screener:
                 nearest_ema_name=nearest_ema,
                 nearest_ema_dist_pct=min_dist_pct,
                 status=SignalStatus.TRIGGERED,
+                invalidation_reason="",
             )
 
         return ScanResult(
@@ -201,5 +254,52 @@ class ST15Screener:
             swing_low=swing_low,
             signal=signal,
             candles_count=len(candles),
+            invalidation_reason=invalidation_reason,
             scanned_at=datetime.now(),
         )
+
+    def validate_setup_signal(self, signal: SetupSignal, candles: List[Candle]) -> tuple[bool, str]:
+        """Verify if a previously generated signal is still valid in current market conditions.
+        
+        Returns:
+            (is_valid: bool, status_message: str)
+        """
+        if not candles or len(candles) < 20:
+            return False, "Insufficient candle data"
+
+        curr_candle = candles[-1]
+        # 1. Check if price fell below Stop Loss
+        if signal.stop_loss_price and curr_candle.close < signal.stop_loss_price:
+            return False, f"Price (₹{curr_candle.close:.2f}) breached Stop Loss (₹{signal.stop_loss_price:.2f})"
+
+        # 2. Check if price exceeded Target significantly
+        if signal.target_profit_price and curr_candle.close >= signal.target_profit_price:
+            return False, f"Price (₹{curr_candle.close:.2f}) already reached Target (₹{signal.target_profit_price:.2f})"
+
+        # 3. Check Heikin Ashi candle state (if HA turned red, the bounce failed)
+        ha_candles = calculate_heikin_ashi(candles)
+        curr_ha = ha_candles[-1]
+        if curr_ha.is_red:
+            return False, "Heikin Ashi turned Red (Bearish)"
+
+        # 4. Check SuperTrend status (if SuperTrend turned red)
+        st_vals, st_green_list = calculate_supertrend(
+            candles,
+            period=self.supertrend_period,
+            multiplier=self.supertrend_multiplier,
+        )
+        if not st_green_list[-1]:
+            return False, "SuperTrend turned Red (Bearish)"
+
+        # 5. Check EMA alignment
+        closes = [c.close for c in candles]
+        ema_dict = calculate_triple_ema(
+            closes,
+            fast_span=settings.EMA_FAST,
+            mid_span=settings.EMA_MID,
+            slow_span=settings.EMA_SLOW,
+        )
+        if not is_ema_stacked_bullish(ema_dict["ema_20"][-1], ema_dict["ema_50"][-1], ema_dict["ema_200"][-1]):
+            return False, "EMA alignment lost (20/50/200 EMAs no longer bullish stacked)"
+
+        return True, "Setup is Active and Qualified"

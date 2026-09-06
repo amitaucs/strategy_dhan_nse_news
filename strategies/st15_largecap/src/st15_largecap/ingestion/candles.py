@@ -114,6 +114,18 @@ class CandleFetcher:
             except Exception as e:
                 logger.warning("Could not initialize DhanHQ client: %s", e)
 
+    def clear_cache(self, symbol: Optional[str] = None) -> None:
+        """Clear cached candles for a specific symbol or all symbols."""
+        if symbol:
+            sym_clean = symbol.upper().strip()
+            keys_to_del = [k for k in self._cache if k.startswith(sym_clean)]
+            for k in keys_to_del:
+                self._cache.pop(k, None)
+            logger.info("Candle cache cleared for %s", sym_clean)
+        else:
+            self._cache.clear()
+            logger.info("Candle cache cleared for all symbols.")
+
     def fetch_2h_candles(
         self,
         security_id: str,
@@ -135,7 +147,7 @@ class CandleFetcher:
 
         if not self.dhan or not security_id:
             logger.debug("Generating realistic synthetic 2H candles for %s (SecID: %s)", symbol, security_id)
-            mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=100)
+            mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=250)
             self._cache[cache_key] = (now, mock_candles)
             return mock_candles
 
@@ -233,34 +245,48 @@ class CandleFetcher:
         if cache_key in self._cache:
             return self._cache[cache_key][1]
 
-        mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=100)
+        mock_candles = generate_mock_2h_candles(symbol=symbol, num_candles=250)
         self._cache[cache_key] = (now, mock_candles)
         return mock_candles
 
 
+import zlib
+
 def generate_mock_2h_candles(
     symbol: str = "TCS",
     base_price: Optional[float] = None,
-    num_candles: int = 100,
+    num_candles: int = 250,
     bullish_trend: Optional[bool] = None,
     pullback_at_end: Optional[bool] = None,
 ) -> List[Candle]:
     """Generate realistic synthetic 2H candles for testing and dry-run verification."""
     candles: List[Candle] = []
-    current_time = datetime.now() - timedelta(days=num_candles // 3 + 5)
+    num_candles = max(10, num_candles)
+    current_time = datetime.now() - timedelta(days=num_candles // 3 + 10)
 
-    hash_val = abs(hash(symbol or "STOCK"))
+    sym_clean = (symbol or "STOCK").upper().strip()
+    hash_val = zlib.crc32(sym_clean.encode("utf-8"))
+
+    # Specific known profiles for realistic simulation
+    if sym_clean in ("AXISBANK", "BANDHANBNK", "INDUSINDBK", "KOTAKBANK"):
+        if bullish_trend is None:
+            bullish_trend = False  # Bearish downtrend where 200 EMA > 50 EMA > 20 EMA
+        if pullback_at_end is None:
+            pullback_at_end = False
+        if base_price is None:
+            base_price = 1180.0 if sym_clean == "AXISBANK" else 1750.0
+
     if base_price is None:
         # Deterministic distinct price based on symbol name
         base_price = round(200.0 + (hash_val % 3800) + ((hash_val % 99) * 0.1), 2)
 
     if bullish_trend is None:
-        # ~70% bullish, ~30% bearish across the universe
-        bullish_trend = (hash_val % 10) < 7
+        # ~60% bullish, ~40% bearish across universe
+        bullish_trend = (hash_val % 10) < 6
 
     if pullback_at_end is None:
         # ~20% currently triggering a qualified bounce after dip
-        pullback_at_end = (hash_val % 10) in (0, 1)
+        pullback_at_end = bullish_trend and ((hash_val % 10) in (0, 1))
 
     current_price = base_price
     slots = [time(9, 15), time(11, 15), time(13, 15)]

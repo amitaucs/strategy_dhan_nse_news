@@ -61,18 +61,29 @@ class Settings:
     history_days: int = int(os.getenv("HISTORY_DAYS", "180"))
 
     # Position Sizing & Execution Controls
-    capital_per_position: float = float(os.getenv("CAPITAL_PER_POSITION", os.getenv("CAPITAL_PER_TRADE", "50000.0")))
-    max_positions: int = int(os.getenv("MAX_POSITIONS", "5"))
+    total_capital: float = float(os.getenv("TOTAL_CAPITAL", "100000.0"))
+    capital_allocation_pct: float = float(os.getenv("CAPITAL_ALLOCATION_PCT", "33.0"))
+    capital_per_position: float = float(os.getenv("CAPITAL_PER_POSITION", os.getenv("CAPITAL_PER_TRADE", "0.0")))
+    max_positions_per_day: int = int(os.getenv("MAX_POSITIONS_PER_DAY", os.getenv("MAX_POSITIONS", "3")))
     product_type: str = os.getenv("PRODUCT_TYPE", "CNC").upper()
     order_type: str = os.getenv("ORDER_TYPE", "FOREVER_OCO").upper()
     dry_run: bool = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     auto_order: bool = os.getenv("AUTO_ORDER", "false").lower() in ("true", "1", "yes")
     scan_interval_minutes: int = int(os.getenv("SCAN_INTERVAL_MINUTES", "15"))
 
-    # Database
+    # Database & MySQL Persistence
     database_path: str = os.getenv(
         "DATABASE_PATH", str(BASE_DIR / "data" / "st15.db")
     )
+    mysql_host: str = os.getenv("MYSQL_HOST", "")
+    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
+    mysql_database: str = os.getenv("MYSQL_DATABASE", "")
+    mysql_user: str = os.getenv("MYSQL_USER", "")
+    mysql_password: str = os.getenv("MYSQL_PASSWORD", "")
+
+    @property
+    def use_mysql(self) -> bool:
+        return bool(self.mysql_host and self.mysql_database and self.mysql_user)
 
     # Upper-case property aliases for compatibility
     @property
@@ -140,12 +151,30 @@ class Settings:
         return self.history_days
 
     @property
-    def CAPITAL_PER_TRADE(self) -> float:
-        return self.capital_per_position
+    def TOTAL_CAPITAL(self) -> float:
+        return self.total_capital
+
+    @property
+    def CAPITAL_ALLOCATION_PCT(self) -> float:
+        return self.capital_allocation_pct
 
     @property
     def CAPITAL_PER_POSITION(self) -> float:
-        return self.capital_per_position
+        if self.capital_per_position > 0:
+            return self.capital_per_position
+        return round(self.total_capital * (self.capital_allocation_pct / 100.0), 2)
+
+    @property
+    def CAPITAL_PER_TRADE(self) -> float:
+        return self.CAPITAL_PER_POSITION
+
+    @property
+    def MAX_POSITIONS_PER_DAY(self) -> int:
+        return self.max_positions_per_day
+
+    @property
+    def MAX_POSITIONS(self) -> int:
+        return self.max_positions_per_day
 
     @property
     def PRODUCT_TYPE(self) -> str:
@@ -160,12 +189,40 @@ class Settings:
         return self.dry_run
 
     @property
+    def AUTO_ORDER(self) -> bool:
+        return self.auto_order
+
+    @property
     def SCAN_INTERVAL_MINUTES(self) -> int:
         return self.scan_interval_minutes
 
     @property
     def DATABASE_PATH(self) -> str:
         return self.database_path
+
+    @property
+    def MYSQL_HOST(self) -> str:
+        return self.mysql_host
+
+    @property
+    def MYSQL_PORT(self) -> int:
+        return self.mysql_port
+
+    @property
+    def MYSQL_DATABASE(self) -> str:
+        return self.mysql_database
+
+    @property
+    def MYSQL_USER(self) -> str:
+        return self.mysql_user
+
+    @property
+    def MYSQL_PASSWORD(self) -> str:
+        return self.mysql_password
+
+    @property
+    def USE_MYSQL(self) -> bool:
+        return self.use_mysql
 
 
 settings = Settings()

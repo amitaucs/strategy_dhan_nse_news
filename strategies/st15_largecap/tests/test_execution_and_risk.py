@@ -17,6 +17,22 @@ class TestExecutionAndRisk(unittest.TestCase):
         # Zero or invalid
         self.assertEqual(calculate_position_size(entry_price=0.0), 0)
 
+    def test_position_sizing_33_pct_allocation(self):
+        # Total Capital 100,000 with 33% allocation = 33,000 per order
+        # Stock price 1500 -> 33000 / 1500 = 22 shares
+        qty = calculate_position_size(entry_price=1500.0, total_capital=100000.0, capital_allocation_pct=33.0)
+        self.assertEqual(qty, 22)
+
+        # Stock price 3000 -> 33000 / 3000 = 11 shares
+        qty2 = calculate_position_size(entry_price=3000.0, total_capital=100000.0, capital_allocation_pct=33.0)
+        self.assertEqual(qty2, 11)
+
+        # Default settings position size
+        from st15_largecap.config import settings
+        expected_qty = int(settings.CAPITAL_PER_POSITION / 1000.0)
+        qty_default = calculate_position_size(entry_price=1000.0)
+        self.assertEqual(qty_default, expected_qty)
+
     def test_trade_parameters_calculation(self):
         signal = SetupSignal(
             symbol="TCS",

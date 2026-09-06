@@ -12,6 +12,8 @@ class SignalStatus(str, Enum):
     EXECUTED = "EXECUTED"
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
+    FALLEN = "FALLEN"
+    INVALIDATED = "INVALIDATED"
 
 
 class PositionStatus(str, Enum):
@@ -102,6 +104,7 @@ class SetupSignal:
     nearest_ema_name: str = ""
     nearest_ema_dist_pct: float = 0.0
     status: SignalStatus = SignalStatus.PENDING
+    invalidation_reason: str = ""
 
     @property
     def potential_profit_pct(self) -> float:
@@ -187,5 +190,6 @@ class ScanResult:
     swing_low: float = 0.0
     signal: Optional[SetupSignal] = None
     candles_count: int = 0
+    invalidation_reason: str = ""
     scanned_at: datetime = field(default_factory=datetime.now)
 
