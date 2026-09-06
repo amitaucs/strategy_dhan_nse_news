@@ -12,6 +12,7 @@ from st15_largecap.core.models import ScanResult, SetupSignal
 from st15_largecap.engine.screener import ST15Screener
 from st15_largecap.ingestion.candles import CandleFetcher
 from st15_largecap.ingestion.universe import UniverseManager, universe_manager
+from st15_largecap.storage.repository import repository as default_repo, Repository
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,13 @@ class StrategyRunner:
         universe: Optional[UniverseManager] = None,
         candle_fetcher: Optional[CandleFetcher] = None,
         on_signal_callback: Optional[Callable[[SetupSignal], None]] = None,
+        repo: Optional[Repository] = None,
     ):
         self.screener = screener or ST15Screener()
         self.universe = universe or universe_manager
         self.fetcher = candle_fetcher or CandleFetcher()
-        self.on_signal_callback = on_signal_callback
+        self.repository = repo or default_repo
+        self.on_signal_callback = on_signal_callback or (lambda sig: self.repository.save_signal(sig))
 
         self._last_scan_time: Optional[datetime] = None
         self._latest_results: List[ScanResult] = []
@@ -93,6 +96,12 @@ class StrategyRunner:
         self._latest_results = results
         self._latest_signals = signals
         self._last_scan_time = datetime.now()
+
+        if self.repository:
+            try:
+                self.repository.save_scan_results(results)
+            except Exception as e:
+                logger.error("Error saving scan results to repository: %s", e)
 
         logger.info(
             "ST15 Scan complete. Total: %d, Qualified Setups: %d",

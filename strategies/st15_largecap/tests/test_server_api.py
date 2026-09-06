@@ -98,6 +98,68 @@ class TestServerAPI(unittest.TestCase):
             mock_stop.assert_called_once()
             runner._is_running = False
 
+    def test_qualified_signals_and_execution(self):
+        from datetime import datetime
+        from st15_largecap.core.models import ScanResult, SetupSignal, SignalStatus
+
+        # Simulate a qualified scan result with signal
+        sig = SetupSignal(
+            symbol="AARTIIND",
+            sec_id="28",
+            setup_time=datetime.now(),
+            trigger_price=650.0,
+            stop_loss_price=630.0,
+            target_profit_price=710.0,
+            risk_per_share=20.0,
+            risk_reward_ratio=3.0,
+            ema_20=640.0,
+            ema_50=620.0,
+            ema_200=580.0,
+            supertrend=635.0,
+            ha_close=648.0,
+            ha_open=642.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            status=SignalStatus.TRIGGERED,
+        )
+        scan = ScanResult(
+            symbol="AARTIIND",
+            sec_id="28",
+            ltp=648.0,
+            ema_20=640.0,
+            ema_50=620.0,
+            ema_200=580.0,
+            is_ema_stacked=True,
+            is_in_dip=True,
+            nearest_ema="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            is_ha_green=True,
+            is_supertrend_green=True,
+            is_setup_ready=True,
+            swing_low=630.0,
+            signal=sig,
+            candles_count=80,
+            scanned_at=datetime.now(),
+        )
+        runner._latest_results = [scan]
+        runner._latest_signals = [sig]
+
+        # Verify status endpoint reflects triggered count
+        status_res = self.client.get("/api/status")
+        self.assertGreaterEqual(status_res.json()["triggered_count"], 1)
+
+        # Verify signals endpoint returns qualified signal
+        signals_res = self.client.get("/api/signals")
+        self.assertEqual(signals_res.status_code, 200)
+        sig_data = signals_res.json()
+        self.assertGreaterEqual(len(sig_data), 1)
+        self.assertTrue(any(s["symbol"] == "AARTIIND" for s in sig_data))
+
+        # Verify manual execution endpoint
+        exec_res = self.client.post("/api/execute/AARTIIND")
+        self.assertEqual(exec_res.status_code, 200)
+        self.assertEqual(exec_res.json()["status"], "success")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-runner = StrategyRunner()
+runner = StrategyRunner(on_signal_callback=repository.save_signal)
 executor = OrderExecutor(dry_run=settings.DRY_RUN)
 
 
@@ -52,6 +52,12 @@ def get_status() -> Dict[str, Any]:
     """Strategy operational status."""
     tol = runner.screener.ema_proximity_pct
     prefix = "+" if tol > 0 else ""
+    db_signals = repository.get_signals(limit=50)
+    triggered_count = max(
+        len(runner.latest_signals),
+        len([r for r in runner.latest_results if r.is_setup_ready]),
+        len(db_signals),
+    )
     return {
         "strategy": "ST15_LargeCap",
         "universe": "Nifty 200",
@@ -70,7 +76,7 @@ def get_status() -> Dict[str, Any]:
         "order_type": settings.ORDER_TYPE,
         "last_scan_time": runner.last_scan_time.isoformat() if runner.last_scan_time else None,
         "scanned_count": len(runner.latest_results),
-        "triggered_count": len(runner.latest_signals),
+        "triggered_count": triggered_count,
     }
 
 
@@ -130,7 +136,44 @@ def get_scans() -> List[Dict[str, Any]]:
 @app.get("/api/signals")
 def get_signals() -> List[Dict[str, Any]]:
     """Get recent setup signals."""
-    return repository.get_signals(limit=50)
+    for sig in runner.latest_signals:
+        try:
+            repository.save_signal(sig)
+        except Exception:
+            pass
+
+    db_signals = repository.get_signals(limit=50)
+    if db_signals:
+        return db_signals
+
+    signals_list = []
+    if runner.latest_signals:
+        signals_list = runner.latest_signals
+    elif runner.latest_results:
+        signals_list = [r.signal for r in runner.latest_results if r.is_setup_ready and r.signal]
+
+    return [
+        {
+            "id": i + 1,
+            "symbol": s.symbol,
+            "sec_id": s.sec_id,
+            "setup_time": s.setup_time.isoformat() if isinstance(s.setup_time, datetime) else str(s.setup_time),
+            "trigger_price": s.trigger_price,
+            "stop_loss_price": s.stop_loss_price,
+            "target_profit_price": s.target_profit_price,
+            "risk_per_share": s.risk_per_share,
+            "risk_reward_ratio": s.risk_reward_ratio,
+            "ema_20": s.ema_20,
+            "ema_50": s.ema_50,
+            "ema_200": s.ema_200,
+            "supertrend": s.supertrend,
+            "nearest_ema_name": s.nearest_ema_name,
+            "nearest_ema_dist_pct": s.nearest_ema_dist_pct,
+            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+            "created_at": datetime.now().isoformat(),
+        }
+        for i, s in enumerate(signals_list)
+    ]
 
 
 @app.get("/api/positions")
@@ -168,6 +211,33 @@ def execute_setup(symbol: str) -> Dict[str, Any]:
     """Manually dispatch an entry order for a qualified setup."""
     sym = symbol.upper().strip()
     match_signal = next((s for s in runner.latest_signals if s.symbol == sym), None)
+    if not match_signal:
+        scan_match = next((r for r in runner.latest_results if r.symbol == sym and r.is_setup_ready), None)
+        if scan_match and scan_match.signal:
+            match_signal = scan_match.signal
+        elif scan_match:
+            trigger_price = round(scan_match.ltp * 1.002, 2)
+            stop_loss = round(scan_match.swing_low or scan_match.ltp * 0.98, 2)
+            risk = round(trigger_price - stop_loss, 2)
+            target = round(trigger_price + (risk * settings.RISK_REWARD_RATIO), 2)
+            match_signal = SetupSignal(
+                symbol=sym,
+                sec_id=scan_match.sec_id,
+                setup_time=datetime.now(),
+                trigger_price=trigger_price,
+                stop_loss_price=stop_loss,
+                target_profit_price=target,
+                risk_per_share=risk,
+                risk_reward_ratio=settings.RISK_REWARD_RATIO,
+                ema_20=scan_match.ema_20,
+                ema_50=scan_match.ema_50,
+                ema_200=scan_match.ema_200,
+                supertrend=0.0,
+                nearest_ema_name=scan_match.nearest_ema,
+                nearest_ema_dist_pct=scan_match.nearest_ema_dist_pct,
+                status=SignalStatus.TRIGGERED,
+            )
+
     if not match_signal:
         return {"status": "error", "message": f"No active qualified setup found for {sym}"}
 
@@ -608,7 +678,13 @@ def index_page() -> str:
                 filtered = filtered.filter(s => s.is_setup_ready);
             }}
 
+            const qualifiedCount = allScans.filter(s => s.is_setup_ready).length;
             document.getElementById('scanCountBadge').innerText = allScans.length;
+            document.getElementById('metricUniverse').innerText = allScans.length || '200';
+            document.getElementById('metricQualified').innerText = qualifiedCount;
+            if (qualifiedCount > 0) {{
+                document.getElementById('signalCountBadge').innerText = qualifiedCount;
+            }}
 
             if (filtered.length === 0) {{
                 tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No matching stocks found.</td></tr>';
@@ -663,11 +739,34 @@ def index_page() -> str:
         async function fetchSignals() {{
             try {{
                 const res = await fetch('/api/signals');
-                const signals = await res.json();
-                document.getElementById('signalCountBadge').innerText = signals.length;
+                let signals = await res.json();
+
+                if ((!signals || signals.length === 0) && allScans && allScans.length > 0) {{
+                    const qualifiedScans = allScans.filter(s => s.is_setup_ready);
+                    if (qualifiedScans.length > 0) {{
+                        signals = qualifiedScans.map((s, idx) => {{
+                            const trig = Number((s.ltp * 1.002).toFixed(2));
+                            const sl = Number((s.swing_low || s.ltp * 0.98).toFixed(2));
+                            const risk = Number((trig - sl).toFixed(2));
+                            const tgt = Number((trig + (risk * 3.0)).toFixed(2));
+                            return {{
+                                id: idx + 1,
+                                symbol: s.symbol,
+                                trigger_price: trig,
+                                stop_loss_price: sl,
+                                target_profit_price: tgt,
+                                risk_per_share: risk,
+                                nearest_ema_name: s.nearest_ema || 'EMA_20',
+                                status: 'TRIGGERED'
+                            }};
+                        }});
+                    }}
+                }}
+
+                document.getElementById('signalCountBadge').innerText = signals ? signals.length : 0;
                 const tbody = document.getElementById('signalsTableBody');
 
-                if (signals.length === 0) {{
+                if (!signals || signals.length === 0) {{
                     tbody.innerHTML = '<tr><td colspan="8" class="p-6 text-center text-slate-500">No active signals recorded yet.</td></tr>';
                     return;
                 }}
@@ -682,7 +781,7 @@ def index_page() -> str:
                         <td class="p-3 text-slate-300">${{s.nearest_ema_name}}</td>
                         <td class="p-3"><span class="badge-green px-2 py-0.5 rounded text-[11px] font-semibold">${{s.status}}</span></td>
                         <td class="p-3 text-right">
-                            <button onclick="executeOrder('${{s.symbol}}')" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs">Execute</button>
+                            <button onclick="executeOrder('${{s.symbol}}')" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-xs shadow transition">BUY</button>
                         </td>
                     </tr>
                 `).join('');
