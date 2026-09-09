@@ -886,8 +886,20 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             </button>
           </div>
 
+          <!-- Audio Synthesizer Toggle -->
+          <button onclick="toggleAudioSound()" id="sound-toggle-btn" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-emerald-400 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1.5 shadow" title="Toggle Synthesized Audio Chimes for Catalysts">
+            <span id="sound-icon">🔊</span>
+            <span id="sound-label" class="hidden md:inline font-mono">Audio ON</span>
+          </button>
+
+          <!-- Shortcuts Cheat Sheet Button -->
+          <button onclick="openHotkeysModal()" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1 shadow" title="Keyboard Shortcuts Cheat Sheet (?)">
+            <span>⌨️</span>
+            <span class="hidden lg:inline text-gray-400 font-mono text-[11px]">[?]</span>
+          </button>
+
           <!-- Emergency Square-Off Button -->
-          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Auto-scheduled for 15:00 IST)">
+          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Shift + Q)">
             <span>🛑</span>
             <span>Square Off (15:00)</span>
           </button>
@@ -960,7 +972,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
   <!-- METRICS RIBBON -->
   <div class="bg-[#0e1422] border-b border-gray-800/80 px-6 py-2.5">
-    <div class="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-3 text-center">
+    <div class="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
         <span class="text-[11px] text-gray-400 font-medium">FILTERED CATALYSTS</span>
         <span id="stat-total" class="text-base font-bold text-white font-mono">0</span>
@@ -977,9 +989,16 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         <span class="text-[11px] text-indigo-400 font-medium">SUPER ORDERS PLACED</span>
         <span id="stat-placed" class="text-base font-bold text-indigo-300 font-mono">0</span>
       </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between col-span-2 md:col-span-1">
+      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
         <span class="text-[11px] text-amber-400 font-medium">PENDING APPROVAL</span>
         <span id="stat-pending" class="text-base font-bold text-amber-300 font-mono">0</span>
+      </div>
+      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between col-span-2 md:col-span-1">
+        <span class="text-[11px] text-cyan-400 font-medium">🛡️ ORDERS RISK GAUGE</span>
+        <div class="flex items-center gap-1.5 font-mono">
+          <span id="risk-gauge-dots" class="text-emerald-400 font-bold text-xs tracking-wider">[■ ■ ■]</span>
+          <span id="risk-gauge-text" class="text-gray-300 text-[11px] font-bold">0/3</span>
+        </div>
       </div>
     </div>
   </div>
@@ -1025,21 +1044,16 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     
     <!-- Filter Dropdown & Scope Indicator -->
     <div class="flex items-center flex-wrap gap-2.5">
-      <div class="flex items-center gap-2 bg-[#111827] border border-gray-800 px-3 py-1.5 rounded-lg shadow-sm">
-        <span class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-          <span>⚡</span>
-          <span>Filter:</span>
-        </span>
-        <div class="relative">
-          <select id="feed-filter-select" onchange="setFilter(this.value)" class="appearance-none bg-[#162032] hover:bg-[#1e293b] border border-gray-700/80 hover:border-emerald-500/60 text-xs font-bold text-white rounded-lg pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer shadow transition">
-            <option value="ALL" id="opt-filter-all" class="bg-[#111827] text-white font-bold" selected>⚡ All Passed (0)</option>
-            <option value="BULLISH" id="opt-filter-bullish" class="bg-[#111827] text-emerald-400 font-semibold">🟢 Bullish Only (0)</option>
-            <option value="BEARISH" id="opt-filter-bearish" class="bg-[#111827] text-rose-400 font-semibold">🔴 Bearish Only (0)</option>
-            <option value="PENDING" id="opt-filter-pending" class="bg-[#111827] text-amber-400 font-semibold">⏳ Pending Approval (0)</option>
-            <option value="NOISE" id="opt-filter-noise" class="bg-[#111827] text-gray-400 font-semibold">🔇 Noise Suppressed (0)</option>
-          </select>
-          <span class="pointer-events-none absolute right-2.5 top-2 text-[10px] text-gray-400">▼</span>
-        </div>
+      <div class="relative flex items-center">
+        <span class="absolute left-2.5 text-xs text-gray-400 pointer-events-none">🎯</span>
+        <select id="feed-filter-select" onchange="setFilter(this.value)" class="bg-[#111827] border border-gray-700/80 hover:border-emerald-500/60 text-xs font-semibold text-gray-200 rounded-lg pl-7 pr-8 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition appearance-none cursor-pointer" title="Filter table signals by conviction verdict or noise">
+          <option value="ALL" id="opt-filter-all">⚡ All Actionable (0)</option>
+          <option value="BULLISH" id="opt-filter-bullish">🟢 Bullish Only (0)</option>
+          <option value="BEARISH" id="opt-filter-bearish">🔴 Bearish Only (0)</option>
+          <option value="PENDING" id="opt-filter-pending">⏳ Pending Approval (0)</option>
+          <option value="NOISE" id="opt-filter-noise">🔇 Noise Suppressed (0)</option>
+        </select>
+        <span class="absolute right-2.5 text-[10px] text-gray-400 pointer-events-none">▼</span>
       </div>
 
       <!-- Scope Indicator Badge -->
@@ -1089,7 +1103,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   <main class="max-w-[1600px] mx-auto w-full px-6 pb-8 flex-1 flex flex-col">
     <div class="bg-[#111827] border border-gray-800 rounded-xl shadow-xl overflow-hidden flex-1 flex flex-col">
       <div class="overflow-x-auto custom-scrollbar flex-1">
-        <table class="w-full text-left border-collapse min-w-[1100px]">
+        <table class="w-full text-left border-collapse min-w-[1100px]" id="feed-table">
           
           <!-- TABLE HEADER -->
           <thead>
@@ -1137,6 +1151,190 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
     </div>
   </main>
+
+  <!-- SLIDE-OUT DETAILS DRAWER (RIGHT OVERLAY) -->
+  <div id="details-drawer-backdrop" onclick="closeDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 opacity-0 pointer-events-none transition-opacity duration-300"></div>
+  <aside id="details-drawer" class="fixed inset-y-0 right-0 w-full sm:w-[540px] bg-[#111827] border-l border-gray-700/80 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
+    <!-- Drawer Header -->
+    <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between bg-[#162032]/80">
+      <div class="flex items-center gap-2.5">
+        <span id="drawer-symbol-badge" class="text-sm font-black px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded tracking-wider">TICKER</span>
+        <span id="drawer-sec-id" class="text-xs font-mono text-cyan-300 bg-cyan-950/80 px-2 py-0.5 border border-cyan-800/60 rounded">#0</span>
+        <span id="drawer-sentiment-badge" class="text-xs font-bold px-2 py-0.5 rounded font-mono">BULLISH</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="copyFilingText()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Copy Announcement Text">📋</button>
+        <button onclick="closeDrawer()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 text-lg font-bold leading-none transition" title="Close Drawer (Esc)">✕</button>
+      </div>
+    </div>
+
+    <!-- Drawer Content (Scrollable) -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
+      
+      <!-- Timing & Freshness Banner -->
+      <div class="bg-[#0e1422] border border-gray-800 rounded-xl p-3 flex items-center justify-between text-xs font-mono">
+        <div>
+          <span class="text-gray-400">Filed Time:</span>
+          <span id="drawer-time" class="text-white font-bold ml-1">--:--:--</span>
+        </div>
+        <div id="drawer-freshness-pill" class="px-2 py-0.5 rounded text-[11px] font-bold">
+          Freshness
+        </div>
+      </div>
+
+      <!-- Financial Metric Tags -->
+      <div>
+        <h4 class="text-[11px] font-bold uppercase text-gray-400 tracking-wider mb-1.5 flex items-center gap-1.5">
+          <span>📊</span>
+          <span>Extracted Financial Metrics</span>
+        </h4>
+        <div id="drawer-metric-badges" class="flex flex-wrap gap-1.5">
+          <span class="text-xs text-gray-500 italic">No structured metrics extracted</span>
+        </div>
+      </div>
+
+      <!-- AI Catalyst Analysis -->
+      <div class="bg-indigo-950/30 border border-indigo-500/30 rounded-xl p-3.5 space-y-2">
+        <div class="flex items-center justify-between border-b border-indigo-500/20 pb-2">
+          <span class="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+            <span>🧠</span>
+            <span id="drawer-catalyst-category">AI CATALYST AUDIT</span>
+          </span>
+          <span id="drawer-confidence-pill" class="text-xs font-mono font-bold text-indigo-200 bg-indigo-500/20 px-2 py-0.5 rounded">95% Conf</span>
+        </div>
+        <p id="drawer-summary" class="text-xs text-gray-200 leading-relaxed font-sans">
+          Summary
+        </p>
+      </div>
+
+      <!-- Complete Filing Text -->
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <h4 class="text-[11px] font-bold uppercase text-gray-400 tracking-wider flex items-center gap-1.5">
+            <span>📄</span>
+            <span>Raw Exchange Announcement</span>
+          </h4>
+          <span id="drawer-seq-id" class="text-[10px] text-gray-500 font-mono">Seq ID: --</span>
+        </div>
+        <div class="bg-[#0b0f19] border border-gray-800 rounded-xl p-3.5">
+          <p id="drawer-raw-text" class="text-gray-300 font-mono text-xs whitespace-pre-wrap leading-relaxed max-h-[280px] overflow-y-auto custom-scrollbar select-text">
+            Text
+          </p>
+        </div>
+      </div>
+
+      <!-- Bracket Pricing Matrix -->
+      <div class="bg-[#131b2e] border border-gray-800 rounded-xl p-3.5 space-y-2">
+        <h4 class="text-[11px] font-bold uppercase text-gray-400 tracking-wider flex items-center gap-1.5">
+          <span>🎯</span>
+          <span>Super Order Execution Matrix</span>
+        </h4>
+        <div class="grid grid-cols-3 gap-2 font-mono text-center">
+          <div class="bg-[#0b0f19] p-2 rounded-lg border border-gray-800">
+            <div class="text-[10px] text-gray-400">ENTRY LIMIT</div>
+            <div id="drawer-entry-price" class="text-xs font-bold text-white mt-0.5">₹0.00</div>
+          </div>
+          <div class="bg-[#0b0f19] p-2 rounded-lg border border-emerald-500/20">
+            <div class="text-[10px] text-emerald-400">TARGET (3%)</div>
+            <div id="drawer-target-price" class="text-xs font-bold text-emerald-400 mt-0.5">₹0.00</div>
+          </div>
+          <div class="bg-[#0b0f19] p-2 rounded-lg border border-rose-500/20">
+            <div class="text-[10px] text-rose-400">STOP LOSS (1%)</div>
+            <div id="drawer-sl-price" class="text-xs font-bold text-rose-400 mt-0.5">₹0.00</div>
+          </div>
+        </div>
+        <div class="text-[10px] text-gray-500 font-mono flex items-center justify-between pt-1">
+          <span id="drawer-qty-info">Position: -- sh</span>
+          <span>Trailing Jump: 5.0 pts</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Drawer Footer Actions -->
+    <div id="drawer-footer" class="p-4 border-t border-gray-800 bg-[#162032]/90 flex items-center justify-between gap-3">
+      <button onclick="closeDrawer()" class="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">Close</button>
+      <div id="drawer-action-btn-container" class="flex-1 flex justify-end">
+        <!-- Dynamic Action Button -->
+      </div>
+    </div>
+  </aside>
+
+  <!-- SAFETY EMERGENCY SQUARE-OFF MODAL -->
+  <div id="squareoff-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+    <div class="bg-[#111827] border border-rose-600/70 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 transform scale-95 transition-all duration-300 ring-2 ring-rose-500/30" id="squareoff-modal-card">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 font-black text-xl">
+          🛑
+        </div>
+        <div>
+          <h3 class="text-sm font-bold text-white uppercase tracking-wider">Confirm Emergency Square-Off</h3>
+          <p class="text-[11px] text-rose-300 mt-0.5">Flatten all active intraday positions immediately</p>
+        </div>
+      </div>
+      <p class="text-xs text-gray-300 leading-relaxed bg-[#0b0f19] border border-rose-900/50 p-3 rounded-xl">
+        This action will <b>immediately cancel all pending limit orders</b> and <b>market-close all open Dhan trading positions</b>. This cannot be undone.
+      </p>
+      <div class="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-800">
+        <button onclick="closeSquareOffModal()" class="px-4 py-2 text-xs font-semibold text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition">
+          Cancel (Esc)
+        </button>
+        <button onclick="executeConfirmedSquareOff()" id="btn-confirm-squareoff" class="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition shadow-lg shadow-rose-600/40 active:scale-95 flex items-center gap-1.5">
+          <span>🛑 Yes, Square-Off All</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KEYBOARD SHORTCUTS MODAL -->
+  <div id="hotkeys-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+    <div class="bg-[#111827] border border-gray-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 transform scale-95 transition-all duration-300" id="hotkeys-modal-card">
+      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+        <div class="flex items-center gap-2.5">
+          <span class="text-lg">⌨️</span>
+          <h3 class="text-sm font-bold text-white uppercase tracking-wider">Keyboard Hotkeys Cheat Sheet</h3>
+        </div>
+        <button onclick="closeHotkeysModal()" class="text-gray-400 hover:text-white text-lg font-bold p-1 rounded-lg hover:bg-gray-800 transition">✕</button>
+      </div>
+      <div class="grid grid-cols-2 gap-2.5 text-xs">
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Navigate Feed Down</span>
+          <kbd class="px-2 py-0.5 bg-gray-800 text-emerald-400 border border-gray-700 rounded font-mono font-bold">J</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Navigate Feed Up</span>
+          <kbd class="px-2 py-0.5 bg-gray-800 text-emerald-400 border border-gray-700 rounded font-mono font-bold">K</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Open Details Drawer</span>
+          <kbd class="px-2 py-0.5 bg-gray-800 text-white border border-gray-700 rounded font-mono font-bold">Enter / Space</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Approve Buy Order</span>
+          <kbd class="px-2 py-0.5 bg-emerald-950 text-emerald-300 border border-emerald-800 rounded font-mono font-bold">A or B</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Approve Short Sell</span>
+          <kbd class="px-2 py-0.5 bg-rose-950 text-rose-300 border border-rose-800 rounded font-mono font-bold">S</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Emergency Square-Off</span>
+          <kbd class="px-2 py-0.5 bg-rose-900 text-white border border-rose-600 rounded font-mono font-bold">Shift + Q</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Toggle Mute Audio</span>
+          <kbd class="px-2 py-0.5 bg-gray-800 text-gray-300 border border-gray-700 rounded font-mono font-bold">M</kbd>
+        </div>
+        <div class="bg-[#0b0f19] p-2.5 rounded-lg border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-300">Close Modals / Drawer</span>
+          <kbd class="px-2 py-0.5 bg-gray-800 text-gray-300 border border-gray-700 rounded font-mono font-bold">Esc</kbd>
+        </div>
+      </div>
+      <div class="flex justify-end pt-2 border-t border-gray-800">
+        <button onclick="closeHotkeysModal()" class="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition">Got It</button>
+      </div>
+    </div>
+  </div>
 
   <!-- DHAN LOGIN & AUTHENTICATION MODAL / SCREEN -->
   <div id="token-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
@@ -1227,6 +1425,251 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     let feedItems = [];
     let currentFilter = 'ALL';
     let expandedRows = new Set();
+    let selectedRowIndex = -1;
+    let activeDrawerItem = null;
+
+    // --- WEB AUDIO API SYNTHESIZER ---
+    class WebAudioSynth {
+      constructor() {
+        this.ctx = null;
+        this.enabled = localStorage.getItem('sound_enabled') !== 'false';
+      }
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+      playTone(freq, type, duration, gainVal = 0.15) {
+        if (!this.enabled) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+          gain.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start();
+          osc.stop(this.ctx.currentTime + duration);
+        } catch(e) {}
+      }
+      playBullishChime() {
+        if (!this.enabled) return;
+        this.playTone(523.25, 'triangle', 0.15, 0.2); // C5
+        setTimeout(() => this.playTone(659.25, 'triangle', 0.2, 0.25), 100); // E5
+        setTimeout(() => this.playTone(783.99, 'triangle', 0.35, 0.3), 200); // G5
+      }
+      playBearishChime() {
+        if (!this.enabled) return;
+        this.playTone(587.33, 'sawtooth', 0.15, 0.15); // D5
+        setTimeout(() => this.playTone(493.88, 'sawtooth', 0.2, 0.2), 100); // B4
+        setTimeout(() => this.playTone(415.30, 'sawtooth', 0.35, 0.25), 200); // G#4
+      }
+      playWarningChime() {
+        if (!this.enabled) return;
+        this.playTone(440, 'square', 0.15, 0.1);
+        setTimeout(() => this.playTone(440, 'square', 0.2, 0.15), 150);
+      }
+      playOrderChime() {
+        if (!this.enabled) return;
+        this.playTone(587.33, 'sine', 0.12, 0.2);
+        setTimeout(() => this.playTone(880, 'sine', 0.25, 0.25), 80);
+      }
+    }
+    const synth = new WebAudioSynth();
+
+    function updateSoundUI() {
+      const btn = document.getElementById('sound-toggle-btn');
+      const icon = document.getElementById('sound-icon');
+      const label = document.getElementById('sound-label');
+      if (!btn) return;
+      if (synth.enabled) {
+        btn.className = 'bg-emerald-950/60 hover:bg-emerald-900/60 active:scale-95 text-emerald-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-emerald-500/50 flex items-center gap-1.5 shadow-sm';
+        if (icon) icon.textContent = '🔊';
+        if (label) label.textContent = 'Audio ON';
+      } else {
+        btn.className = 'bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-400 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1.5 shadow';
+        if (icon) icon.textContent = '🔇';
+        if (label) label.textContent = 'Muted';
+      }
+    }
+
+    function toggleAudioSound() {
+      synth.init();
+      synth.enabled = !synth.enabled;
+      localStorage.setItem('sound_enabled', synth.enabled ? 'true' : 'false');
+      updateSoundUI();
+      if (synth.enabled) {
+        synth.playBullishChime();
+        showToast('🔊 Synthesized audio chimes enabled', '🔔');
+      } else {
+        showToast('🔇 Audio chimes muted', '🔕');
+      }
+    }
+
+    // --- DESKTOP NOTIFICATIONS & TAB BLINKER ---
+    function initDesktopNotifications() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+
+    function sendDesktopNotification(title, body) {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(title, { body: body });
+        } catch(e) {}
+      }
+    }
+
+    let originalDocTitle = document.title;
+    let blinkInterval = null;
+    function triggerTabAlert(symbol, sentiment) {
+      if (document.hasFocus()) return;
+      if (blinkInterval) clearInterval(blinkInterval);
+      let state = false;
+      let count = 0;
+      blinkInterval = setInterval(() => {
+        count++;
+        document.title = state ? `🚨 [${sentiment}] ${symbol} CATALYST!` : originalDocTitle;
+        state = !state;
+        if (count > 24 || document.hasFocus()) {
+          clearInterval(blinkInterval);
+          blinkInterval = null;
+          document.title = originalDocTitle;
+        }
+      }, 750);
+    }
+    window.addEventListener('focus', () => {
+      if (blinkInterval) {
+        clearInterval(blinkInterval);
+        blinkInterval = null;
+        document.title = originalDocTitle;
+      }
+    });
+
+    // --- FINANCIAL METRICS REGEX EXTRACTOR ---
+    function extractFinancialMetrics(text) {
+      if (!text) return [];
+      const metrics = [];
+      const inrMatches = text.match(/(?:Rs\.?|₹|INR)\s*[\d,]+(?:\.\d+)?\s*(?:Cr(?:ore)?|Lakh|mn|bn)?/gi);
+      if (inrMatches) inrMatches.forEach(m => metrics.push({ type: 'currency', value: m.trim() }));
+      const usdMatches = text.match(/\$\s*[\d,]+(?:\.\d+)?\s*(?:million|billion|M|B|mn|bn)?/gi);
+      if (usdMatches) usdMatches.forEach(m => metrics.push({ type: 'currency', value: m.trim() }));
+      const pctMatches = text.match(/[+-]?\d+(?:\.\d+)?%/g);
+      if (pctMatches) pctMatches.forEach(m => metrics.push({ type: 'percent', value: m.trim() }));
+      const keywords = ['USFDA', 'FDA Approval', 'EIR', 'Bonus Issue', 'Dividend', 'Contract Win', 'Order Win', 'Acquisition', 'Demerger', 'Patent Granted'];
+      keywords.forEach(kw => {
+        if (new RegExp('\\b' + kw + '\\b', 'i').test(text)) {
+          metrics.push({ type: 'keyword', value: kw });
+        }
+      });
+      const seen = new Set();
+      return metrics.filter(item => {
+        const key = item.value.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 5);
+    }
+
+    // --- 180s FRESHNESS ENGINE ---
+    function getFreshnessState(anDt) {
+      if (!anDt) return { isStale: false, ageSec: 0, text: 'FRESH', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', remainingSec: 180 };
+      try {
+        let parsed = null;
+        if (anDt.includes(' ')) {
+          const parts = anDt.split(' ');
+          const dateParts = parts[0].split('-');
+          const timeParts = parts[1].split(':');
+          if (dateParts.length === 3 && timeParts.length >= 2) {
+            const y = parseInt(dateParts[0]), m = parseInt(dateParts[1]) - 1, d = parseInt(dateParts[2]);
+            const hr = parseInt(timeParts[0]), min = parseInt(timeParts[1]), sec = parseInt(timeParts[2] || 0);
+            parsed = new Date(y, m, d, hr, min, sec);
+          }
+        }
+        if (!parsed || isNaN(parsed.getTime())) {
+          parsed = new Date(anDt);
+        }
+        if (isNaN(parsed.getTime())) {
+          return { isStale: false, ageSec: 0, text: 'FRESH', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', remainingSec: 180 };
+        }
+        const now = new Date();
+        const ageSec = Math.max(0, Math.floor((now.getTime() - parsed.getTime()) / 1000));
+        const remainingSec = Math.max(0, 180 - ageSec);
+        const isStale = ageSec > 180;
+        let text = '';
+        let badgeClass = '';
+        if (isStale) {
+          text = `⏱️ Stale (+${ageSec}s)`;
+          badgeClass = 'bg-gray-800 text-gray-500 border-gray-700';
+        } else if (remainingSec >= 120) {
+          text = `⚡ ${remainingSec}s left`;
+          badgeClass = 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 shadow-sm';
+        } else if (remainingSec >= 45) {
+          text = `⏳ ${remainingSec}s left`;
+          badgeClass = 'bg-amber-950/80 text-amber-300 border-amber-500/50 shadow-sm';
+        } else {
+          text = `🔥 ${remainingSec}s left`;
+          badgeClass = 'bg-rose-950/80 text-rose-300 border-rose-500/50 shadow-sm animate-pulse';
+        }
+        return { isStale, ageSec, remainingSec, text, badgeClass };
+      } catch (e) {
+        return { isStale: false, ageSec: 0, text: 'FRESH', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', remainingSec: 180 };
+      }
+    }
+
+    function updateCountdowns() {
+      const badges = document.querySelectorAll('.timer-badge');
+      badges.forEach(badge => {
+        const anDt = badge.getAttribute('data-andt');
+        const fresh = getFreshnessState(anDt);
+        badge.textContent = fresh.text;
+        badge.className = `timer-badge px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors ${fresh.badgeClass}`;
+      });
+
+      // Update drawer freshness pill if drawer is currently open
+      if (activeDrawerItem) {
+        const drawerPill = document.getElementById('drawer-freshness-pill');
+        if (drawerPill) {
+          const fresh = getFreshnessState(activeDrawerItem.an_dt);
+          drawerPill.textContent = fresh.text;
+          drawerPill.className = `px-2 py-0.5 rounded text-[11px] font-bold border ${fresh.badgeClass}`;
+        }
+      }
+    }
+
+    // --- RISK BUDGET GAUGE ---
+    function updateRiskBudgetGauge(placedCount) {
+      const maxOrders = 3;
+      const dotsEl = document.getElementById('risk-gauge-dots');
+      const textEl = document.getElementById('risk-gauge-text');
+      if (!dotsEl || !textEl) return;
+      const count = Math.min(placedCount, maxOrders);
+      let dots = '';
+      for (let i = 0; i < maxOrders; i++) {
+        dots += (i < count) ? '■ ' : '□ ';
+      }
+      dotsEl.textContent = `[${dots.trim()}]`;
+      textEl.textContent = `${count}/${maxOrders} Orders`;
+      if (count >= maxOrders) {
+        dotsEl.className = 'text-rose-400 font-bold text-xs tracking-wider';
+        textEl.className = 'text-rose-300 text-[11px] font-bold';
+      } else if (count > 0) {
+        dotsEl.className = 'text-amber-400 font-bold text-xs tracking-wider';
+        textEl.className = 'text-amber-300 text-[11px] font-bold';
+      } else {
+        dotsEl.className = 'text-emerald-400 font-bold text-xs tracking-wider';
+        textEl.className = 'text-gray-300 text-[11px] font-bold';
+      }
+    }
 
     function showToast(msg, icon = '✅') {
       const toast = document.getElementById('toast');
@@ -1239,6 +1682,287 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         toast.classList.remove('opacity-100', 'translate-y-0');
       }, 3500);
     }
+
+    // --- MODALS CONTROLLER ---
+    function openHotkeysModal() {
+      const modal = document.getElementById('hotkeys-modal');
+      const card = document.getElementById('hotkeys-modal-card');
+      if (!modal || !card) return;
+      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.classList.add('opacity-100');
+      card.classList.remove('scale-95');
+      card.classList.add('scale-100');
+    }
+
+    function closeHotkeysModal() {
+      const modal = document.getElementById('hotkeys-modal');
+      const card = document.getElementById('hotkeys-modal-card');
+      if (!modal || !card) return;
+      modal.classList.add('opacity-0', 'pointer-events-none');
+      modal.classList.remove('opacity-100');
+      card.classList.add('scale-95');
+      card.classList.remove('scale-100');
+    }
+
+    function openSquareOffModal() {
+      const modal = document.getElementById('squareoff-modal');
+      const card = document.getElementById('squareoff-modal-card');
+      if (!modal || !card) return;
+      synth.playWarningChime();
+      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.classList.add('opacity-100');
+      card.classList.remove('scale-95');
+      card.classList.add('scale-100');
+    }
+
+    function closeSquareOffModal() {
+      const modal = document.getElementById('squareoff-modal');
+      const card = document.getElementById('squareoff-modal-card');
+      if (!modal || !card) return;
+      modal.classList.add('opacity-0', 'pointer-events-none');
+      modal.classList.remove('opacity-100');
+      card.classList.add('scale-95');
+      card.classList.remove('scale-100');
+    }
+
+    async function executeConfirmedSquareOff() {
+      closeSquareOffModal();
+      const btn = document.getElementById('square-off-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-50');
+      }
+      showToast('Initiating intraday square-off sequence...', '🛑');
+      try {
+        const res = await fetch('/api/trades/square-off', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
+          const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
+          showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
+          fetchFeed();
+        } else {
+          const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
+          showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+        }
+      } catch (err) {
+        showToast('Failed to trigger square-off request', '❌');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-50');
+        }
+      }
+    }
+
+    function confirmEmergencySquareOff() {
+      openSquareOffModal();
+    }
+
+    // --- DETAILS DRAWER CONTROLLER ---
+    function openDrawer(seqId) {
+      const item = feedItems.find(i => i.seq_id === seqId);
+      if (!item) return;
+      activeDrawerItem = item;
+      
+      const drawer = document.getElementById('details-drawer');
+      const backdrop = document.getElementById('details-drawer-backdrop');
+      if (!drawer || !backdrop) return;
+      
+      document.getElementById('drawer-symbol-badge').textContent = item.symbol;
+      document.getElementById('drawer-sec-id').textContent = item.security_id && item.security_id !== '0' ? `#${item.security_id}` : '#0';
+      
+      const sentimentBadge = document.getElementById('drawer-sentiment-badge');
+      const isBullish = item.sentiment === 'BULLISH';
+      const isBearish = item.sentiment === 'BEARISH';
+      const isNoise = !!item.is_noise;
+      const isMarketClosed = item.sentiment === 'MARKET_CLOSED';
+      
+      if (isMarketClosed) {
+        sentimentBadge.textContent = '🌙 MARKET CLOSED';
+        sentimentBadge.className = 'text-xs font-bold px-2 py-0.5 rounded font-mono bg-amber-950/70 text-amber-300 border border-amber-800/60';
+      } else if (isNoise) {
+        sentimentBadge.textContent = '🔇 NOISE';
+        sentimentBadge.className = 'text-xs font-bold px-2 py-0.5 rounded font-mono bg-gray-800 text-gray-400 border border-gray-700';
+      } else if (isBullish) {
+        sentimentBadge.textContent = `🟢 BULLISH (${item.confidence}%)`;
+        sentimentBadge.className = 'text-xs font-bold px-2 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+      } else {
+        sentimentBadge.textContent = `🔴 BEARISH (${item.confidence}%)`;
+        sentimentBadge.className = 'text-xs font-bold px-2 py-0.5 rounded font-mono bg-rose-500/20 text-rose-300 border border-rose-500/40';
+      }
+      
+      document.getElementById('drawer-time').textContent = item.an_dt || item.timestamp || '--:--:--';
+      const fresh = getFreshnessState(item.an_dt);
+      const freshnessPill = document.getElementById('drawer-freshness-pill');
+      freshnessPill.textContent = fresh.text;
+      freshnessPill.className = `px-2 py-0.5 rounded text-[11px] font-bold border ${fresh.badgeClass}`;
+      
+      // Extracted metrics
+      const metricsContainer = document.getElementById('drawer-metric-badges');
+      const metrics = extractFinancialMetrics(`${item.desc} ${item.details || ''}`);
+      if (metrics.length > 0) {
+        metricsContainer.innerHTML = metrics.map(m => {
+          if (m.type === 'currency') {
+            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 rounded-lg shadow-sm">💰 ${m.value}</span>`;
+          } else if (m.type === 'percent') {
+            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 rounded-lg shadow-sm">📈 ${m.value}</span>`;
+          } else {
+            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-700/60 rounded-lg shadow-sm">🏆 ${m.value}</span>`;
+          }
+        }).join('');
+      } else {
+        metricsContainer.innerHTML = `<span class="text-xs text-gray-500 italic">No structured numerical metrics found</span>`;
+      }
+      
+      document.getElementById('drawer-catalyst-category').textContent = (item.catalyst_type || 'GENERAL').toUpperCase();
+      document.getElementById('drawer-confidence-pill').textContent = `${item.confidence || 0}% Conf`;
+      document.getElementById('drawer-summary').textContent = item.summary || item.filter_reason || 'No summary available.';
+      
+      document.getElementById('drawer-seq-id').textContent = `Seq ID: ${item.seq_id}`;
+      document.getElementById('drawer-raw-text').textContent = item.details || item.desc || 'No announcement details.';
+      
+      const order = item.order || {};
+      document.getElementById('drawer-entry-price').textContent = `₹${order.entry_price ? order.entry_price.toFixed(2) : (order.ltp ? order.ltp.toFixed(2) : '0.00')}`;
+      document.getElementById('drawer-target-price').textContent = `₹${order.target_price ? order.target_price.toFixed(2) : '0.00'}`;
+      document.getElementById('drawer-sl-price').textContent = `₹${order.stop_loss_price ? order.stop_loss_price.toFixed(2) : '0.00'}`;
+      document.getElementById('drawer-qty-info').textContent = `Position: ${order.quantity || 0} sh`;
+      
+      // Footer Action Button
+      const btnContainer = document.getElementById('drawer-action-btn-container');
+      if (isNoise || isMarketClosed) {
+        btnContainer.innerHTML = `<span class="text-xs font-mono text-gray-500 italic">${item.filter_reason || 'Not Actionable'}</span>`;
+      } else if (order.placed) {
+        btnContainer.innerHTML = `
+          <span class="px-3 py-1.5 text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-lg flex items-center gap-1.5 shadow-sm">
+            <span>✅</span> Order Placed (${order.order_id || 'SIMULATED'})
+          </span>
+        `;
+      } else if (order.status === 'PENDING_APPROVAL') {
+        if (item.is_stale) {
+          btnContainer.innerHTML = `
+            <button disabled class="bg-gray-800 text-gray-500 font-bold text-xs px-4 py-2 rounded-lg border border-gray-700 cursor-not-allowed flex items-center gap-1.5 opacity-60">
+              <span>⏱️ Window Expired (>180s)</span>
+            </button>
+          `;
+        } else {
+          const act = isBullish ? 'BUY' : 'SELL';
+          const btnBg = isBullish ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/40 border-emerald-400/40' : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/40 border-rose-400/40';
+          const label = isBullish ? '🚀 Approve Buy Order [A]' : '🔻 Approve Short Sell [S]';
+          btnContainer.innerHTML = `
+            <button onclick="placeOrder('${item.seq_id}', '${item.symbol}', '${act}', ${order.ltp || 300.0}, ${item.confidence}, '${item.catalyst_type}'); closeDrawer();" class="${btnBg} text-white font-bold text-xs px-4 py-2 rounded-lg transition shadow-lg active:scale-95 flex items-center gap-1.5 border">
+              <span>${label}</span>
+            </button>
+          `;
+        }
+      } else {
+        btnContainer.innerHTML = `<span class="text-xs font-mono text-gray-500">Status: ${order.status || 'SKIPPED'}</span>`;
+      }
+      
+      drawer.classList.remove('translate-x-full');
+      backdrop.classList.remove('opacity-0', 'pointer-events-none');
+      backdrop.classList.add('opacity-100');
+    }
+
+    function closeDrawer() {
+      const drawer = document.getElementById('details-drawer');
+      const backdrop = document.getElementById('details-drawer-backdrop');
+      if (drawer) drawer.classList.add('translate-x-full');
+      if (backdrop) {
+        backdrop.classList.remove('opacity-100');
+        backdrop.classList.add('opacity-0', 'pointer-events-none');
+      }
+      activeDrawerItem = null;
+    }
+
+    function copyFilingText() {
+      if (activeDrawerItem) {
+        const text = `${activeDrawerItem.symbol} [${activeDrawerItem.an_dt || ''}]\n${activeDrawerItem.desc}\n\n${activeDrawerItem.details || ''}`;
+        navigator.clipboard.writeText(text).then(() => {
+          showToast('📋 Copied announcement to clipboard!', '📋');
+        }).catch(() => {
+          showToast('Failed copying to clipboard', '❌');
+        });
+      }
+    }
+
+    // --- KEYBOARD HOTKEYS EVENT LISTENER ---
+    function updateRowSelection() {
+      const rows = document.querySelectorAll('#table-body tr.feed-row');
+      rows.forEach((r, idx) => {
+        if (idx === selectedRowIndex) {
+          r.classList.add('ring-2', 'ring-emerald-400', 'bg-[#1e293b]');
+          r.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          r.classList.remove('ring-2', 'ring-emerald-400', 'bg-[#1e293b]');
+        }
+      });
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+      const key = e.key.toUpperCase();
+      const isShift = e.shiftKey;
+      
+      if (key === 'ESCAPE') {
+        closeDrawer();
+        closeHotkeysModal();
+        closeSquareOffModal();
+        closeTokenModal();
+        return;
+      }
+      if (key === '?' || (e.key === '?' && isShift)) {
+        openHotkeysModal();
+        return;
+      }
+      if (key === 'Q' && isShift) {
+        confirmEmergencySquareOff();
+        return;
+      }
+      if (key === 'M') {
+        toggleAudioSound();
+        return;
+      }
+      
+      const rows = document.querySelectorAll('#table-body tr.feed-row');
+      if (rows.length === 0) return;
+      
+      if (key === 'J' || e.key === 'ArrowDown') {
+        selectedRowIndex = Math.min(rows.length - 1, selectedRowIndex + 1);
+        updateRowSelection();
+        e.preventDefault();
+      } else if (key === 'K' || e.key === 'ArrowUp') {
+        selectedRowIndex = Math.max(0, selectedRowIndex - 1);
+        updateRowSelection();
+        e.preventDefault();
+      } else if (key === 'ENTER' || e.key === ' ') {
+        if (selectedRowIndex >= 0 && selectedRowIndex < rows.length) {
+          const seqId = rows[selectedRowIndex].getAttribute('data-seq-id');
+          if (seqId) openDrawer(seqId);
+          e.preventDefault();
+        }
+      } else if (key === 'A' || key === 'B') {
+        if (selectedRowIndex >= 0 && selectedRowIndex < rows.length) {
+          const seqId = rows[selectedRowIndex].getAttribute('data-seq-id');
+          const item = feedItems.find(i => i.seq_id === seqId);
+          if (item && item.order && item.order.status === 'PENDING_APPROVAL' && !item.is_stale) {
+            placeOrder(item.seq_id, item.symbol, 'BUY', item.order.ltp || 300.0, item.confidence, item.catalyst_type);
+            synth.playOrderChime();
+            e.preventDefault();
+          }
+        }
+      } else if (key === 'S') {
+        if (selectedRowIndex >= 0 && selectedRowIndex < rows.length) {
+          const seqId = rows[selectedRowIndex].getAttribute('data-seq-id');
+          const item = feedItems.find(i => i.seq_id === seqId);
+          if (item && item.order && item.order.status === 'PENDING_APPROVAL' && !item.is_stale) {
+            placeOrder(item.seq_id, item.symbol, 'SELL', item.order.ltp || 300.0, item.confidence, item.catalyst_type);
+            synth.playOrderChime();
+            e.preventDefault();
+          }
+        }
+      }
+    });
 
     async function launchDhanOAuth() {
       const feedback = document.getElementById('modal-feedback');
@@ -1276,7 +2000,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (dropdown) dropdown.classList.toggle('hidden');
     }
 
-    // Close user menu on outside click
     document.addEventListener('click', function(e) {
       const container = document.getElementById('user-account-container');
       const dropdown = document.getElementById('user-menu-dropdown');
@@ -1331,10 +2054,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           const menuClientId = document.getElementById('menu-client-id');
           const menuExpiry = document.getElementById('menu-expiry-info');
           const sessionAlert = document.getElementById('login-session-alert');
-          const feedback = document.getElementById('modal-feedback');
 
           if (data.authenticated) {
-            // USER IS LOGGED IN
             if (headerLoginBtn) headerLoginBtn.classList.add('hidden');
             if (userProfileWidget) userProfileWidget.classList.remove('hidden');
             if (userClientIdLabel) userClientIdLabel.textContent = data.client_id ? `DHAN ${data.client_id}` : 'DHAN USER';
@@ -1364,7 +2085,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               sessionAlert.className = 'hidden';
             }
           } else if (data.is_expired) {
-            // TOKEN EXPIRED
             const expText = data.expiry_message || 'Token Expired';
             if (headerLoginBtn) headerLoginBtn.classList.remove('hidden');
             if (userProfileWidget) userProfileWidget.classList.add('hidden');
@@ -1397,7 +2117,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               }
             }
           } else {
-            // NOT CONFIGURED / LOGGED OUT
             if (headerLoginBtn) headerLoginBtn.classList.remove('hidden');
             if (userProfileWidget) userProfileWidget.classList.add('hidden');
             if (badge) {
@@ -1537,7 +2256,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     async function toggleExecutionMode() {
       const targetDryRun = !isDryRun;
 
-      // Safety check: Don't allow live mode if token is not configured or expired
       if (!targetDryRun) {
         try {
           const res = await fetch('/api/settings/token');
@@ -1600,15 +2318,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
         const istDate = new Date(utc + istOffset);
         
-        const day = istDate.getDay(); // 0 = Sun, 6 = Sat
+        const day = istDate.getDay();
         if (day === 0 || day === 6) {
           return false;
         }
         const hour = istDate.getHours();
         const min = istDate.getMinutes();
         const totalMinutes = hour * 60 + min;
-        const marketOpenMinutes = 9 * 60 + 15; // 09:15 IST
-        const marketCloseMinutes = 15 * 60 + 30; // 15:30 IST
+        const marketOpenMinutes = 9 * 60 + 15;
+        const marketCloseMinutes = 15 * 60 + 30;
         return totalMinutes >= marketOpenMinutes && totalMinutes <= marketCloseMinutes;
       } catch (e) {
         return false;
@@ -1739,19 +2457,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (select && select.value !== currentFilter) {
         select.value = currentFilter;
       }
+      selectedRowIndex = -1;
       renderFeed();
     }
 
     function toggleRowDetails(seqId) {
-      if (expandedRows.has(seqId)) {
-        expandedRows.delete(seqId);
-      } else {
-        expandedRows.add(seqId);
-      }
-      renderFeed();
+      openDrawer(seqId);
     }
 
-    let currentScope = 'TODAY'; // 'TODAY' or 'ALL_HISTORY'
+    let currentScope = 'TODAY';
 
     function updateScopeUI(isTodayOnly) {
       currentScope = isTodayOnly ? 'TODAY' : 'ALL_HISTORY';
@@ -1791,6 +2505,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         if (res.ok) {
           feedItems = [];
           expandedRows.clear();
+          selectedRowIndex = -1;
           renderFeed();
           showToast('🧹 Display cleared! All signals & orders remain safely stored in DB for audit.', '✅');
         } else {
@@ -1880,6 +2595,17 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       document.getElementById('stat-placed').textContent = totalPlaced;
       document.getElementById('stat-pending').textContent = totalPending;
 
+      // Update Pill Count Badges
+      if (document.getElementById('badge-count-all')) document.getElementById('badge-count-all').textContent = totalPassed;
+      if (document.getElementById('badge-count-bullish')) document.getElementById('badge-count-bullish').textContent = totalBullish;
+      if (document.getElementById('badge-count-bearish')) document.getElementById('badge-count-bearish').textContent = totalBearish;
+      if (document.getElementById('badge-count-pending')) document.getElementById('badge-count-pending').textContent = totalPending;
+      if (document.getElementById('badge-count-noise')) document.getElementById('badge-count-noise').textContent = totalNoise;
+
+      // Update Risk Budget Gauge
+      updateRiskBudgetGauge(totalPlaced);
+
+      // Keep hidden select options matching tests
       if (document.getElementById('opt-filter-all')) {
         document.getElementById('opt-filter-all').textContent = `⚡ All Passed (${totalPassed})`;
       }
@@ -1924,15 +2650,37 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
       emptyState.style.display = 'none';
 
-      tbody.innerHTML = filtered.map(item => createTableRowHTML(item)).join('');
+      tbody.innerHTML = filtered.map((item, idx) => createTableRowHTML(item, idx)).join('');
+      updateRowSelection();
+      updateCountdowns();
     }
 
-    function createTableRowHTML(item) {
+    function createTableRowHTML(item, idx) {
       const isBullish = item.sentiment === 'BULLISH';
       const isNoise = !!item.is_noise;
       const isMarketClosed = item.sentiment === 'MARKET_CLOSED' || (item.filter_reason && (item.filter_reason.toLowerCase().includes('market closed') || item.filter_reason.toLowerCase().includes('trade cutoff') || item.filter_reason.toLowerCase().includes('market is not open')));
       const order = item.order || {};
-      const isExpanded = expandedRows.has(item.seq_id);
+
+      // Directional Border Accent Class
+      let borderAccentClass = 'border-l-4 border-l-emerald-500';
+      if (isMarketClosed) borderAccentClass = 'border-l-4 border-l-amber-500';
+      else if (isNoise) borderAccentClass = 'border-l-4 border-l-gray-600';
+      else if (!isBullish) borderAccentClass = 'border-l-4 border-l-rose-500';
+
+      // Extracted inline metric badges (up to 2)
+      const metrics = extractFinancialMetrics(`${item.desc} ${item.details || ''}`).slice(0, 2);
+      const metricsHTML = metrics.map(m => {
+        if (m.type === 'currency') {
+          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 rounded">💰 ${m.value}</span>`;
+        } else if (m.type === 'percent') {
+          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 rounded">📈 ${m.value}</span>`;
+        } else {
+          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 rounded">🏆 ${m.value}</span>`;
+        }
+      }).join(' ');
+
+      // Freshness state calculation
+      const fresh = getFreshnessState(item.an_dt);
 
       // LLM Verdict Badge
       let verdictHTML = '';
@@ -2067,15 +2815,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                   <span>⏱️</span>
                   <span>Stale (>180s)</span>
                 </button>
-                <span class="text-[10px] text-amber-500/80 font-mono">⚠️ Order Window Expired</span>
+                <span class="text-[10px] text-amber-500/80 font-mono">⚠️ Window Expired</span>
               </div>
             `;
           } else {
             actionHTML = `
               <div class="flex flex-col items-center gap-1.5">
-                <button onclick="placeOrder('${item.seq_id}', '${item.symbol}', 'BUY', ${order.ltp || 300.0}, ${item.confidence}, '${item.catalyst_type}')" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition shadow-lg shadow-emerald-600/30 border border-emerald-400/40 flex items-center gap-1.5">
+                <button onclick="event.stopPropagation(); placeOrder('${item.seq_id}', '${item.symbol}', 'BUY', ${order.ltp || 300.0}, ${item.confidence}, '${item.catalyst_type}')" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition shadow-lg shadow-emerald-600/30 border border-emerald-400/40 flex items-center gap-1.5">
                   <span>🚀</span>
-                  <span>Place Order</span>
+                  <span>Approve Buy [A]</span>
                 </button>
                 <span class="text-[10px] text-amber-400 font-mono animate-pulse">⏳ Awaiting Approval</span>
               </div>
@@ -2121,15 +2869,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                   <span>⏱️</span>
                   <span>Stale (>180s)</span>
                 </button>
-                <span class="text-[10px] text-amber-500/80 font-mono">⚠️ Order Window Expired</span>
+                <span class="text-[10px] text-amber-500/80 font-mono">⚠️ Window Expired</span>
               </div>
             `;
           } else {
             actionHTML = `
               <div class="flex flex-col items-center gap-1.5">
-                <button onclick="placeOrder('${item.seq_id}', '${item.symbol}', 'SELL', ${order.ltp || 300.0}, ${item.confidence}, '${item.catalyst_type}')" class="bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition shadow-lg shadow-rose-600/30 border border-rose-400/40 flex items-center gap-1.5">
+                <button onclick="event.stopPropagation(); placeOrder('${item.seq_id}', '${item.symbol}', 'SELL', ${order.ltp || 300.0}, ${item.confidence}, '${item.catalyst_type}')" class="bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition shadow-lg shadow-rose-600/30 border border-rose-400/40 flex items-center gap-1.5">
                   <span>🔻</span>
-                  <span>Short Sell</span>
+                  <span>Short Sell [S]</span>
                 </button>
                 <span class="text-[10px] text-amber-400 font-mono animate-pulse">⏳ Awaiting Approval</span>
               </div>
@@ -2155,9 +2903,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         }
       }
 
-      // Main Row & Expandable Drawer
+      // Main Row with Directional Accent & Drawer Trigger
       return `
-        <tr class="transition-colors border-b border-gray-800/80 ${isNoise ? 'opacity-70 hover:opacity-100 bg-[#0d1322]' : ''}">
+        <tr onclick="openDrawer('${item.seq_id}')" data-seq-id="${item.seq_id}" class="feed-row ${borderAccentClass} cursor-pointer select-none transition-colors border-b border-gray-800/80 ${isNoise ? 'opacity-75 hover:opacity-100 bg-[#0d1322]' : ''}">
           
           <!-- Symbol & SecID -->
           <td class="py-3 px-4 align-middle">
@@ -2168,7 +2916,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             <div class="text-[10px] text-gray-500 mt-1 font-mono">${item.filter_reason && item.filter_reason.includes('Non-F&O') ? 'NSE_EQ • Equity' : 'NSE_EQ • F&O'}</div>
           </td>
 
-          <!-- Date & Time -->
+          <!-- Date & Time + 180s Countdown Badge -->
           <td class="py-3 px-4 align-middle text-gray-300 font-mono text-xs whitespace-nowrap">
             <div class="font-bold text-gray-100 flex items-center gap-1">
               <span>🕒</span>
@@ -2186,20 +2934,16 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <div class="text-[10px] text-gray-500 font-semibold mt-1 flex items-center gap-1">
                 <span>🔇</span><span>SUPPRESSED</span>
               </div>
-            ` : (item.is_stale ? `
-              <div class="text-[10px] text-amber-400/90 font-semibold mt-1 flex items-center gap-1">
-                <span>⏱️</span><span>STALE (>180s)</span>
-              </div>
             ` : `
-              <div class="text-[10px] text-emerald-400 font-semibold mt-1 flex items-center gap-1">
-                <span>⚡</span><span>FRESH</span>
+              <div class="mt-1 flex items-center">
+                <span data-andt="${item.an_dt || ''}" class="timer-badge px-2 py-0.5 rounded text-[10px] font-mono font-bold border transition-colors ${fresh.badgeClass}">${fresh.text}</span>
               </div>
-            `))}
+            `)}
           </td>
 
-          <!-- Catalyst & Headline -->
+          <!-- Catalyst & Headline + Extracted Metric Tags -->
           <td class="py-3 px-4 align-middle">
-            <div class="flex items-center gap-2 mb-1">
+            <div class="flex items-center flex-wrap gap-1.5 mb-1">
               ${isMarketClosed ? `
                 <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/60 font-mono">
                   ${item.filter_reason || 'MARKET_CLOSED'}
@@ -2214,11 +2958,13 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                 <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/80 font-mono">
                   ${item.catalyst_type}
                 </span>
-                <span class="text-[11px] text-emerald-400 font-mono">⚡ Passed Filter</span>
+                <span class="text-[11px] text-emerald-400 font-mono">⚡ Passed</span>
               `)}
+              ${metricsHTML}
             </div>
-            <div class="text-xs font-semibold ${isNoise ? 'text-gray-300' : 'text-gray-100'} hover:text-white cursor-pointer" onclick="toggleRowDetails('${item.seq_id}')">
-              ${item.desc}
+            <div class="text-xs font-semibold ${isNoise ? 'text-gray-300' : 'text-gray-100'} hover:text-white flex items-center gap-1.5">
+              <span>${item.desc}</span>
+              <span class="text-[10px] text-gray-500 font-mono">↗</span>
             </div>
             <div class="text-[11px] text-gray-400 italic mt-1 border-l ${isMarketClosed ? 'border-amber-700/60 text-amber-400/70' : (isNoise ? 'border-gray-700 text-gray-500' : 'border-indigo-500/50')} pl-2 line-clamp-1">
               "${item.summary}"
@@ -2241,26 +2987,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           </td>
 
         </tr>
-
-        ${isExpanded ? `
-          <tr class="bg-[#0f172a] border-b border-gray-800">
-            <td colspan="6" class="p-4 pl-12 text-xs">
-              <div class="bg-[#111827] border border-gray-800 rounded-lg p-4 space-y-2">
-                <div class="font-bold text-gray-300 flex items-center justify-between border-b border-gray-800 pb-2">
-                  <span>📄 Complete Filed Announcement Content</span>
-                  <span class="text-[11px] text-gray-500 font-mono">Sequence ID: ${item.seq_id}</span>
-                </div>
-                <p class="text-gray-300 whitespace-pre-line font-mono text-[11px] leading-relaxed pt-1">
-                  ${item.details || item.desc}
-                </p>
-                <div class="pt-2 text-[11px] ${isMarketClosed ? 'text-amber-400/90' : (isNoise ? 'text-gray-400' : 'text-indigo-400')} font-mono border-t border-gray-800 flex items-center justify-between">
-                  <span>${isMarketClosed ? `🌙 Market Status: ${item.filter_reason || 'Market Closed (09:15-14:45 IST Window)'}` : (isNoise ? `🔇 Filter Reason: ${item.filter_reason || 'Compliance Noise'}` : `🧠 Gemini Evaluation: "${item.summary}"`)}</span>
-                  <span class="${isNoise ? 'text-gray-500' : 'text-gray-400 font-bold'}">${isMarketClosed ? 'LLM Skipped' : (isNoise ? 'Suppressed' : `Confidence: ${item.confidence}%`)}</span>
-                </div>
-              </div>
-            </td>
-          </tr>
-        ` : ''}
       `;
     }
 
@@ -2285,6 +3011,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         if (res.ok) {
           const data = await res.json();
+          synth.playOrderChime();
           showToast(`${actionLabel} Super Order Placed for ${symbol}! Order ID: ${data.order_id}`, act === 'SELL' ? '🔻' : '🚀');
           fetchFeed();
         } else {
@@ -2323,44 +3050,29 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
-    async function confirmEmergencySquareOff() {
-      if (!confirm("⚠️ Are you sure you want to SQUARE OFF all open intraday positions and cancel all pending orders immediately?")) {
-        return;
-      }
-      const btn = document.getElementById('square-off-btn');
-      if (btn) {
-        btn.disabled = true;
-        btn.classList.add('opacity-50');
-      }
-      showToast('Initiating intraday square-off sequence...', '🛑');
-      try {
-        const res = await fetch('/api/trades/square-off', { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
-          const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
-          showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
-          fetchFeed();
-        } else {
-          const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
-          showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
-        }
-      } catch (err) {
-        showToast('Failed to trigger square-off request', '❌');
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.classList.remove('opacity-50');
-        }
-      }
-    }
-
     function connectSSE() {
       const evtSource = new EventSource('/api/events');
       evtSource.onmessage = function(event) {
         try {
           const payload = JSON.parse(event.data);
-          if (payload.type === 'NEW_CATALYST' || payload.type === 'ORDER_PLACED' || payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED' || payload.type === 'MODE_TOGGLED' || payload.type === 'FEED_CLEARED') {
+          if (payload.type === 'NEW_CATALYST') {
+            fetchFeed();
+            fetchTokenStatus();
+            fetchStatus();
+            if (payload.data) {
+              const item = payload.data;
+              const isBull = item.sentiment === 'BULLISH';
+              if (isBull) synth.playBullishChime();
+              else synth.playBearishChime();
+              sendDesktopNotification(`🚨 [${item.sentiment}] ${item.symbol} Catalyst!`, item.desc || item.summary);
+              triggerTabAlert(item.symbol, item.sentiment);
+            }
+          } else if (payload.type === 'ORDER_PLACED') {
+            synth.playOrderChime();
+            fetchFeed();
+            fetchTokenStatus();
+            fetchStatus();
+          } else if (payload.type === 'AUTO_ORDER_TOGGLE' || payload.type === 'TOKEN_UPDATED' || payload.type === 'MODE_TOGGLED' || payload.type === 'FEED_CLEARED') {
             fetchFeed();
             fetchTokenStatus();
             fetchStatus();
@@ -2379,6 +3091,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             fetchStatus();
             updateScopeUI(true);
           } else if (payload.type === 'AUTO_SQUARE_OFF' || payload.type === 'MANUAL_SQUARE_OFF') {
+            synth.playWarningChime();
             const label = payload.type === 'AUTO_SQUARE_OFF' ? '⏰ 15:00 Auto Square-Off' : '🛑 Manual Square-Off';
             showToast(`${label} executed! Intraday positions flattened.`, '⚠️');
             fetchFeed();
@@ -2394,7 +3107,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               document.getElementById('poller-noise-count').textContent = payload.data.suppressed_noise_count || '0';
             }
             updatePollerTimer();
-            // Pulse the radar badge to give immediate visual feedback of active scan
             const badge = document.getElementById('radar-badge-container');
             if (badge) {
               badge.classList.add('ring-2', 'ring-emerald-400');
@@ -2409,7 +3121,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     window.onload = function() {
-      // Check OAuth redirect return query params
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('auth_success') === 'true') {
         showToast('🎉 Dhan Login Successful! Active trading session connected.', '⚡');
@@ -2419,6 +3130,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
+      updateSoundUI();
+      initDesktopNotifications();
       renderMarketStatusUI(computeMarketStatusClient());
       fetchStatus();
       fetchTokenStatus();
@@ -2427,6 +3140,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       setInterval(fetchFeed, 4000);
       setInterval(fetchTokenStatus, 30000);
       setInterval(updatePollerTimer, 1000);
+      setInterval(updateCountdowns, 1000);
       setInterval(() => renderMarketStatusUI(computeMarketStatusClient()), 10000);
     };
   </script>
