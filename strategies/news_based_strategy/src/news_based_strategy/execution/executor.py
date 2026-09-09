@@ -329,12 +329,17 @@ class DhanExecutor:
             )
 
         mode_str = "VIRTUAL (Simulated)" if self.dry_run else "LIVE (Real Dhan Order)"
+        is_buy = signal.action.upper() in ("BUY", "BULLISH")
+        target_sign = "+" if is_buy else "-"
+        sl_sign = "-" if is_buy else "+"
+        buffer_sign = "+" if is_buy else "-"
+
         print("\n   ┌─ 🔔 User Trade Approval Required (AUTO_ORDER=False) ────────")
         print(f"   │ • Mode: {mode_str}")
         print(f"   │ • Proposed Order: {signal.action} {quantity} shares of {signal.symbol} (Dhan SecID: {effective_sec_id})")
         print(f"   │ • Order Type: Bracket Super Order (INTRADAY)")
-        print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {self.slippage_buffer_pct}% buffer)")
-        print(f"   │ • Target Profit: ₹{target_price:.2f} (+{self.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{self.stop_loss_pct}%)")
+        print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} {buffer_sign}{self.slippage_buffer_pct}% buffer)")
+        print(f"   │ • Target Profit: ₹{target_price:.2f} ({target_sign}{self.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} ({sl_sign}{self.stop_loss_pct}%)")
         print(f"   │ • Trailing Jump: {self.trailing_jump_points} pts")
         print(f"   │ • Catalyst: {signal.catalyst_type} (Confidence: {signal.confidence}%)")
         print(f"   │ • AI Rationale: \"{signal.summary}\"")
@@ -456,7 +461,8 @@ class DhanExecutor:
                 slippage_buffer_pct=self.slippage_buffer_pct,
             )
         else:
-            entry_price = round(ltp * (1.0 + self.slippage_buffer_pct / 100.0), 2)
+            is_buy = signal.action.upper() in ("BUY", "BULLISH")
+            entry_price = round(ltp * (1.0 + self.slippage_buffer_pct / 100.0) if is_buy else ltp * (1.0 - self.slippage_buffer_pct / 100.0), 2)
             target_price, sl_price = 0.0, 0.0
 
         # 6. Manual Approval Check
@@ -489,10 +495,13 @@ class DhanExecutor:
             mode_tag = "VIRTUAL_SIMULATED" if self.dry_run else "MOCK_DISCONNECTED"
             sim_id = f"{mode_tag}_{signal.symbol}_{effective_sec_id}"
             if self.super_order_enabled:
+                is_buy = signal.action.upper() in ("BUY", "BULLISH")
+                target_sign = "+" if is_buy else "-"
+                sl_sign = "-" if is_buy else "+"
                 remarks = (
                     f"Simulated Super Order: Entry Limit ₹{entry_price:.2f} "
-                    f"(TP ₹{target_price:.2f} (+{self.target_profit_pct}%), "
-                    f"SL ₹{sl_price:.2f} (-{self.stop_loss_pct}%), Trail {self.trailing_jump_points} pts)"
+                    f"(TP ₹{target_price:.2f} ({target_sign}{self.target_profit_pct}%), "
+                    f"SL ₹{sl_price:.2f} ({sl_sign}{self.stop_loss_pct}%), Trail {self.trailing_jump_points} pts)"
                 )
             else:
                 remarks = f"Simulated execution for {signal.symbol} (Dry-run mode active)"

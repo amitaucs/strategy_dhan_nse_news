@@ -43,7 +43,8 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("feed-filter-select", res.text)
             self.assertIn("All Passed", res.text)
             self.assertIn("AUTO ORDER", res.text)
-            self.assertIn("Show All Signals", res.text)
+            self.assertIn("Show History (DB)", res.text)
+            self.assertIn("Today Only", res.text)
             self.assertIn("Simulate Feed", res.text)
             self.assertIn("Test / Simulate Sample Catalyst Feed", res.text)
 
@@ -58,7 +59,8 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("feed-filter-select", res_no_sim.text)
             self.assertIn("All Passed", res_no_sim.text)
             self.assertIn("AUTO ORDER", res_no_sim.text)
-            self.assertIn("Show All Signals", res_no_sim.text)
+            self.assertIn("Show History (DB)", res_no_sim.text)
+            self.assertIn("Today Only", res_no_sim.text)
             self.assertNotIn("Simulate Feed", res_no_sim.text)
             self.assertNotIn("Test / Simulate Sample Catalyst Feed", res_no_sim.text)
 
@@ -134,6 +136,70 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(len(self.app.state.dashboard.feed_items), 1)
         self.assertEqual(self.app.state.dashboard.feed_items[0]["symbol"], "BEL")
         self.assertEqual(self.app.state.dashboard.feed_items[0]["order"]["status"], "RECORDED")
+
+    def test_load_feed_history_api_filtered_today(self):
+        """Test today_only=True vs today_only=False in load-history API."""
+        # Insert today's audit
+        self.storage.save_audit(
+            seq_id="TODAY_001",
+            symbol="BEL",
+            audit=FilingAudit(
+                sentiment="BULLISH",
+                confidence=95,
+                catalyst_type="ORDER_WIN",
+                material_impact=True,
+                summary="Today's contract win",
+            ),
+        )
+        # Manually insert a past date audit in SQLite
+        cursor = self.storage.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO audit_logs (seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("PAST_001", "TCS", "BULLISH", 90, "EXPANSION", 1, "Past contract", "2026-08-01 10:00:00"),
+        )
+        self.storage.conn.commit()
+
+        # 1. Load today only
+        res_today = self.client.post("/api/feed/load-history", json={"today_only": True})
+        self.assertEqual(res_today.status_code, 200)
+        self.assertEqual(res_today.json()["count"], 1)
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 1)
+        self.assertEqual(self.app.state.dashboard.feed_items[0]["seq_id"], "TODAY_001")
+
+        # 2. Load all history
+        res_all = self.client.post("/api/feed/load-history", json={"today_only": False})
+        self.assertEqual(res_all.status_code, 200)
+        self.assertEqual(res_all.json()["count"], 2)
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 2)
+
+    def test_feed_clear_api(self):
+        """Clear feed endpoint empties in-memory list while DB records stay intact."""
+        self.storage.save_audit(
+            seq_id="TEST_CLEAR_001",
+            symbol="INFY",
+            audit=FilingAudit(
+                sentiment="BULLISH",
+                confidence=90,
+                catalyst_type="ORDER_WIN",
+                material_impact=True,
+                summary="Filing summary",
+            ),
+        )
+        self.client.post("/api/feed/load-history", json={"today_only": True})
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 1)
+
+        res = self.client.post("/api/feed/clear")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["success"])
+        self.assertEqual(len(self.app.state.dashboard.feed_items), 0)
+
+        # Verify DB still has the audit record intact
+        db_audits = self.storage.get_recent_audits()
+        self.assertEqual(len(db_audits), 1)
+
 
     def test_place_order_api(self):
         """Place order endpoint creates trade execution record and returns order details."""
@@ -235,10 +301,37 @@ class TestUIServer(unittest.TestCase):
             self.assertEqual(bel_item["order"]["quantity"], 10)
             self.assertTrue(bel_item["order"]["placed"])
 
-            # Check order status on BANKINDIA
+            # Check order status on BANKINDIA (High-Conviction Bearish triggers SELL Super Order)
             bi_item = next(item for item in data["items"] if item["symbol"] == "BANKINDIA")
             self.assertEqual(bi_item["sentiment"], "BEARISH")
-            self.assertFalse(bi_item["order"]["placed"])
+            self.assertTrue(bi_item["order"]["placed"])
+            self.assertEqual(bi_item["order"]["status"], "PLACED")
+            self.assertEqual(bi_item["order"]["quantity"], 10)
+            self.assertAlmostEqual(bi_item["order"]["entry_price"], 119.8, places=1)
+            self.assertAlmostEqual(bi_item["order"]["target_price"], 116.4, places=1)
+            self.assertAlmostEqual(bi_item["order"]["stop_loss_price"], 121.2, places=1)
+
+    def test_place_order_api_bearish_sell(self):
+        """Place order endpoint creates trade execution record for SELL (short) and returns order details."""
+        res = self.client.post(
+            "/api/orders/place",
+            json={
+                "seq_id": "TEST_GUI_SELL_001",
+                "symbol": "BANKINDIA",
+                "action": "SELL",
+                "product_type": "INTRADAY",
+                "confidence": 92,
+                "catalyst_type": "PENALTY",
+                "summary": "RBI penalty imposed",
+                "ltp": 300.0,
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["symbol"], "BANKINDIA")
+        self.assertEqual(data["quantity"], 10)
+        self.assertIsNotNone(data["order_id"])
 
     def test_clear_feed_api_preserves_db_records(self):
         """Verify that clearing the UI feed list clears in-memory items but preserves all DB audit logs and trade executions."""
@@ -260,7 +353,7 @@ class TestUIServer(unittest.TestCase):
             an_dt="04-Sep-2026 10:00:00",
             is_fno=True,
         )
-        self.app.state.dashboard.process_and_add_announcement(ann)
+        self.app.state.dashboard.process_and_add_announcement(ann, bypass_market_hours=True)
         self.assertEqual(len(self.app.state.dashboard.feed_items), 1)
 
         # Verify audit was written to DB
@@ -568,9 +661,88 @@ class TestUIServer(unittest.TestCase):
         self.assertIn("closed_positions", data["result"])
         self.assertIn("cancelled_orders", data["result"])
 
+    def test_noise_suppression_and_filter(self):
+        """Verify noise suppression options in UI, API feed items with is_noise flags, and filtering."""
+        # 1. UI HTML includes Noise Suppressed filter option
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("opt-filter-noise", res.text)
+        self.assertIn("Noise Suppressed", res.text)
+
+        # 2. Add a noise item to dashboard feed
+        noise_item = {
+            "seq_id": "NOISE_101",
+            "symbol": "TCS",
+            "security_id": "11536",
+            "desc": "Loss of Share Certificate",
+            "details": "Routine compliance filing",
+            "an_dt": "09-Sep-2026 14:00:00",
+            "timestamp": "14:00:00 IST",
+            "is_stale": True,
+            "age_seconds": 0,
+            "sentiment": "FILTERED",
+            "confidence": 0,
+            "catalyst_type": "Loss of Share Certificate",
+            "material_impact": False,
+            "summary": "Suppressed: Loss of Share Certificate",
+            "is_noise": True,
+            "filter_reason": "Routine Share Certificate Loss",
+            "order": {
+                "eligible": False,
+                "status": "FILTERED_NOISE",
+                "placed": False,
+                "quantity": 0,
+                "ltp": 0.0,
+                "entry_price": 0.0,
+                "target_price": 0.0,
+                "stop_loss_price": 0.0,
+                "trailing_jump": 0.0,
+                "order_id": None,
+                "remarks": "Filtered: Routine Share Certificate Loss",
+            },
+        }
+        self.app.state.dashboard.feed_items.append(noise_item)
+
+        # 3. Query /api/feed
+        feed_res = self.client.get("/api/feed")
+        self.assertEqual(feed_res.status_code, 200)
+        items = feed_res.json()
+        noise_matches = [i for i in items if i.get("seq_id") == "NOISE_101"]
+        self.assertEqual(len(noise_matches), 1)
+        self.assertTrue(noise_matches[0]["is_noise"])
+        self.assertEqual(noise_matches[0]["filter_reason"], "Routine Share Certificate Loss")
+        self.assertEqual(noise_matches[0]["order"]["status"], "FILTERED_NOISE")
+
+    def test_process_announcement_market_closed_skips_llm(self):
+        """When market is closed (outside 09:15-14:45 IST), process_and_add_announcement must skip Gemini LLM and record Market Closed item."""
+        ann = Announcement(
+            seq_id="TEST_NSE_CLOSED_123",
+            symbol="BEL",
+            desc="Major defense contract signed",
+            details="BEL secures contract worth 3850 Cr",
+            an_dt="09-Sep-2026 18:30:00",
+            is_fno=True,
+        )
+        dashboard = self.app.state.dashboard
+        dashboard.analyzer = MagicMock()
+
+        with patch("news_based_strategy.ui.server.RiskManager.is_trade_allowed", return_value=(False, "Market is closed for the day (Closed at 15:30 IST)")):
+            result = dashboard.process_and_add_announcement(ann, bypass_market_hours=False)
+            self.assertIsNone(result)
+            self.assertFalse(dashboard.analyzer.audit.called)
+
+            # Check that closed item is added to feed_items
+            matching = [f for f in dashboard.feed_items if f.get("seq_id") == "TEST_NSE_CLOSED_123"]
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0]["sentiment"], "MARKET_CLOSED")
+            self.assertTrue(matching[0]["is_noise"])
+            self.assertIn("Market Closed", matching[0]["filter_reason"])
+            self.assertEqual(matching[0]["order"]["status"], "MARKET_CLOSED")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

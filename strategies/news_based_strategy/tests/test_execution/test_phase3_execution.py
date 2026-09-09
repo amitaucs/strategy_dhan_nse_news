@@ -171,15 +171,49 @@ class TestPhase3Execution(unittest.TestCase):
                 is_fno=True,
             )
 
-            signal = engine.process_announcement(item)
+            signal = engine.process_announcement(item, bypass_market_hours=True)
             self.assertIsNotNone(signal)
             self.assertEqual(signal.symbol, "BEL")
             self.assertEqual(signal.action, "BUY")
             self.assertEqual(signal.confidence, 85)
             mock_executor.execute_order.assert_called_once()
 
-    def test_strategy_engine_bearish_high_conviction_skips_trade(self):
-        """Bearish filing in Phase 3 should be audited and logged, but skip order placement."""
+    def test_executor_dry_run_super_order_bearish_sell(self):
+        """Test that DhanExecutor calculates and formats SELL (short) Super Order levels in dry-run."""
+        executor = DhanExecutor(
+            dry_run=True,
+            capital_per_trade=20000.0,
+            max_shares_per_trade=10,
+            super_order_enabled=True,
+            target_profit_pct=3.0,
+            stop_loss_pct=1.0,
+            trailing_jump_points=5.0,
+            slippage_buffer_pct=0.2,
+        )
+
+        signal = TradeSignal(
+            symbol="BANKINDIA",
+            security_id="4811",
+            action="SELL",
+            product_type="INTRADAY",
+            confidence=92,
+            catalyst_type="PENALTY",
+            summary="RBI regulatory penalty imposed",
+        )
+
+        result = executor.execute_order(signal, ltp=300.0)
+        self.assertTrue(result.success)
+        self.assertEqual(result.action, "SELL")
+        self.assertEqual(result.quantity, 10)
+        self.assertEqual(result.product_type, "INTRADAY")
+        self.assertTrue(result.dry_run)
+        self.assertIn("Simulated Super Order: Entry Limit ₹299.40", result.remarks)
+        self.assertIn("TP ₹291.00 (-3.0%)", result.remarks)
+        self.assertIn("SL ₹303.00 (+1.0%)", result.remarks)
+        self.assertIn("Trail 5.0 pts", result.remarks)
+
+    def test_strategy_engine_bearish_high_conviction_places_sell_order(self):
+        """Bearish filing with confidence >= 70% and material_impact=True MUST trigger SELL order execution."""
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             storage = StrategyStorage(db_path=tmp.name, use_mysql=False)
             mock_analyzer = MagicMock()
@@ -191,6 +225,15 @@ class TestPhase3Execution(unittest.TestCase):
                 summary="RBI imposes severe monetary penalty and business halt",
             )
             mock_executor = MagicMock()
+            mock_executor.execute_order.return_value = TradeResult(
+                success=True,
+                symbol="BANKINDIA",
+                action="SELL",
+                quantity=10,
+                product_type="INTRADAY",
+                order_id="DRY_BANKINDIA_4811_90",
+                dry_run=True,
+            )
 
             engine = StrategyEngine(
                 storage=storage,
@@ -207,10 +250,13 @@ class TestPhase3Execution(unittest.TestCase):
                 is_fno=True,
             )
 
-            signal = engine.process_announcement(item)
-            self.assertIsNone(signal)
-            # Executor should NEVER have been called for Bearish filings in Phase 3
-            self.assertFalse(mock_executor.execute_order.called)
+            signal = engine.process_announcement(item, bypass_market_hours=True)
+            self.assertIsNotNone(signal)
+            self.assertEqual(signal.symbol, "BANKINDIA")
+            self.assertEqual(signal.action, "SELL")
+            self.assertEqual(signal.product_type, "INTRADAY")
+            self.assertEqual(signal.confidence, 90)
+            mock_executor.execute_order.assert_called_once()
 
     def test_strategy_engine_low_confidence_skips_trade(self):
         """Bullish filing with confidence < 70% must NOT trigger order placement."""
@@ -241,7 +287,7 @@ class TestPhase3Execution(unittest.TestCase):
                 is_fno=True,
             )
 
-            signal = engine.process_announcement(item)
+            signal = engine.process_announcement(item, bypass_market_hours=True)
             self.assertIsNone(signal)
             self.assertFalse(mock_executor.execute_order.called)
 
@@ -274,9 +320,37 @@ class TestPhase3Execution(unittest.TestCase):
                 is_fno=True,
             )
 
-            signal = engine.process_announcement(item)
+            signal = engine.process_announcement(item, bypass_market_hours=True)
             self.assertIsNone(signal)
             self.assertFalse(mock_executor.execute_order.called)
+
+    def test_strategy_engine_market_closed_skips_llm(self):
+        """When market is closed or past cutoff, engine must NOT invoke Gemini LLM."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            storage = StrategyStorage(db_path=tmp.name, use_mysql=False)
+            mock_analyzer = MagicMock()
+            mock_executor = MagicMock()
+            mock_executor.trade_cutoff_time = "14:45"
+
+            engine = StrategyEngine(
+                storage=storage,
+                analyzer=mock_analyzer,
+                executor=mock_executor,
+            )
+
+            item = Announcement(
+                seq_id="TEST_CLOSED_001",
+                symbol="BEL",
+                desc="Major defense contract win",
+                details="Export order",
+                an_dt="04-Sep-2026 16:00:00",
+                is_fno=True,
+            )
+
+            with patch("news_based_strategy.engine.RiskManager.is_trade_allowed", return_value=(False, "Market is closed for the day")):
+                signal = engine.process_announcement(item, bypass_market_hours=False)
+                self.assertIsNone(signal)
+                self.assertFalse(mock_analyzer.audit.called)
 
     def test_storage_trade_executions_persistence(self):
         """Test persisting and querying trade execution records."""

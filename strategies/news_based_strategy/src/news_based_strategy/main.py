@@ -107,9 +107,10 @@ def print_announcement(
         if audit:
             sentiment_upper = audit.sentiment.upper()
             is_bullish = sentiment_upper in ("BULLISH", "BUY")
+            is_bearish = sentiment_upper in ("BEARISH", "SELL")
             if is_bullish:
                 sent_badge = "BULLISH 🟢"
-            elif sentiment_upper in ("BEARISH", "SELL"):
+            elif is_bearish:
                 sent_badge = "BEARISH 🔴"
             else:
                 sent_badge = "NEUTRAL ⚪"
@@ -117,7 +118,7 @@ def print_announcement(
             is_conviction = (
                 audit.material_impact
                 and audit.confidence >= settings.confidence_threshold
-                and is_bullish
+                and (is_bullish or is_bearish)
             )
             conviction_badge = (
                 "🟢 HIGH CONVICTION (Phase 3 Super Order Trigger)"
@@ -126,9 +127,8 @@ def print_announcement(
             )
 
             if is_conviction:
-                exec_status_line = "🟢 Triggered (Submitting DhanHQ Super Order)"
-            elif sentiment_upper in ("BEARISH", "SELL"):
-                exec_status_line = "⏸️ Skipped (Bearish filing — Bullish Super Orders enabled)"
+                action_str = "BUY" if is_bullish else "SELL (Short)"
+                exec_status_line = f"🟢 Triggered (Submitting DhanHQ {action_str} Super Order)"
             else:
                 exec_status_line = f"⏸️ Skipped (Below conviction or confidence threshold < {settings.confidence_threshold}%)"
 
@@ -152,16 +152,18 @@ def print_announcement(
                 storage.save_audit(announcement.seq_id, announcement.symbol, audit)
                 storage.mark_processed(announcement.seq_id, announcement.symbol, announcement.an_dt or "")
 
-            # Phase 3: Super Order Execution for High-Conviction Bullish Filings
+            # Phase 3: Super Order Execution for High-Conviction Bullish / Bearish Filings
             if is_conviction and executor:
                 effective_sec_id = resolve_security_id(announcement.symbol) or "0"
                 ltp = SIMULATED_LTPS.get(announcement.symbol.upper(), 300.0)
+                action = "BUY" if is_bullish else "SELL"
+                product = RiskManager.get_safe_product_type(action)
 
                 signal = TradeSignal(
                     symbol=announcement.symbol,
                     security_id=effective_sec_id,
-                    action="BUY",
-                    product_type="INTRADAY",
+                    action=action,
+                    product_type=product,
                     confidence=audit.confidence,
                     catalyst_type=audit.catalyst_type,
                     summary=audit.summary,
@@ -175,7 +177,7 @@ def print_announcement(
                 if trade_res.success:
                     entry_price, tp_price, sl_price = RiskManager.calculate_super_order_levels(
                         ltp=ltp,
-                        action="BUY",
+                        action=action,
                         target_pct=executor.target_profit_pct,
                         sl_pct=executor.stop_loss_pct,
                         slippage_buffer_pct=executor.slippage_buffer_pct,
@@ -183,13 +185,17 @@ def print_announcement(
 
                     mode_label = "VIRTUAL (Simulated)" if trade_res.dry_run else "LIVE EXECUTION"
                     db_name = "MySQL 'trade_executions'" if (storage and storage.is_mysql_active) else "SQLite 'trade_executions'"
+                    action_label = "BUY" if is_bullish else "SELL (Short)"
+                    target_sign = "+" if is_bullish else "-"
+                    sl_sign = "-" if is_bullish else "+"
+                    buffer_sign = "+" if is_bullish else "-"
 
                     print(f"\n   ┌─ 🚀 DhanHQ Super Order Placed (Mode: {mode_label}) ──────────")
                     print(f"   │ • Ticker: {trade_res.symbol} (Dhan SecID: {effective_sec_id} | Exchange: NSE_EQ)")
-                    print(f"   │ • Action: {trade_res.action} | Product: {trade_res.product_type} (Bracket Super Order)")
+                    print(f"   │ • Action: {action_label} | Product: {trade_res.product_type} (Bracket Super Order)")
                     print(f"   │ • Quantity: {trade_res.quantity} shares (Max Cap: {executor.max_shares_per_trade} shares | Capital: ₹{executor.capital_per_trade:,.2f})")
-                    print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} + {executor.slippage_buffer_pct}% buffer)")
-                    print(f"   │ • Target Profit: ₹{tp_price:.2f} (+{executor.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} (-{executor.stop_loss_pct}%)")
+                    print(f"   │ • Entry Limit: ₹{entry_price:.2f} (LTP: ₹{ltp:.2f} {buffer_sign}{executor.slippage_buffer_pct}% buffer)")
+                    print(f"   │ • Target Profit: ₹{tp_price:.2f} ({target_sign}{executor.target_profit_pct}%) | Stop Loss: ₹{sl_price:.2f} ({sl_sign}{executor.stop_loss_pct}%)")
                     print(f"   │ • Trailing Jump: {executor.trailing_jump_points} pts")
                     print(f"   │ • Order ID: {trade_res.order_id}")
                     print(f"   │ • Execution Status: ✅ SUCCESS")

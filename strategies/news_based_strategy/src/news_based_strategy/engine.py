@@ -61,7 +61,7 @@ class StrategyEngine:
         self.filter_noise = filter_noise
         self.extract_pdf = extract_pdf
 
-    def process_announcement(self, item: Announcement) -> Optional[TradeSignal]:
+    def process_announcement(self, item: Announcement, bypass_market_hours: bool = False) -> Optional[TradeSignal]:
         """Process a single announcement through deduplication, AI analysis, and execution."""
         # 1. Deduplication check via persistent storage
         if self.storage.is_processed(item.seq_id):
@@ -70,7 +70,14 @@ class StrategyEngine:
         # Mark as processed in database immediately
         self.storage.mark_processed(item.seq_id, item.symbol, item.an_dt)
 
-        # 2. AI Reasoning via Gemini
+        # 2. Gate AI reasoning strictly to market trading hours (09:15 to 14:45 IST)
+        if not bypass_market_hours:
+            allowed, reason = RiskManager.is_trade_allowed(cutoff_str=self.executor.trade_cutoff_time)
+            if not allowed:
+                logger.info("🌙 [%s] Skipped Gemini evaluation (Market Closed): %s", item.symbol, reason)
+                return None
+
+        # 3. AI Reasoning via Gemini
         audit = self.analyzer.audit(
             symbol=item.symbol,
             headline=item.desc,
@@ -88,13 +95,14 @@ class StrategyEngine:
                 audit.material_impact,
             )
 
-            # 3. Phase 3 High-Conviction Bullish Filter (>=70% confidence, material impact)
+            # 3. Phase 3 High-Conviction Filter (>=70% confidence, material impact) for BULLISH and BEARISH
+            sentiment_upper = audit.sentiment.upper()
             if (
                 audit.material_impact
                 and audit.confidence >= settings.confidence_threshold
-                and audit.sentiment.upper() in ("BULLISH", "BUY")
+                and sentiment_upper in ("BULLISH", "BUY", "BEARISH", "SELL")
             ):
-                action = "BUY"
+                action = "BUY" if sentiment_upper in ("BULLISH", "BUY") else "SELL"
                 product = RiskManager.get_safe_product_type(action)
 
                 sec_id = resolve_security_id(item.symbol) or "0"

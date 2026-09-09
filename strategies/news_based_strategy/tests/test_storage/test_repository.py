@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+import unittest.mock
 from news_based_strategy.core.models import FilingAudit, TradeResult
 from news_based_strategy.storage.repository import StrategyStorage
 

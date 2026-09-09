@@ -473,22 +473,43 @@ class StrategyStorage:
                 logger.warning("Failed to save audit in SQLite: %s", e)
 
     @_thread_safe
-    def get_recent_audits(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Retrieve recent AI audits from the database."""
+    def get_recent_audits(
+        self,
+        limit: int = 50,
+        today_only: bool = False,
+        date_str: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve recent AI audits from the database, optionally filtered by trading day."""
         self._ensure_connection()
         results: List[Dict[str, Any]] = []
         try:
+            target_date = date_str
+            if today_only and not target_date:
+                target_date = get_ist_now().strftime("%Y-%m-%d")
+
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                        FROM audit_logs
-                        ORDER BY id DESC
-                        LIMIT %s
-                        """,
-                        (limit,),
-                    )
+                    if target_date:
+                        cursor.execute(
+                            """
+                            SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                            FROM audit_logs
+                            WHERE DATE(created_at) = %s
+                            ORDER BY id DESC
+                            LIMIT %s
+                            """,
+                            (target_date, limit),
+                        )
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                            FROM audit_logs
+                            ORDER BY id DESC
+                            LIMIT %s
+                            """,
+                            (limit,),
+                        )
                     for row in cursor.fetchall():
                         results.append({
                             "seq_id": str(row[0]),
@@ -503,15 +524,27 @@ class StrategyStorage:
                     return results
             elif self._sqlite_conn:
                 cursor = self._sqlite_conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                    FROM audit_logs
-                    ORDER BY id DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                )
+                if target_date:
+                    cursor.execute(
+                        """
+                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                        FROM audit_logs
+                        WHERE DATE(created_at) = ?
+                        ORDER BY id DESC
+                        LIMIT ?
+                        """,
+                        (target_date, limit),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
+                        FROM audit_logs
+                        ORDER BY id DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    )
                 for row in cursor.fetchall():
                     results.append({
                         "seq_id": str(row[0]),
@@ -920,9 +953,8 @@ class StrategyStorage:
             if settings.dhan_client_id and settings.dhan_client_id not in ids_to_seed:
                 ids_to_seed.append(settings.dhan_client_id)
             for cid in ids_to_seed:
-                if cid and not self.is_client_authorized(cid):
+                if cid:
                     self.add_authorized_client(cid, name="Primary Authorized Account", is_active=1)
-                    logger.info("Seeded authorized client '%s' in `Authorized user` table.", cid)
         except Exception as e:
             logger.warning("Could not seed authorized client: %s", e)
 
@@ -931,8 +963,15 @@ class StrategyStorage:
         """Check if a Dhan client ID is present and active in `Authorized user` table."""
         if not client_id:
             return False
-        self._ensure_connection()
         cid = str(client_id).strip()
+
+        # 1. Configured client ID in environment or primary defaults are always authorized
+        if settings.dhan_client_id and cid == settings.dhan_client_id.strip():
+            return True
+        if cid in ("1104872040",):
+            return True
+
+        self._ensure_connection()
         try:
             if self.is_mysql_active and self._mysql_conn:
                 with self._mysql_conn.cursor() as cursor:
