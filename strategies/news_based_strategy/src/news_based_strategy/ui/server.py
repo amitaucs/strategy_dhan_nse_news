@@ -1131,9 +1131,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <th class="py-3.5 px-4 w-32">Symbol / SecID</th>
               <th class="py-3.5 px-4 w-36">Date / Time</th>
               <th class="py-3.5 px-4">Catalyst & AI Rationale</th>
-              <th class="py-3.5 px-4 w-44 text-center">LLM Verdict</th>
-              <th class="py-3.5 px-4 w-52 text-right">Bracket Pricing</th>
-              <th class="py-3.5 px-4 w-56 text-center">Order Status / Action</th>
+              <th class="py-3.5 px-4 w-40 text-center">LLM Verdict</th>
+              <th class="py-3.5 px-4 w-48 text-right">Bracket Pricing</th>
+              <th class="py-3.5 px-4 w-48 text-center" title="Real-time market price & P&L relative to Limit price (or Traded price if executed)">Live Market & P&L</th>
+              <th class="py-3.5 px-4 w-52 text-center">Order Status / Action</th>
             </tr>
           </thead>
 
@@ -1238,7 +1239,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           <span>🎯</span>
           <span>Super Order Execution Matrix</span>
         </h4>
-        <div class="grid grid-cols-3 gap-2 font-mono text-center">
+        <div class="grid grid-cols-4 gap-2 font-mono text-center">
           <div class="bg-[#0b0f19] p-2 rounded-lg border border-gray-800">
             <div class="text-[10px] text-gray-400">ENTRY LIMIT</div>
             <div id="drawer-entry-price" class="text-xs font-bold text-white mt-0.5">₹0.00</div>
@@ -1250,6 +1251,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           <div class="bg-[#0b0f19] p-2 rounded-lg border border-rose-500/20">
             <div class="text-[10px] text-rose-400">STOP LOSS (1%)</div>
             <div id="drawer-sl-price" class="text-xs font-bold text-rose-400 mt-0.5">₹0.00</div>
+          </div>
+          <div class="bg-[#0b0f19] p-2 rounded-lg border border-indigo-500/20">
+            <div class="text-[10px] text-indigo-300">LIVE P&L</div>
+            <div id="drawer-live-pnl" class="text-xs font-bold text-gray-300 mt-0.5">--</div>
           </div>
         </div>
         <div class="text-[10px] text-gray-500 font-mono flex items-center justify-between pt-1">
@@ -1824,10 +1829,39 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       document.getElementById('drawer-raw-text').textContent = item.details || item.desc || 'No announcement details.';
       
       const order = item.order || {};
+      const isTraded = !!(order.placed && (order.traded_price || order.fill_price));
+      const basePrice = isTraded ? (order.traded_price || order.fill_price) : (order.entry_price || order.ltp || 0);
+      const baseTag = isTraded ? 'vs Traded' : 'vs Limit';
+      const currentPrice = order.current_ltp || order.ltp || basePrice;
       document.getElementById('drawer-entry-price').textContent = `₹${order.entry_price ? order.entry_price.toFixed(2) : (order.ltp ? order.ltp.toFixed(2) : '0.00')}`;
       document.getElementById('drawer-target-price').textContent = `₹${order.target_price ? order.target_price.toFixed(2) : '0.00'}`;
       document.getElementById('drawer-sl-price').textContent = `₹${order.stop_loss_price ? order.stop_loss_price.toFixed(2) : '0.00'}`;
       document.getElementById('drawer-qty-info').textContent = `Position: ${order.quantity || 0} sh`;
+      
+      const drawerLivePnl = document.getElementById('drawer-live-pnl');
+      if (basePrice > 0 && currentPrice > 0) {
+        let pnlDiff = 0;
+        let pnlPct = 0;
+        if (isBullish) {
+          pnlDiff = currentPrice - basePrice;
+          pnlPct = (pnlDiff / basePrice) * 100;
+        } else {
+          pnlDiff = basePrice - currentPrice;
+          pnlPct = (pnlDiff / basePrice) * 100;
+        }
+        const isProfit = pnlDiff >= 0;
+        const arrow = isProfit ? '▲' : '▼';
+        const sign = pnlDiff >= 0 ? '+' : '';
+        const color = isProfit ? 'text-emerald-400' : 'text-rose-400';
+        drawerLivePnl.innerHTML = `
+          <div class="flex flex-col items-center">
+            <span class="${color} font-bold">${arrow} ${sign}₹${Math.abs(pnlDiff).toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)</span>
+            <span class="text-[9px] text-gray-500 font-normal mt-0.5">${baseTag} (₹${basePrice.toFixed(2)})</span>
+          </div>
+        `;
+      } else {
+        drawerLivePnl.textContent = '--';
+      }
       
       // Footer Action Button
       const btnContainer = document.getElementById('drawer-action-btn-container');
@@ -2793,12 +2827,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         `;
       }
 
-      // Bracket Pricing Column
+      // Bracket Pricing Column (Clean Target / Stop Loss / Limit / Position)
       let pricingHTML = '';
       if (isMarketClosed) {
         pricingHTML = `
           <div class="text-right text-gray-500 font-mono text-xs">
-            <div>LTP: ₹${order.ltp ? order.ltp.toFixed(2) : '0.00'}</div>
+            <div>Ref LTP: ₹${order.ltp ? order.ltp.toFixed(2) : '0.00'}</div>
             <div class="text-[10px] text-amber-500/80 font-mono">LLM Skipped (Market Closed)</div>
           </div>
         `;
@@ -2835,6 +2869,62 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             <div class="text-[10px] text-gray-500">Qty: ${order.quantity} sh • Trail: 5.0 pts</div>
           </div>
         `;
+      }
+
+      // Dedicated Live Market Price & P&L Column
+      let livePnlHTML = '';
+      if (isMarketClosed || isNoise) {
+        livePnlHTML = `
+          <div class="text-center font-mono text-gray-600 text-xs">
+            <span>--</span>
+          </div>
+        `;
+      } else {
+        const isTraded = !!(order.placed && (order.traded_price || order.fill_price));
+        const basePrice = isTraded ? (order.traded_price || order.fill_price) : (order.entry_price || order.ltp || 0);
+        const baseTag = isTraded ? 'vs Traded' : 'vs Limit';
+        const baseTitle = isTraded ? `P&L calculated against executed fill price (₹${basePrice.toFixed(2)})` : `P&L calculated against Limit Entry price (₹${basePrice.toFixed(2)}) as no traded fill exists`;
+        const currentPrice = order.current_ltp || order.ltp || basePrice;
+
+        if (basePrice > 0 && currentPrice > 0) {
+          let pnlDiff = 0;
+          let pnlPct = 0;
+          if (isBullish) {
+            pnlDiff = currentPrice - basePrice;
+            pnlPct = (pnlDiff / basePrice) * 100;
+          } else {
+            pnlDiff = basePrice - currentPrice;
+            pnlPct = (pnlDiff / basePrice) * 100;
+          }
+          const isProfit = pnlDiff >= 0;
+          const arrow = isProfit ? '▲' : '▼';
+          const sign = pnlDiff >= 0 ? '+' : '';
+          const pnlBadgeClass = isProfit
+            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40';
+
+          livePnlHTML = `
+            <div class="flex flex-col items-center text-center font-mono space-y-1">
+              <div class="text-xs font-bold text-white flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full ${isProfit ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}"></span>
+                <span>₹${currentPrice.toFixed(2)}</span>
+              </div>
+              <span class="px-2 py-0.5 rounded text-[11px] font-bold ${pnlBadgeClass} flex items-center gap-0.5 shadow-sm" title="${baseTitle}">
+                <span>${arrow}</span>
+                <span>${sign}₹${Math.abs(pnlDiff).toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)</span>
+              </span>
+              <span class="text-[9px] text-gray-400 font-mono" title="${baseTitle}">
+                ${baseTag}: <span class="text-gray-300 font-semibold">₹${basePrice.toFixed(2)}</span>
+              </span>
+            </div>
+          `;
+        } else {
+          livePnlHTML = `
+            <div class="text-center font-mono text-gray-500 text-xs">
+              <span>--</span>
+            </div>
+          `;
+        }
       }
 
       // Order Action Column
@@ -3059,6 +3149,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             ${pricingHTML}
           </td>
 
+          <!-- Live Market Price & P&L (Dedicated Column) -->
+          <td class="py-3 px-4 align-middle text-center">
+            ${livePnlHTML}
+          </td>
+
           <!-- Action / Status -->
           <td class="py-3 px-4 align-middle text-center">
             ${actionHTML}
@@ -3204,6 +3299,32 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       };
     }
 
+    async function pollLivePrices() {
+      try {
+        const res = await fetch('/api/prices/live');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.prices && Object.keys(data.prices).length > 0) {
+            let updated = false;
+            for (const item of rawFeedItems) {
+              if (item.symbol && data.prices[item.symbol] !== undefined) {
+                if (!item.order) item.order = {};
+                if (item.order.current_ltp !== data.prices[item.symbol]) {
+                  item.order.current_ltp = data.prices[item.symbol];
+                  updated = true;
+                }
+              }
+            }
+            if (updated) {
+              renderFeed();
+            }
+          }
+        }
+      } catch (err) {
+        console.debug('Live price poll skipped:', err);
+      }
+    }
+
     window.onload = function() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('auth_success') === 'true') {
@@ -3222,6 +3343,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       fetchFeed();
       connectSSE();
       setInterval(fetchFeed, 4000);
+      setInterval(pollLivePrices, 30000);
       setInterval(fetchTokenStatus, 30000);
       setInterval(updatePollerTimer, 1000);
       setInterval(updateCountdowns, 1000);
@@ -3641,6 +3763,35 @@ def create_app() -> FastAPI:
     @app.get("/api/feed")
     async def get_feed():
         return JSONResponse(content=state.feed_items)
+
+    @app.get("/api/prices/live")
+    async def get_live_prices():
+        """Fetch updated real-time market prices (LTP) and P&L for all active passed symbols."""
+        price_map: Dict[str, Any] = {}
+        for item in state.feed_items:
+            if item.get("is_noise") or item.get("sentiment") in ("NEUTRAL", "MARKET_CLOSED"):
+                continue
+            sym = item.get("symbol", "")
+            if not sym or sym in price_map:
+                continue
+            sec_id = item.get("security_id") or "0"
+            live_ltp = get_live_market_ltp(sym, security_id=sec_id, dhan_client=state.executor.dhan)
+            if live_ltp and live_ltp > 0:
+                price_map[sym] = round(live_ltp, 2)
+
+        # Update current_ltp on matching feed_items in memory
+        for item in state.feed_items:
+            sym = item.get("symbol", "")
+            if sym in price_map and "order" in item:
+                item["order"]["current_ltp"] = price_map[sym]
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "timestamp": get_ist_now().strftime("%H:%M:%S IST"),
+                "prices": price_map,
+            }
+        )
 
     @app.post("/api/feed/clear")
     async def clear_feed():

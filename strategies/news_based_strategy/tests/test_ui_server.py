@@ -755,6 +755,42 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("Market Closed", matching[0]["filter_reason"])
             self.assertEqual(matching[0]["order"]["status"], "MARKET_CLOSED")
 
+    def test_get_live_prices_api(self):
+        """GET /api/prices/live returns real-time market prices for active passed feed items."""
+        self.app.state.dashboard.feed_items = [
+            {
+                "seq_id": "TEST_PRICE_001",
+                "symbol": "BEL",
+                "sentiment": "BULLISH",
+                "is_noise": False,
+                "order": {
+                    "entry_price": 300.0,
+                    "target_price": 309.0,
+                    "stop_loss_price": 297.0,
+                },
+            },
+            {
+                "seq_id": "TEST_PRICE_002",
+                "symbol": "TATASTEEL",
+                "sentiment": "NEUTRAL",
+                "is_noise": True,
+                "order": {
+                    "entry_price": 0.0,
+                },
+            },
+        ]
+        res = self.client.get("/api/prices/live")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "success")
+        self.assertIn("prices", data)
+        self.assertIn("BEL", data["prices"])
+        self.assertEqual(data["prices"]["BEL"], 300.0)
+        # Noise items should be skipped from live price queries
+        self.assertNotIn("TATASTEEL", data["prices"])
+        # Memory item should be updated with current_ltp
+        self.assertEqual(self.app.state.dashboard.feed_items[0]["order"]["current_ltp"], 300.0)
+
 
 if __name__ == "__main__":
     unittest.main()
