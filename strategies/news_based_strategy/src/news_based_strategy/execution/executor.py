@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple
 from news_based_strategy.core.models import TradeResult, TradeSignal
+from news_based_strategy.execution.quote import get_live_market_ltp
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.universe import resolve_security_id
 
@@ -350,7 +351,7 @@ class DhanExecutor:
         except (EOFError, KeyboardInterrupt):
             return False
 
-    def execute_order(self, signal: TradeSignal, ltp: float = 100.0) -> TradeResult:
+    def execute_order(self, signal: TradeSignal, ltp: Optional[float] = None) -> TradeResult:
         """Place an order or simulate execution with staleness circuit breaker, SecID, and Super Orders."""
         safe_product = RiskManager.get_safe_product_type(signal.action, signal.product_type)
 
@@ -358,6 +359,10 @@ class DhanExecutor:
         effective_sec_id = signal.security_id
         if not effective_sec_id or effective_sec_id == "0":
             effective_sec_id = resolve_security_id(signal.symbol) or "0"
+
+        # Resolve live market LTP if not explicitly provided
+        if ltp is None or ltp <= 0:
+            ltp = get_live_market_ltp(signal.symbol, security_id=effective_sec_id, dhan_client=self.dhan)
 
         if not self.dry_run and (not effective_sec_id or effective_sec_id == "0"):
             remarks = f"ORDER REJECTED: Could not resolve Dhan security ID for {signal.symbol}"

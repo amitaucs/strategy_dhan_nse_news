@@ -25,23 +25,11 @@ from news_based_strategy.ingestion.universe import (
     resolve_security_id,
     sync_dhan_fno_symbols,
 )
+from news_based_strategy.execution.quote import get_live_market_ltp
 from news_based_strategy.intelligence.analyzer import FilingAnalyzer
 from news_based_strategy.storage.repository import StrategyStorage
 
 logger = logging.getLogger(__name__)
-
-SIMULATED_LTPS: dict[str, float] = {
-    "BEL": 300.0,
-    "BANKINDIA": 120.0,
-    "TATASTEEL": 150.0,
-    "INFY": 1850.0,
-    "RELIANCE": 2950.0,
-    "HDFCBANK": 1650.0,
-    "TATAMOTORS": 1050.0,
-    "SBIN": 820.0,
-    "HAL": 4700.0,
-    "BHEL": 280.0,
-}
 
 
 class AppLoginRequest(BaseModel):
@@ -203,7 +191,7 @@ class DashboardState:
             action = "BUY" if is_bullish else "SELL"
             sym = audit.get("symbol", "")
             sec_id = resolve_security_id(sym) or "0"
-            ltp = SIMULATED_LTPS.get(sym.upper(), 300.0)
+            ltp = get_live_market_ltp(sym, security_id=sec_id, dhan_client=self.executor.dhan)
 
             entry_price, tp_price, sl_price = RiskManager.calculate_super_order_levels(
                 ltp=ltp,
@@ -408,7 +396,7 @@ class DashboardState:
             return None
 
         sec_id = resolve_security_id(ann.symbol) or "0"
-        ltp = SIMULATED_LTPS.get(ann.symbol.upper(), 300.0)
+        ltp = get_live_market_ltp(ann.symbol, security_id=sec_id, dhan_client=self.executor.dhan)
 
         # 2. Gate Gemini LLM evaluation strictly to live market trading hours (09:15 to 14:45 IST cutoff)
         if not bypass_market_hours:
@@ -3717,7 +3705,7 @@ def create_app() -> FastAPI:
     @app.post("/api/orders/place")
     async def place_order(req: PlaceOrderRequest):
         sec_id = resolve_security_id(req.symbol) or "0"
-        ltp = req.ltp or SIMULATED_LTPS.get(req.symbol.upper(), 300.0)
+        ltp = req.ltp or get_live_market_ltp(req.symbol, security_id=sec_id, dhan_client=state.executor.dhan)
 
         matching_item = next((item for item in state.feed_items if item.get("seq_id") == req.seq_id), None)
         exchange_time = matching_item.get("an_dt") if matching_item else None

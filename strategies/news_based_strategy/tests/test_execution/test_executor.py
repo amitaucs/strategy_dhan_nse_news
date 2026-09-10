@@ -323,6 +323,68 @@ class TestDhanExecutor(unittest.TestCase):
         self.assertEqual(call2_kwargs["product_type"], "INTRA")
 
 
+
+class TestLiveMarketLTP(unittest.TestCase):
+    """Test suite for get_live_market_ltp multi-tier resolution."""
+
+    def test_dhan_broker_quote_success(self):
+        """Tier 1: When Dhan client returns valid ticker data, use it."""
+        from news_based_strategy.execution.quote import get_live_market_ltp, _LTP_CACHE
+        _LTP_CACHE.clear()
+
+        mock_dhan = MagicMock()
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {
+                "NSE_EQ": {
+                    "18652": {"last_price": 464.85}
+                }
+            }
+        }
+        price = get_live_market_ltp("ICICIPRULI", security_id="18652", dhan_client=mock_dhan)
+        self.assertEqual(price, 464.85)
+
+    def test_market_feed_fallback_when_dhan_fails(self):
+        """Tier 2: When Dhan fails, fall back to market feed."""
+        from news_based_strategy.execution.quote import get_live_market_ltp, _LTP_CACHE
+        _LTP_CACHE.clear()
+
+        mock_dhan = MagicMock()
+        mock_dhan.ticker_data.return_value = {"status": "failure"}
+
+        with patch("news_based_strategy.execution.quote._fetch_from_market_feed", return_value=462.50):
+            price = get_live_market_ltp("ICICIPRULI", security_id="18652", dhan_client=mock_dhan)
+            self.assertEqual(price, 462.50)
+
+    def test_reference_fallback_when_all_fail(self):
+        """Tier 3: When all live sources fail, use reference fallback."""
+        from news_based_strategy.execution.quote import get_live_market_ltp, _LTP_CACHE
+        _LTP_CACHE.clear()
+
+        with patch("news_based_strategy.execution.quote._fetch_from_market_feed", return_value=None):
+            price = get_live_market_ltp("ICICIPRULI", security_id="18652", dhan_client=None)
+            self.assertEqual(price, 465.0)
+
+    def test_ttl_caching(self):
+        """Test that cached price is returned without calling Dhan or feed repeatedly."""
+        from news_based_strategy.execution.quote import get_live_market_ltp, _LTP_CACHE
+        _LTP_CACHE.clear()
+
+        mock_dhan = MagicMock()
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {"NSE_EQ": {"18652": {"last_price": 460.0}}}
+        }
+        price1 = get_live_market_ltp("ICICIPRULI", security_id="18652", dhan_client=mock_dhan)
+        self.assertEqual(price1, 460.0)
+        self.assertEqual(mock_dhan.ticker_data.call_count, 1)
+
+        # Second call should use cache
+        price2 = get_live_market_ltp("ICICIPRULI", security_id="18652", dhan_client=mock_dhan)
+        self.assertEqual(price2, 460.0)
+        self.assertEqual(mock_dhan.ticker_data.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

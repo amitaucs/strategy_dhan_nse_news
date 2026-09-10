@@ -22,10 +22,16 @@ class TestUIServer(unittest.TestCase):
             lambda *args, **kwargs: StrategyStorage(db_path=self.test_db),
         )
         self.storage_patcher.start()
+        self.market_feed_patcher = patch(
+            "news_based_strategy.execution.quote._fetch_from_market_feed",
+            return_value=None,
+        )
+        self.market_feed_patcher.start()
         self.app = create_app()
         self.client = TestClient(self.app, cookies={"app_session_token": self.session_token})
 
     def tearDown(self):
+        self.market_feed_patcher.stop()
         self.storage_patcher.stop()
         self.storage.close()
         self.temp_dir.cleanup()
