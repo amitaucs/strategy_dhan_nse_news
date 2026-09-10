@@ -1202,17 +1202,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         </div>
       </div>
 
-      <!-- Financial Metric Tags -->
-      <div>
-        <h4 class="text-[11px] font-bold uppercase text-gray-400 tracking-wider mb-1.5 flex items-center gap-1.5">
-          <span>📊</span>
-          <span>Extracted Financial Metrics</span>
-        </h4>
-        <div id="drawer-metric-badges" class="flex flex-wrap gap-1.5">
-          <span class="text-xs text-gray-500 italic">No structured metrics extracted</span>
-        </div>
-      </div>
-
       <!-- AI Catalyst Analysis -->
       <div class="bg-indigo-950/30 border border-indigo-500/30 rounded-xl p-3.5 space-y-2">
         <div class="flex items-center justify-between border-b border-indigo-500/20 pb-2">
@@ -1826,23 +1815,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const freshnessPill = document.getElementById('drawer-freshness-pill');
       freshnessPill.textContent = fresh.text;
       freshnessPill.className = `px-2 py-0.5 rounded text-[11px] font-bold border ${fresh.badgeClass}`;
-      
-      // Extracted metrics
-      const metricsContainer = document.getElementById('drawer-metric-badges');
-      const metrics = extractFinancialMetrics(`${item.desc} ${item.details || ''}`);
-      if (metrics.length > 0) {
-        metricsContainer.innerHTML = metrics.map(m => {
-          if (m.type === 'currency') {
-            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/60 rounded-lg shadow-sm">💰 ${m.value}</span>`;
-          } else if (m.type === 'percent') {
-            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 rounded-lg shadow-sm">📈 ${m.value}</span>`;
-          } else {
-            return `<span class="px-2 py-0.5 text-xs font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-700/60 rounded-lg shadow-sm">🏆 ${m.value}</span>`;
-          }
-        }).join('');
-      } else {
-        metricsContainer.innerHTML = `<span class="text-xs text-gray-500 italic">No structured numerical metrics found</span>`;
-      }
       
       document.getElementById('drawer-catalyst-category').textContent = (item.catalyst_type || 'GENERAL').toUpperCase();
       document.getElementById('drawer-confidence-pill').textContent = `${item.confidence || 0}% Conf`;
@@ -2772,18 +2744,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       else if (isNoise) borderAccentClass = 'border-l-4 border-l-gray-600';
       else if (!isBullish) borderAccentClass = 'border-l-4 border-l-rose-500';
 
-      // Extracted inline metric badges (up to 2)
-      const metrics = extractFinancialMetrics(`${item.desc} ${item.details || ''}`).slice(0, 2);
-      const metricsHTML = metrics.map(m => {
-        if (m.type === 'currency') {
-          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 rounded">💰 ${m.value}</span>`;
-        } else if (m.type === 'percent') {
-          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-800 rounded">📈 ${m.value}</span>`;
-        } else {
-          return `<span class="px-1.5 py-0.2 text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 rounded">🏆 ${m.value}</span>`;
-        }
-      }).join(' ');
-
       // Freshness state calculation
       const fresh = getFreshnessState(item.an_dt);
 
@@ -2810,23 +2770,25 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           </div>
         `;
       } else if (isBullish) {
+        const isHighConviction = item.material_impact && (item.confidence >= 70);
         verdictHTML = `
           <div class="inline-flex flex-col items-center">
             <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 shadow-sm">
               <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               BULLISH 🟢 ${item.confidence}%
             </span>
-            <span class="text-[10px] text-emerald-400 font-mono mt-1">High Conviction (≥1.5%)</span>
+            <span class="text-[10px] ${isHighConviction ? 'text-emerald-400 font-semibold' : 'text-amber-400/90'} font-mono mt-1">${isHighConviction ? 'High Conviction (≥1.5%)' : 'Non-Material (<1.5% Move)'}</span>
           </div>
         `;
       } else {
+        const isHighConviction = item.material_impact && (item.confidence >= 70);
         verdictHTML = `
           <div class="inline-flex flex-col items-center">
             <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1.5 shadow-sm">
               <span class="w-2 h-2 rounded-full bg-rose-400"></span>
               BEARISH 🔴 ${item.confidence}%
             </span>
-            <span class="text-[10px] text-rose-400 font-mono mt-1">Negative Catalyst</span>
+            <span class="text-[10px] ${isHighConviction ? 'text-rose-400 font-semibold' : 'text-amber-400/90'} font-mono mt-1">${isHighConviction ? 'Negative Catalyst (≥1.5%)' : 'Non-Material (<1.5% Move)'}</span>
           </div>
         `;
       }
@@ -2946,9 +2908,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             </div>
           `;
         } else {
+          const skipLabel = item.material_impact === false ? 'Non-Material (<1.5%)' : (order.remarks || 'Below Threshold');
           actionHTML = `
-            <div class="text-center text-[11px] text-gray-500 font-mono">
-              <span>⏸️ Skipped</span>
+            <div class="flex flex-col items-center text-center font-mono">
+              <span class="px-2 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700 rounded flex items-center gap-1 shadow-sm" title="${skipLabel}">
+                <span>⏸️</span> Skipped
+              </span>
+              <span class="text-[10px] text-amber-500/80 mt-1 max-w-[150px] truncate" title="${skipLabel}">
+                ${skipLabel}
+              </span>
             </div>
           `;
         }
@@ -3000,9 +2968,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             </div>
           `;
         } else {
+          const skipLabel = item.material_impact === false ? 'Non-Material (<1.5%)' : (order.remarks || 'Below Threshold');
           actionHTML = `
-            <div class="text-center text-[11px] text-gray-500 font-mono">
-              <span>⏸️ Skipped</span>
+            <div class="flex flex-col items-center text-center font-mono">
+              <span class="px-2 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700 rounded flex items-center gap-1 shadow-sm" title="${skipLabel}">
+                <span>⏸️</span> Skipped
+              </span>
+              <span class="text-[10px] text-amber-500/80 mt-1 max-w-[150px] truncate" title="${skipLabel}">
+                ${skipLabel}
+              </span>
             </div>
           `;
         }
@@ -3065,7 +3039,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                 </span>
                 <span class="text-[11px] text-emerald-400 font-mono">⚡ Passed</span>
               `)}
-              ${metricsHTML}
             </div>
             <div class="text-xs font-semibold ${isNoise ? 'text-gray-300' : 'text-gray-100'} hover:text-white flex items-center gap-1.5">
               <span>${item.desc}</span>
