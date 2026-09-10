@@ -3,7 +3,7 @@
 Supports remote MySQL (MariaDB) with transparent local SQLite fallback.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import hashlib
 import logging
@@ -14,7 +14,7 @@ import sqlite3
 import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 from news_based_strategy.config import settings
-from news_based_strategy.core.models import FilingAudit, TradeResult
+from news_based_strategy.core.models import FilingAudit, TradeResult, IST_TZ
 from news_based_strategy.execution.risk import get_ist_now
 
 logger = logging.getLogger(__name__)
@@ -492,25 +492,34 @@ class StrategyStorage:
                     if target_date:
                         cursor.execute(
                             """
-                            SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                            FROM audit_logs
-                            WHERE DATE(created_at) = %s
-                            ORDER BY id DESC
+                            SELECT a.seq_id, a.symbol, a.sentiment, a.confidence, a.catalyst_type, a.material_impact, a.summary, a.created_at, p.an_dt
+                            FROM audit_logs a
+                            LEFT JOIN processed_filings p ON a.seq_id = p.seq_id
+                            WHERE DATE(CONVERT_TZ(a.created_at, '+00:00', '+05:30')) = %s OR DATE(a.created_at) = %s
+                            ORDER BY a.id DESC
                             LIMIT %s
                             """,
-                            (target_date, limit),
+                            (target_date, target_date, limit),
                         )
                     else:
                         cursor.execute(
                             """
-                            SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                            FROM audit_logs
-                            ORDER BY id DESC
+                            SELECT a.seq_id, a.symbol, a.sentiment, a.confidence, a.catalyst_type, a.material_impact, a.summary, a.created_at, p.an_dt
+                            FROM audit_logs a
+                            LEFT JOIN processed_filings p ON a.seq_id = p.seq_id
+                            ORDER BY a.id DESC
                             LIMIT %s
                             """,
                             (limit,),
                         )
                     for row in cursor.fetchall():
+                        created_at_val = row[7]
+                        if isinstance(created_at_val, datetime):
+                            ist_dt = created_at_val.replace(tzinfo=timezone.utc).astimezone(IST_TZ).replace(tzinfo=None)
+                            created_at_str = ist_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        else:
+                            created_at_str = str(created_at_val) if created_at_val is not None else ""
+                        an_dt_val = str(row[8]) if (len(row) > 8 and row[8]) else ""
                         results.append({
                             "seq_id": str(row[0]),
                             "symbol": str(row[1]),
@@ -519,7 +528,8 @@ class StrategyStorage:
                             "catalyst_type": str(row[4]),
                             "material_impact": bool(row[5]),
                             "summary": str(row[6]),
-                            "created_at": str(row[7]),
+                            "created_at": created_at_str,
+                            "an_dt": an_dt_val,
                         })
                     return results
             elif self._sqlite_conn:
@@ -527,10 +537,11 @@ class StrategyStorage:
                 if target_date:
                     cursor.execute(
                         """
-                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                        FROM audit_logs
-                        WHERE DATE(created_at) = ?
-                        ORDER BY id DESC
+                        SELECT a.seq_id, a.symbol, a.sentiment, a.confidence, a.catalyst_type, a.material_impact, a.summary, a.created_at, p.an_dt
+                        FROM audit_logs a
+                        LEFT JOIN processed_filings p ON a.seq_id = p.seq_id
+                        WHERE DATE(a.created_at) = ?
+                        ORDER BY a.id DESC
                         LIMIT ?
                         """,
                         (target_date, limit),
@@ -538,9 +549,10 @@ class StrategyStorage:
                 else:
                     cursor.execute(
                         """
-                        SELECT seq_id, symbol, sentiment, confidence, catalyst_type, material_impact, summary, created_at
-                        FROM audit_logs
-                        ORDER BY id DESC
+                        SELECT a.seq_id, a.symbol, a.sentiment, a.confidence, a.catalyst_type, a.material_impact, a.summary, a.created_at, p.an_dt
+                        FROM audit_logs a
+                        LEFT JOIN processed_filings p ON a.seq_id = p.seq_id
+                        ORDER BY a.id DESC
                         LIMIT ?
                         """,
                         (limit,),
@@ -555,6 +567,7 @@ class StrategyStorage:
                         "material_impact": bool(row[5]),
                         "summary": str(row[6]),
                         "created_at": str(row[7]),
+                        "an_dt": str(row[8]) if (len(row) > 8 and row[8]) else "",
                     })
                 return results
         except Exception as e:

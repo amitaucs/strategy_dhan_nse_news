@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import unittest
+from unittest.mock import patch
 from news_based_strategy.execution.risk import RiskManager
 
 
@@ -113,37 +114,39 @@ class TestRiskManager(unittest.TestCase):
 
         executor = DhanExecutor(dry_run=True, max_news_age_seconds=120)
 
-        # Stale signal (from yesterday / 1 hour ago)
-        stale_signal = TradeSignal(
-            symbol="BEL",
-            security_id="383",
-            action="BUY",
-            product_type="CNC",
-            confidence=90,
-            catalyst_type="ORDER_WIN",
-            summary="Order win",
-            exchange_time="01-Jan-2026 10:00:00",
-        )
-        res = executor.execute_order(stale_signal, ltp=300.0)
-        self.assertFalse(res.success)
-        self.assertEqual(res.quantity, 0)
-        self.assertIn("ORDER REJECTED: Catalyst too stale", res.remarks)
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "Market is open")):
+            # Stale signal (from yesterday / 1 hour ago)
+            stale_signal = TradeSignal(
+                symbol="BEL",
+                security_id="383",
+                action="BUY",
+                product_type="CNC",
+                confidence=90,
+                catalyst_type="ORDER_WIN",
+                summary="Order win",
+                exchange_time="01-Jan-2026 10:00:00",
+            )
+            res = executor.execute_order(stale_signal, ltp=300.0)
+            self.assertFalse(res.success)
+            self.assertEqual(res.quantity, 0)
+            self.assertIn("ORDER REJECTED: Catalyst too stale", res.remarks)
 
-        # Fresh signal (exchange_time None or recent)
-        now_str = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
-        fresh_signal = TradeSignal(
-            symbol="BEL",
-            security_id="383",
-            action="BUY",
-            product_type="CNC",
-            confidence=90,
-            catalyst_type="ORDER_WIN",
-            summary="Order win",
-            exchange_time=now_str,
-        )
-        res2 = executor.execute_order(fresh_signal, ltp=300.0)
-        self.assertTrue(res2.success)
-        self.assertGreater(res2.quantity, 0)
+            # Fresh signal (exchange_time None or recent)
+            from news_based_strategy.execution.risk import get_ist_now
+            now_str = get_ist_now().strftime("%d-%b-%Y %H:%M:%S")
+            fresh_signal = TradeSignal(
+                symbol="BEL",
+                security_id="383",
+                action="BUY",
+                product_type="CNC",
+                confidence=90,
+                catalyst_type="ORDER_WIN",
+                summary="Order win",
+                exchange_time=now_str,
+            )
+            res2 = executor.execute_order(fresh_signal, ltp=300.0)
+            self.assertTrue(res2.success)
+            self.assertGreater(res2.quantity, 0)
 
     def test_calculate_super_order_levels_buy(self):
         # LTP = ₹1000, 3% TP, 1% SL, 0.2% slippage

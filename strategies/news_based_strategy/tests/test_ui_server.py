@@ -18,7 +18,7 @@ class TestUIServer(unittest.TestCase):
         self.storage = StrategyStorage(db_path=self.test_db)
         self.session_token = self.storage.create_session("amit")
         self.storage_patcher = patch(
-            "news_based_strategy.ui.server.StrategyStorage",
+            "news_based_strategy.ui.state.StrategyStorage",
             lambda *args, **kwargs: StrategyStorage(db_path=self.test_db),
         )
         self.storage_patcher.start()
@@ -27,10 +27,16 @@ class TestUIServer(unittest.TestCase):
             return_value=None,
         )
         self.market_feed_patcher.start()
+        self.trade_allowed_patcher = patch(
+            "news_based_strategy.execution.risk.RiskManager.is_trade_allowed",
+            return_value=(True, "Market is open"),
+        )
+        self.trade_allowed_patcher.start()
         self.app = create_app()
         self.client = TestClient(self.app, cookies={"app_session_token": self.session_token})
 
     def tearDown(self):
+        self.trade_allowed_patcher.stop()
         self.market_feed_patcher.stop()
         self.storage_patcher.stop()
         self.storage.close()
@@ -38,7 +44,7 @@ class TestUIServer(unittest.TestCase):
 
     def test_get_index_html(self):
         """Root GET request with active session should serve dashboard with market status indicator, cutoff badge, square-off button, and filter dropdown."""
-        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
+        with patch("news_based_strategy.ui.routes.settings", dataclasses.replace(settings, is_simulate_feed=True)):
             res = self.client.get("/")
             self.assertEqual(res.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res.text)
@@ -54,7 +60,7 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("Simulate Feed", res.text)
             self.assertIn("Test / Simulate Sample Catalyst Feed", res.text)
 
-        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=False)):
+        with patch("news_based_strategy.ui.routes.settings", dataclasses.replace(settings, is_simulate_feed=False)):
             res_no_sim = self.client.get("/")
             self.assertEqual(res_no_sim.status_code, 200)
             self.assertIn("NSE Catalyst Trading Terminal", res_no_sim.text)
@@ -265,7 +271,7 @@ class TestUIServer(unittest.TestCase):
 
     def test_simulate_api_forbidden_when_disabled(self):
         """Simulation endpoint returns 403 Forbidden when IS_SIMULATE_FEED is false."""
-        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=False)):
+        with patch("news_based_strategy.ui.routes.settings", dataclasses.replace(settings, is_simulate_feed=False)):
             res = self.client.post("/api/simulate")
             self.assertEqual(res.status_code, 403)
             self.assertIn("Simulated feed is disabled", res.json()["detail"])
@@ -297,7 +303,7 @@ class TestUIServer(unittest.TestCase):
 
         mock_analyzer.audit.side_effect = side_effect
 
-        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, is_simulate_feed=True)):
+        with patch("news_based_strategy.ui.routes.settings", dataclasses.replace(settings, is_simulate_feed=True)):
             res = self.client.post("/api/simulate")
             self.assertEqual(res.status_code, 200)
             data = res.json()
@@ -399,6 +405,12 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(preserved_row[1], "BULLISH")
         self.assertEqual(preserved_row[2], 90)
 
+        # Cleanup test fixture
+        cursor.execute("DELETE FROM audit_logs WHERE seq_id = 'TEST_SEQ_PRESERVE_001'")
+        cursor.execute("DELETE FROM processed_filings WHERE seq_id = 'TEST_SEQ_PRESERVE_001'")
+        if hasattr(self.app.state.dashboard.storage, "_mysql_conn") and self.app.state.dashboard.storage._mysql_conn:
+            self.app.state.dashboard.storage._mysql_conn.commit()
+
     def test_get_and_update_token_api(self):
         """Test token retrieval and runtime update endpoints."""
         # 1. GET token status
@@ -431,17 +443,18 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(status_res.json()["client_id"], "1100223344")
         self.assertIn("eyJhbGci...", status_res.json()["masked_token"])
 
-    @patch("news_based_strategy.ui.server.requests.post")
+    @patch("news_based_strategy.ui.auth.requests.post")
     def test_dhan_oauth_endpoints(self, mock_post):
         """Test OAuth login initiation and callback consent exchange."""
-        with patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="")):
-            app = create_app()
-            client = TestClient(app, cookies={"app_session_token": self.session_token})
+        with patch("news_based_strategy.ui.routes.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="")):
+            with patch("news_based_strategy.ui.state.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="")):
+                app = create_app()
+                client = TestClient(app, cookies={"app_session_token": self.session_token})
 
-            # 1. Missing credentials returns 400
-            res_fail = client.get("/api/auth/dhan/login")
-            self.assertEqual(res_fail.status_code, 400)
-            self.assertFalse(res_fail.json()["success"])
+                # 1. Missing credentials returns 400
+                res_fail = client.get("/api/auth/dhan/login")
+                self.assertEqual(res_fail.status_code, 400)
+                self.assertFalse(res_fail.json()["success"])
 
             # 2. Save OAuth Keys
             save_res = client.post(
@@ -513,8 +526,8 @@ class TestUIServer(unittest.TestCase):
             storage.close()
 
             # Create new server instance pointing to the same DB
-            with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
-                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="", dhan_access_token="")):
+            with unittest.mock.patch("news_based_strategy.ui.state.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
+                with unittest.mock.patch("news_based_strategy.ui.state.settings", dataclasses.replace(settings, dhan_client_id="", dhan_app_id="", dhan_app_secret="", dhan_access_token="")):
                     new_app = create_app()
                     new_client = TestClient(new_app)
 
@@ -540,8 +553,8 @@ class TestUIServer(unittest.TestCase):
             storage.set_setting("dhan_client_id", "OLD_DB_CLIENT_ID")
             storage.close()
 
-            with unittest.mock.patch("news_based_strategy.ui.server.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
-                with unittest.mock.patch("news_based_strategy.ui.server.settings", dataclasses.replace(settings, dhan_client_id="ENV_CLIENT_ID", dhan_app_id="ENV_APP_ID", dhan_app_secret="ENV_APP_SECRET")):
+            with unittest.mock.patch("news_based_strategy.ui.state.StrategyStorage", lambda *args, **kwargs: StrategyStorage(db_path=test_db)):
+                with unittest.mock.patch("news_based_strategy.ui.state.settings", dataclasses.replace(settings, dhan_client_id="ENV_CLIENT_ID", dhan_app_id="ENV_APP_ID", dhan_app_secret="ENV_APP_SECRET")):
                     new_app = create_app()
                     new_client = TestClient(new_app)
 
@@ -742,7 +755,7 @@ class TestUIServer(unittest.TestCase):
         dashboard = self.app.state.dashboard
         dashboard.analyzer = MagicMock()
 
-        with patch("news_based_strategy.ui.server.RiskManager.is_trade_allowed", return_value=(False, "Market is closed for the day (Closed at 15:30 IST)")):
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(False, "Market is closed for the day (Closed at 15:30 IST)")):
             result = dashboard.process_and_add_announcement(ann, bypass_market_hours=False)
             self.assertIsNone(result)
             self.assertFalse(dashboard.analyzer.audit.called)

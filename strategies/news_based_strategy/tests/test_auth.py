@@ -16,7 +16,7 @@ class TestAuthentication(unittest.TestCase):
         self.test_db = f"{self.temp_dir.name}/test_auth.db"
         self.storage = StrategyStorage(db_path=self.test_db)
         self.storage_patcher = patch(
-            "news_based_strategy.ui.server.StrategyStorage",
+            "news_based_strategy.ui.state.StrategyStorage",
             lambda *args, **kwargs: StrategyStorage(db_path=self.test_db),
         )
         self.storage_patcher.start()
@@ -133,7 +133,7 @@ class TestAuthentication(unittest.TestCase):
 
     def test_dhan_sso_endpoint_with_mocked_consent(self):
         """GET /api/auth/dhan/sso returns Dhan consent login URL."""
-        with patch("news_based_strategy.ui.server.generate_dhan_consent_url") as mock_consent:
+        with patch("news_based_strategy.ui.routes.generate_dhan_consent_url") as mock_consent:
             mock_consent.return_value = (True, "https://auth.dhan.co/login/consentApp-login?consentAppId=TEST_123")
             self.app.state.dashboard.app_id = "test_app"
             self.app.state.dashboard.app_secret = "test_sec"
