@@ -31,11 +31,16 @@ class StrategyEngine:
         fno_only: bool = True,
         filter_noise: bool = True,
         extract_pdf: bool = True,
+        poll_market_hours_only: Optional[bool] = None,
     ):
+        self.poll_market_hours_only = settings.poll_market_hours_only if poll_market_hours_only is None else poll_market_hours_only
         self.monitor = monitor or NSEFilingMonitor(
             base_url=settings.nse_base_url,
             api_url=settings.nse_api_url,
             headers=settings.headers,
+            market_hours_only=self.poll_market_hours_only,
+            market_open_time=settings.market_open_time,
+            market_close_time=settings.market_close_time,
         )
         self.storage = storage or StrategyStorage(settings.database_path)
         persisted_client_id = self.storage.get_setting("dhan_client_id")
@@ -124,17 +129,18 @@ class StrategyEngine:
 
         return None
 
-    def run_cycle(self, symbol_filter: Optional[str] = None) -> list[Announcement]:
+    def run_cycle(self, symbol_filter: Optional[str] = None, bypass_market_hours: bool = False) -> list[Announcement]:
         """Execute a single polling and evaluation cycle."""
         new_items = self.monitor.get_new_announcements(
             symbol_filter=symbol_filter,
             fno_only=self.fno_only,
             filter_noise=self.filter_noise,
             extract_pdf=self.extract_pdf,
+            bypass_market_hours=bypass_market_hours,
         )
 
         for item in new_items:
-            self.process_announcement(item)
+            self.process_announcement(item, bypass_market_hours=bypass_market_hours)
 
         return new_items
 

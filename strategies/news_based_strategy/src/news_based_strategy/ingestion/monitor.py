@@ -24,6 +24,9 @@ class NSEFilingMonitor:
         auto_refresh: bool = True,
         pdf_extractor: Optional[PDFExtractor] = None,
         storage=None,
+        market_hours_only: bool = False,
+        market_open_time: Optional[str] = None,
+        market_close_time: Optional[str] = None,
     ):
         self.base_url = base_url
         self.api_url = api_url or f"{base_url}/api/corporate-announcements?index=equities"
@@ -31,6 +34,9 @@ class NSEFilingMonitor:
         self.timeout = timeout
         self.auto_refresh = auto_refresh
         self.storage = storage
+        self.market_hours_only = market_hours_only
+        self.market_open_time = market_open_time
+        self.market_close_time = market_close_time
         self.seen_seq_ids: Set[str] = set()
 
         if self.storage:
@@ -198,8 +204,14 @@ class NSEFilingMonitor:
 
         return 0, b""
 
-    def fetch_latest(self) -> List[Announcement]:
+    def fetch_latest(self, bypass_market_hours: bool = False) -> List[Announcement]:
         """Fetch latest announcements from NSE and parse into Announcement models."""
+        if self.market_hours_only and not bypass_market_hours:
+            from news_based_strategy.execution.risk import RiskManager
+            if not RiskManager.is_market_open(open_str=self.market_open_time, close_str=self.market_close_time):
+                logger.debug("Skipping NSE news fetch: Market is closed (market_hours_only=True).")
+                return []
+
         try:
             status_code, body = self._do_get(self.api_url)
 
@@ -288,11 +300,12 @@ class NSEFilingMonitor:
         filter_noise: bool = True,
         extract_pdf: bool = True,
         initial_mark_all_seen: bool = False,
+        bypass_market_hours: bool = False,
         on_noise_filtered: Optional[Callable[[Announcement, str], None]] = None,
         on_filtered: Optional[Callable[[Announcement, str], None]] = None,
     ) -> List[Announcement]:
         """Fetch announcements and filter by F&O universe, noise rules, and deduplication."""
-        all_announcements = self.fetch_latest()
+        all_announcements = self.fetch_latest(bypass_market_hours=bypass_market_hours)
         new_items: List[Announcement] = []
         is_first_run = len(self.seen_seq_ids) == 0
 

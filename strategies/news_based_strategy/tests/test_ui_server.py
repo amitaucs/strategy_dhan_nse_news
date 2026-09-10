@@ -54,6 +54,13 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("NSE Catalyst Trading Terminal", res_no_sim.text)
             self.assertIn("market-status-badge", res_no_sim.text)
             self.assertIn("cutoff-status-badge", res_no_sim.text)
+            self.assertIn("radar-badge-container", res_no_sim.text)
+            self.assertIn("radar-ping-dot", res_no_sim.text)
+            self.assertIn("radar-solid-dot", res_no_sim.text)
+            self.assertIn("empty-state", res_no_sim.text)
+            self.assertIn("empty-radar-ping", res_no_sim.text)
+            self.assertIn("empty-radar-box", res_no_sim.text)
+            self.assertIn("empty-state-heading", res_no_sim.text)
             self.assertIn("square-off-btn", res_no_sim.text)
             self.assertIn("Square Off (15:00)", res_no_sim.text)
             self.assertIn("feed-filter-select", res_no_sim.text)
@@ -82,6 +89,9 @@ class TestUIServer(unittest.TestCase):
         self.assertIn("today_orders_count", data)
         self.assertIn("confidence_threshold", data)
         self.assertIn("gemini_model", data)
+        self.assertIn("poll_market_hours_only", data)
+        self.assertIn("market_open_time", data)
+        self.assertIn("market_close_time", data)
 
     def test_toggle_auto_order_api(self):
         """Toggle auto order endpoint switches state cleanly."""

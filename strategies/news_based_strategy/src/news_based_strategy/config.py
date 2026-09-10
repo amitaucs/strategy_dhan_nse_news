@@ -46,8 +46,11 @@ class Settings:
     app_env: str = os.getenv("APP_ENV", "development")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # Ingestion configuration
+    # Ingestion & Poller Configuration
     poll_interval_seconds: int = int(os.getenv("NSE_POLL_INTERVAL_SECONDS", "60"))
+    poll_market_hours_only: bool = os.getenv("POLL_MARKET_HOURS_ONLY", os.getenv("NSE_POLL_MARKET_HOURS_ONLY", "true")).lower() in ("true", "1", "yes")
+    market_open_time: str = os.getenv("MARKET_OPEN_TIME", os.getenv("MARKET_START_TIME", "09:15"))
+    market_close_time: str = os.getenv("MARKET_CLOSE_TIME", os.getenv("MARKET_END_TIME", "15:30"))
     nse_base_url: str = os.getenv("NSE_BASE_URL", "https://www.nseindia.com")
     nse_api_url: str = os.getenv(
         "NSE_ANNOUNCEMENTS_API",

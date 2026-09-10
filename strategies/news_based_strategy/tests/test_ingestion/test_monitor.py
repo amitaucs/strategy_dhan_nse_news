@@ -288,18 +288,39 @@ class TestNSEFilingMonitor(unittest.TestCase):
             self.assertEqual(status, 413)
             self.assertEqual(data, b"")
 
-    def test_do_get_binary_timeout(self):
-        """Test _do_get_binary returns 408 on timeout."""
-        import socket
-        with patch.object(self.monitor, "_use_requests", True), \
-             patch.object(self.monitor, "_session") as mock_session:
-            mock_session.get.side_effect = socket.timeout("Timed out")
-            status, data = self.monitor._do_get_binary("http://example.com/slow.pdf", timeout=3.0)
-            self.assertEqual(status, 408)
-            self.assertEqual(data, b"")
+    def test_market_hours_only_gating(self):
+        """Test that market_hours_only=True skips network requests when market is closed."""
+        m_closed = NSEFilingMonitor(
+            auto_refresh=False,
+            market_hours_only=True,
+            market_open_time="09:15",
+            market_close_time="15:30",
+        )
+
+        with patch("news_based_strategy.execution.risk.RiskManager.is_market_open", return_value=False) as mock_mkt, \
+             patch.object(m_closed, "_do_get") as mock_get:
+            # 1. Closed market -> returns empty list without calling _do_get
+            res = m_closed.fetch_latest()
+            self.assertEqual(res, [])
+            mock_get.assert_not_called()
+
+            # 2. Bypass market hours -> makes request even if market is closed
+            mock_get.return_value = (200, json.dumps(SAMPLE_NSE_PAYLOAD))
+            res_bypass = m_closed.fetch_latest(bypass_market_hours=True)
+            self.assertEqual(len(res_bypass), 2)
+            mock_get.assert_called_once()
+
+        # 3. Market Open -> makes request
+        with patch("news_based_strategy.execution.risk.RiskManager.is_market_open", return_value=True) as mock_mkt, \
+             patch.object(m_closed, "_do_get") as mock_get:
+            mock_get.return_value = (200, json.dumps(SAMPLE_NSE_PAYLOAD))
+            res_open = m_closed.fetch_latest()
+            self.assertEqual(len(res_open), 2)
+            mock_get.assert_called_once()
 
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

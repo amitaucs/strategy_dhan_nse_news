@@ -259,8 +259,14 @@ class DashboardState:
         """Continuously poll NSE announcements in background and broadcast actionable catalysts."""
         from news_based_strategy.ingestion.monitor import NSEFilingMonitor
 
-        monitor = NSEFilingMonitor(storage=self.storage)
-        print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
+        monitor = NSEFilingMonitor(
+            storage=self.storage,
+            market_hours_only=settings.poll_market_hours_only,
+            market_open_time=settings.market_open_time,
+            market_close_time=settings.market_close_time,
+        )
+        mkt_desc = f"Market Hours Only: {settings.market_open_time} - {settings.market_close_time} IST" if settings.poll_market_hours_only else "24/7 Scanning"
+        print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 Background NSE Radar Poller initialized (Interval: {settings.poll_interval_seconds}s | {mkt_desc}). Watching {len(get_fno_symbols())} F&O stocks.", flush=True)
         while True:
             try:
                 now = get_ist_now()
@@ -290,64 +296,86 @@ class DashboardState:
                     print(f"[{now.strftime('%H:%M:%S IST')}] ⏰ [15:00 AUTO SQUARE-OFF] Triggered automated square-off: {sq_res}", flush=True)
                     await self.broadcast_event("AUTO_SQUARE_OFF", sq_res)
 
-                self.poll_cycles_count += 1
-                self.last_polled_at = get_ist_now()
+                # Check if market hours gate is active and market is closed
+                is_mkt_open = RiskManager.is_market_open(
+                    now,
+                    open_str=settings.market_open_time,
+                    close_str=settings.market_close_time,
+                )
 
-                def on_filtered(item: Announcement, reason: str):
-                    self.suppressed_noise_count += 1
-                    brief = (item.desc or item.details or "").strip().split()
-                    brief_str = " ".join(brief[:5]) if brief else "Routine filing"
-                    print(f"  ↳ [{item.symbol}] 🔇 Filtered out ({reason}) — {brief_str}", flush=True)
+                if settings.poll_market_hours_only and not is_mkt_open:
+                    self.last_polled_at = get_ist_now()
+                    if self.poll_cycles_count % 10 == 0:
+                        print(f"[{now.strftime('%H:%M:%S IST')}] 🌙 [RADAR STANDBY] Market is closed ({settings.market_open_time} - {settings.market_close_time} IST / Mon-Fri). NSE news polling is paused.", flush=True)
+                    await self.broadcast_event("POLL_CYCLE_COMPLETED", {
+                        "cycle": self.poll_cycles_count,
+                        "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
+                        "last_polled_ts": int(self.last_polled_at.timestamp()),
+                        "suppressed_noise_count": self.suppressed_noise_count,
+                        "is_market_open": False,
+                        "radar_status": "STANDBY",
+                    })
+                else:
+                    self.poll_cycles_count += 1
+                    self.last_polled_at = get_ist_now()
 
-                    if not any(f.get("seq_id") == item.seq_id for f in self.feed_items):
-                        noise_item = {
-                            "seq_id": item.seq_id or f"NOISE_{self.suppressed_noise_count}",
-                            "symbol": item.symbol,
-                            "security_id": resolve_security_id(item.symbol) or "0",
-                            "desc": item.desc or "Routine Filing",
-                            "details": item.details or item.desc or "No additional content",
-                            "an_dt": item.an_dt or get_ist_now().strftime("%d-%b-%Y %H:%M:%S"),
-                            "timestamp": get_ist_now().strftime("%H:%M:%S IST"),
-                            "is_stale": True,
-                            "age_seconds": 0,
-                            "sentiment": "FILTERED",
-                            "confidence": 0,
-                            "catalyst_type": reason,
-                            "material_impact": False,
-                            "summary": f"Suppressed: {reason}",
-                            "is_noise": True,
-                            "filter_reason": reason,
-                            "order": {
-                                "eligible": False,
-                                "status": "FILTERED_NOISE",
-                                "placed": False,
-                                "quantity": 0,
-                                "ltp": 0.0,
-                                "entry_price": 0.0,
-                                "target_price": 0.0,
-                                "stop_loss_price": 0.0,
-                                "trailing_jump": 0.0,
-                                "order_id": None,
-                                "remarks": f"Filtered: {reason}",
-                            },
-                        }
-                        self.feed_items.insert(0, noise_item)
-                        if len(self.feed_items) > 300:
-                            self.feed_items = self.feed_items[:300]
+                    def on_filtered(item: Announcement, reason: str):
+                        self.suppressed_noise_count += 1
+                        brief = (item.desc or item.details or "").strip().split()
+                        brief_str = " ".join(brief[:5]) if brief else "Routine filing"
+                        print(f"  ↳ [{item.symbol}] 🔇 Filtered out ({reason}) — {brief_str}", flush=True)
 
-                new_items = await asyncio.to_thread(monitor.get_new_announcements, on_filtered=on_filtered)
-                print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
-                for ann in new_items:
-                    processed = self.process_and_add_announcement(ann)
-                    if processed:
-                        await self.broadcast_event("NEW_CATALYST", processed)
+                        if not any(f.get("seq_id") == item.seq_id for f in self.feed_items):
+                            noise_item = {
+                                "seq_id": item.seq_id or f"NOISE_{self.suppressed_noise_count}",
+                                "symbol": item.symbol,
+                                "security_id": resolve_security_id(item.symbol) or "0",
+                                "desc": item.desc or "Routine Filing",
+                                "details": item.details or item.desc or "No additional content",
+                                "an_dt": item.an_dt or get_ist_now().strftime("%d-%b-%Y %H:%M:%S"),
+                                "timestamp": get_ist_now().strftime("%H:%M:%S IST"),
+                                "is_stale": True,
+                                "age_seconds": 0,
+                                "sentiment": "FILTERED",
+                                "confidence": 0,
+                                "catalyst_type": reason,
+                                "material_impact": False,
+                                "summary": f"Suppressed: {reason}",
+                                "is_noise": True,
+                                "filter_reason": reason,
+                                "order": {
+                                    "eligible": False,
+                                    "status": "FILTERED_NOISE",
+                                    "placed": False,
+                                    "quantity": 0,
+                                    "ltp": 0.0,
+                                    "entry_price": 0.0,
+                                    "target_price": 0.0,
+                                    "stop_loss_price": 0.0,
+                                    "trailing_jump": 0.0,
+                                    "order_id": None,
+                                    "remarks": f"Filtered: {reason}",
+                                },
+                            }
+                            self.feed_items.insert(0, noise_item)
+                            if len(self.feed_items) > 300:
+                                self.feed_items = self.feed_items[:300]
 
-                await self.broadcast_event("POLL_CYCLE_COMPLETED", {
-                    "cycle": self.poll_cycles_count,
-                    "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
-                    "last_polled_ts": int(self.last_polled_at.timestamp()),
-                    "suppressed_noise_count": self.suppressed_noise_count,
-                })
+                    new_items = await asyncio.to_thread(monitor.get_new_announcements, on_filtered=on_filtered)
+                    print(f"[{get_ist_now().strftime('%H:%M:%S IST')}] 📡 [RADAR] Cycle #{self.poll_cycles_count}: Polled NSE ({len(new_items)} tradeable catalysts, {self.suppressed_noise_count} total noise suppressed)", flush=True)
+                    for ann in new_items:
+                        processed = self.process_and_add_announcement(ann)
+                        if processed:
+                            await self.broadcast_event("NEW_CATALYST", processed)
+
+                    await self.broadcast_event("POLL_CYCLE_COMPLETED", {
+                        "cycle": self.poll_cycles_count,
+                        "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
+                        "last_polled_ts": int(self.last_polled_at.timestamp()),
+                        "suppressed_noise_count": self.suppressed_noise_count,
+                        "is_market_open": True,
+                        "radar_status": "ACTIVE",
+                    })
             except Exception as e:
                 logger.error("Error in GUI background poller: %s", e)
             await asyncio.sleep(settings.poll_interval_seconds)
@@ -974,30 +1002,34 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   <div class="bg-[#0e1422] border-b border-gray-800/80 px-6 py-2.5">
     <div class="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-gray-400 font-medium">FILTERED CATALYSTS</span>
+        <span class="text-[11px] text-gray-400 font-medium whitespace-nowrap">FILTERED CATALYSTS</span>
         <span id="stat-total" class="text-base font-bold text-white font-mono">0</span>
       </div>
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-emerald-400 font-medium">🟢 BULLISH SIGNALS</span>
+        <span class="text-[11px] text-emerald-400 font-medium whitespace-nowrap">🟢 BULLISH SIGNALS</span>
         <span id="stat-bullish" class="text-base font-bold text-emerald-400 font-mono">0</span>
       </div>
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-rose-400 font-medium">🔴 BEARISH SIGNALS</span>
+        <span class="text-[11px] text-rose-400 font-medium whitespace-nowrap">🔴 BEARISH SIGNALS</span>
         <span id="stat-bearish" class="text-base font-bold text-rose-400 font-mono">0</span>
       </div>
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-indigo-400 font-medium">SUPER ORDERS PLACED</span>
+        <span class="text-[11px] text-indigo-400 font-medium whitespace-nowrap">ORDERS PLACED</span>
         <span id="stat-placed" class="text-base font-bold text-indigo-300 font-mono">0</span>
       </div>
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-amber-400 font-medium">PENDING APPROVAL</span>
+        <span class="text-[11px] text-amber-400 font-medium whitespace-nowrap">PENDING APPROVAL</span>
         <span id="stat-pending" class="text-base font-bold text-amber-300 font-mono">0</span>
       </div>
       <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between col-span-2 md:col-span-1">
-        <span class="text-[11px] text-cyan-400 font-medium">🛡️ ORDERS RISK GAUGE</span>
-        <div class="flex items-center gap-1.5 font-mono">
-          <span id="risk-gauge-dots" class="text-emerald-400 font-bold text-xs tracking-wider">[■ ■ ■]</span>
-          <span id="risk-gauge-text" class="text-gray-300 text-[11px] font-bold">0/3</span>
+        <span class="text-[11px] text-cyan-400 font-medium whitespace-nowrap">🛡️ ORDERS RISK GAUGE</span>
+        <div class="flex items-center gap-2 font-mono flex-shrink-0">
+          <div id="risk-gauge-bars" class="flex items-center gap-1">
+            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
+            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
+            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
+          </div>
+          <span id="risk-gauge-text" class="text-emerald-400 text-xs font-mono font-bold whitespace-nowrap">0/3</span>
         </div>
       </div>
     </div>
@@ -1011,8 +1043,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <div class="flex items-center gap-3">
         <div class="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-full font-bold shadow-sm" id="radar-badge-container">
           <span class="relative flex h-2.5 w-2.5">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+            <span id="radar-ping-dot" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span id="radar-solid-dot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
           </span>
           <span id="poller-status-badge">NSE RADAR ACTIVE</span>
         </div>
@@ -1128,23 +1160,23 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <!-- EMPTY STATE -->
       <div id="empty-state" class="p-14 text-center bg-[#111827] my-auto">
         <div class="relative w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-          <span class="absolute w-16 h-16 rounded-full bg-emerald-500/10 animate-ping"></span>
-          <span class="absolute w-12 h-12 rounded-full bg-emerald-500/20 animate-pulse"></span>
-          <div class="w-10 h-10 rounded-full bg-[#162032] border border-emerald-500/40 flex items-center justify-center text-xl shadow-lg">
-            📡
+          <span id="empty-radar-ping" class="absolute w-16 h-16 rounded-full bg-emerald-500/10 animate-ping"></span>
+          <span id="empty-radar-pulse" class="absolute w-12 h-12 rounded-full bg-emerald-500/20 animate-pulse"></span>
+          <div id="empty-radar-box" class="w-10 h-10 rounded-full bg-[#162032] border border-emerald-500/40 flex items-center justify-center text-xl shadow-lg">
+            <span id="empty-radar-icon">📡</span>
           </div>
         </div>
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider flex items-center justify-center gap-2">
+        <h3 id="empty-state-heading" class="text-sm font-bold text-white uppercase tracking-wider flex items-center justify-center gap-2">
           <span>Live Radar Active — Scanning NSE Corporate Feed</span>
         </h3>
-        <p class="text-xs text-gray-400 max-w-md mx-auto mt-1.5 mb-3 leading-relaxed">
+        <p id="empty-state-desc" class="text-xs text-gray-400 max-w-md mx-auto mt-1.5 mb-3 leading-relaxed">
           Actively monitoring 228 F&O tickers on NSE. The AI filter automatically discards routine compliance noise and will alert here the moment an actionable market catalyst breaks.
         </p>
-        <div class="inline-flex items-center gap-2 bg-[#0e1422] border border-gray-800 px-3.5 py-1.5 rounded-lg text-[11px] text-gray-300 font-mono mb-4 shadow-sm">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <div id="empty-state-pill" class="inline-flex items-center gap-2 bg-[#0e1422] border border-gray-800 px-3.5 py-1.5 rounded-lg text-[11px] text-gray-300 font-mono mb-4 shadow-sm">
+          <span id="empty-state-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           <span>Last Exchange Scan: <span id="empty-last-check" class="text-emerald-400 font-bold">Just now</span></span>
           <span class="text-gray-600">•</span>
-          <span>Status: <span class="text-indigo-300 font-semibold">Listening for catalysts...</span></span>
+          <span>Status: <span id="empty-state-status-text" class="text-indigo-300 font-semibold">Listening for catalysts...</span></span>
         </div>
         __SIM_EMPTY_BTN__
       </div>
@@ -1649,25 +1681,34 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     // --- RISK BUDGET GAUGE ---
     function updateRiskBudgetGauge(placedCount) {
       const maxOrders = 3;
-      const dotsEl = document.getElementById('risk-gauge-dots');
+      const barsEl = document.getElementById('risk-gauge-bars');
       const textEl = document.getElementById('risk-gauge-text');
-      if (!dotsEl || !textEl) return;
+      if (!textEl) return;
       const count = Math.min(placedCount, maxOrders);
-      let dots = '';
-      for (let i = 0; i < maxOrders; i++) {
-        dots += (i < count) ? '■ ' : '□ ';
+      textEl.textContent = `${count}/${maxOrders}`;
+
+      if (barsEl) {
+        let barsHTML = '';
+        for (let i = 0; i < maxOrders; i++) {
+          if (i < count) {
+            if (count >= maxOrders) {
+              barsHTML += '<span class="w-2.5 h-3 rounded-sm bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]"></span>';
+            } else {
+              barsHTML += '<span class="w-2.5 h-3 rounded-sm bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.6)]"></span>';
+            }
+          } else {
+            barsHTML += '<span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>';
+          }
+        }
+        barsEl.innerHTML = barsHTML;
       }
-      dotsEl.textContent = `[${dots.trim()}]`;
-      textEl.textContent = `${count}/${maxOrders} Orders`;
+
       if (count >= maxOrders) {
-        dotsEl.className = 'text-rose-400 font-bold text-xs tracking-wider';
-        textEl.className = 'text-rose-300 text-[11px] font-bold';
+        textEl.className = 'text-rose-400 text-xs font-mono font-bold whitespace-nowrap';
       } else if (count > 0) {
-        dotsEl.className = 'text-amber-400 font-bold text-xs tracking-wider';
-        textEl.className = 'text-amber-300 text-[11px] font-bold';
+        textEl.className = 'text-amber-300 text-xs font-mono font-bold whitespace-nowrap';
       } else {
-        dotsEl.className = 'text-emerald-400 font-bold text-xs tracking-wider';
-        textEl.className = 'text-gray-300 text-[11px] font-bold';
+        textEl.className = 'text-emerald-400 text-xs font-mono font-bold whitespace-nowrap';
       }
     }
 
@@ -2294,6 +2335,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     let lastPolledTimestamp = Date.now();
+    let lastKnownMarketOpen = false;
+    let lastKnownMarketHoursOnly = true;
+    let configuredMarketOpenTime = '09:15';
+    let configuredMarketCloseTime = '15:30';
 
     function updatePollerTimer() {
       const elapsedSec = Math.max(0, Math.floor((Date.now() - lastPolledTimestamp) / 1000));
@@ -2325,32 +2370,101 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         const hour = istDate.getHours();
         const min = istDate.getMinutes();
         const totalMinutes = hour * 60 + min;
-        const marketOpenMinutes = 9 * 60 + 15;
-        const marketCloseMinutes = 15 * 60 + 30;
+
+        const openParts = (configuredMarketOpenTime || '09:15').split(':').map(Number);
+        const closeParts = (configuredMarketCloseTime || '15:30').split(':').map(Number);
+        const marketOpenMinutes = (openParts[0] || 9) * 60 + (openParts[1] || 15);
+        const marketCloseMinutes = (closeParts[0] || 15) * 60 + (closeParts[1] || 30);
         return totalMinutes >= marketOpenMinutes && totalMinutes <= marketCloseMinutes;
       } catch (e) {
         return false;
       }
     }
 
-    function renderMarketStatusUI(isOpen) {
+    function updateRadarStatusUI(isOpen, isMarketHoursOnly) {
+      const badge = document.getElementById('radar-badge-container');
+      const text = document.getElementById('poller-status-badge');
+      const pingDot = document.getElementById('radar-ping-dot');
+      const solidDot = document.getElementById('radar-solid-dot');
+      if (!badge || !text) return;
+
+      const isStandby = !isOpen && isMarketHoursOnly !== false;
+      if (isStandby) {
+        badge.className = 'inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-3 py-1 rounded-full font-bold shadow-sm';
+        text.textContent = 'NSE RADAR STANDBY (Off-Market)';
+        if (pingDot) pingDot.className = 'hidden';
+        if (solidDot) solidDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
+      } else {
+        badge.className = 'inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-full font-bold shadow-sm';
+        text.textContent = 'NSE RADAR ACTIVE';
+        if (pingDot) pingDot.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75';
+        if (solidDot) solidDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500';
+      }
+    }
+
+    function updateEmptyStateUI(isOpen, isMarketHoursOnly) {
+      const ping = document.getElementById('empty-radar-ping');
+      const pulse = document.getElementById('empty-radar-pulse');
+      const box = document.getElementById('empty-radar-box');
+      const icon = document.getElementById('empty-radar-icon');
+      const heading = document.getElementById('empty-state-heading');
+      const desc = document.getElementById('empty-state-desc');
+      const dot = document.getElementById('empty-state-dot');
+      const statusText = document.getElementById('empty-state-status-text');
+
+      const isStandby = !isOpen && isMarketHoursOnly !== false;
+      if (isStandby) {
+        if (ping) ping.className = 'absolute w-16 h-16 rounded-full bg-amber-500/10 animate-pulse';
+        if (pulse) pulse.className = 'absolute w-12 h-12 rounded-full bg-amber-500/20';
+        if (box) box.className = 'w-10 h-10 rounded-full bg-[#162032] border border-amber-500/40 flex items-center justify-center text-xl shadow-lg';
+        if (icon) icon.textContent = '🌙';
+        if (heading) heading.innerHTML = '<span>Radar Standby — Market Closed (Off-Hours)</span>';
+        if (desc) desc.textContent = `NSE equity market is currently closed (${configuredMarketOpenTime} – ${configuredMarketCloseTime} IST). News polling is in standby mode and will automatically resume scanning when market opens.`;
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+        if (statusText) {
+          statusText.className = 'text-amber-300 font-semibold';
+          statusText.textContent = `Standby (Awaiting ${configuredMarketOpenTime} Open)`;
+        }
+      } else {
+        if (ping) ping.className = 'absolute w-16 h-16 rounded-full bg-emerald-500/10 animate-ping';
+        if (pulse) pulse.className = 'absolute w-12 h-12 rounded-full bg-emerald-500/20 animate-pulse';
+        if (box) box.className = 'w-10 h-10 rounded-full bg-[#162032] border border-emerald-500/40 flex items-center justify-center text-xl shadow-lg';
+        if (icon) icon.textContent = '📡';
+        if (heading) heading.innerHTML = '<span>Live Radar Active — Scanning NSE Corporate Feed</span>';
+        if (desc) desc.textContent = 'Actively monitoring 228 F&O tickers on NSE. The AI filter automatically discards routine compliance noise and will alert here the moment an actionable market catalyst breaks.';
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+        if (statusText) {
+          statusText.className = 'text-indigo-300 font-semibold';
+          statusText.textContent = 'Listening for catalysts...';
+        }
+      }
+    }
+
+    function renderMarketStatusUI(isOpen, isMarketHoursOnly) {
+      lastKnownMarketOpen = isOpen;
+      if (isMarketHoursOnly !== undefined) {
+        lastKnownMarketHoursOnly = isMarketHoursOnly;
+      }
       const badge = document.getElementById('market-status-badge');
       const dot = document.getElementById('market-status-dot');
       const text = document.getElementById('market-status-text');
 
-      if (!badge || !dot || !text) return;
-
-      if (isOpen) {
-        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1.5 shadow-sm border bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
-        badge.title = 'NSE Equity Market is OPEN (09:15 to 15:30 IST)';
-        dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
-        text.textContent = 'MARKET OPEN';
-      } else {
-        badge.className = 'px-2.5 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1.5 shadow-sm border bg-rose-500/20 text-rose-300 border-rose-500/40';
-        badge.title = 'NSE Equity Market is CLOSED (Regular hours: Mon-Fri 09:15 to 15:30 IST)';
-        dot.className = 'w-2 h-2 rounded-full bg-rose-400';
-        text.textContent = 'MARKET CLOSED';
+      if (badge && dot && text) {
+        if (isOpen) {
+          badge.className = 'px-2.5 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1.5 shadow-sm border bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+          badge.title = `NSE Equity Market is OPEN (${configuredMarketOpenTime} to ${configuredMarketCloseTime} IST)`;
+          dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+          text.textContent = 'MARKET OPEN';
+        } else {
+          badge.className = 'px-2.5 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1.5 shadow-sm border bg-rose-500/20 text-rose-300 border-rose-500/40';
+          badge.title = `NSE Equity Market is CLOSED (Regular hours: Mon-Fri ${configuredMarketOpenTime} to ${configuredMarketCloseTime} IST)`;
+          dot.className = 'w-2 h-2 rounded-full bg-rose-400';
+          text.textContent = 'MARKET CLOSED';
+        }
       }
+
+      updateRadarStatusUI(isOpen, lastKnownMarketHoursOnly);
+      updateEmptyStateUI(isOpen, lastKnownMarketHoursOnly);
     }
 
     function renderCutoffUI(isAllowed, cutoffTime, reason) {
@@ -2381,8 +2495,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           isDryRun = data.dry_run;
           updateAutoOrderUI();
           updateExecutionModeUI();
+          if (data.market_open_time) configuredMarketOpenTime = data.market_open_time;
+          if (data.market_close_time) configuredMarketCloseTime = data.market_close_time;
           const isOpen = (typeof data.is_market_open === 'boolean') ? data.is_market_open : computeMarketStatusClient();
-          renderMarketStatusUI(isOpen);
+          renderMarketStatusUI(isOpen, data.poll_market_hours_only);
           if (data.is_trade_allowed !== undefined) {
             renderCutoffUI(data.is_trade_allowed, data.trade_cutoff_time, data.trade_allowed_reason);
           }
@@ -2646,6 +2762,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (filtered.length === 0) {
         tbody.innerHTML = '';
         emptyState.style.display = 'block';
+        updateEmptyStateUI(lastKnownMarketOpen, lastKnownMarketHoursOnly);
         return;
       }
       emptyState.style.display = 'none';
@@ -3106,11 +3223,17 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             if (document.getElementById('poller-noise-count')) {
               document.getElementById('poller-noise-count').textContent = payload.data.suppressed_noise_count || '0';
             }
+            if (payload.data && typeof payload.data.is_market_open === 'boolean') {
+              lastKnownMarketOpen = payload.data.is_market_open;
+              updateRadarStatusUI(payload.data.is_market_open, lastKnownMarketHoursOnly);
+              updateEmptyStateUI(payload.data.is_market_open, lastKnownMarketHoursOnly);
+            }
             updatePollerTimer();
             const badge = document.getElementById('radar-badge-container');
             if (badge) {
-              badge.classList.add('ring-2', 'ring-emerald-400');
-              setTimeout(() => badge.classList.remove('ring-2', 'ring-emerald-400'), 1200);
+              const ringColor = (payload.data && payload.data.is_market_open === false) ? 'ring-amber-400' : 'ring-emerald-400';
+              badge.classList.add('ring-2', ringColor);
+              setTimeout(() => badge.classList.remove('ring-2', ringColor), 1200);
             }
           }
         } catch (e) {}
@@ -3301,12 +3424,15 @@ def create_app() -> FastAPI:
             "server_time_ist": get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
             "suppressed_noise_count": state.suppressed_noise_count,
             "fno_universe_size": len(get_fno_symbols()),
-            "is_market_open": RiskManager.is_market_open(),
-            "market_status_label": "MARKET OPEN" if RiskManager.is_market_open() else "MARKET CLOSED",
+            "poll_market_hours_only": settings.poll_market_hours_only,
+            "market_open_time": settings.market_open_time,
+            "market_close_time": settings.market_close_time,
+            "is_market_open": RiskManager.is_market_open(open_str=settings.market_open_time, close_str=settings.market_close_time),
+            "market_status_label": "MARKET OPEN" if RiskManager.is_market_open(open_str=settings.market_open_time, close_str=settings.market_close_time) else "MARKET CLOSED",
             "trade_cutoff_time": state.executor.trade_cutoff_time,
             "square_off_time": state.executor.square_off_time,
-            "is_trade_allowed": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[0],
-            "trade_allowed_reason": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time)[1],
+            "is_trade_allowed": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time, open_str=settings.market_open_time, close_str=settings.market_close_time)[0],
+            "trade_allowed_reason": RiskManager.is_trade_allowed(cutoff_str=state.executor.trade_cutoff_time, open_str=settings.market_open_time, close_str=settings.market_close_time)[1],
             "current_trading_date": state._current_trading_date,
             "view_mode": state._view_mode,
         }

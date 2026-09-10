@@ -53,6 +53,15 @@ class TestRiskManager(unittest.TestCase):
         night_dt = datetime(2026, 9, 2, 22, 00)  # 10:00 PM
         self.assertFalse(RiskManager.is_market_open(night_dt))
 
+        # Custom parameterized window (e.g. 10:00 to 14:00)
+        test_930 = datetime(2026, 9, 2, 9, 30)
+        self.assertTrue(RiskManager.is_market_open(test_930)) # Open under default 09:15
+        self.assertFalse(RiskManager.is_market_open(test_930, open_str="10:00")) # Closed under 10:00 open
+
+        test_1430 = datetime(2026, 9, 2, 14, 30)
+        self.assertTrue(RiskManager.is_market_open(test_1430)) # Open under default 15:30 close
+        self.assertFalse(RiskManager.is_market_open(test_1430, close_str="14:00")) # Closed under 14:00 close
+
     def test_parse_exchange_timestamp(self):
         # NSE Standard format: 04-Sep-2026 15:18:43
         dt1 = RiskManager.parse_exchange_timestamp("04-Sep-2026 15:18:43")

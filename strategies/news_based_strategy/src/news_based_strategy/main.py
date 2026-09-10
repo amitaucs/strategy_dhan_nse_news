@@ -270,6 +270,7 @@ def run_poller(
     enable_ai: bool = True,
     simulate: bool = False,
     auto_order: Optional[bool] = None,
+    market_hours_only: Optional[bool] = None,
 ) -> int:
     """Poll announcements, filter F&O stocks & noise, extract PDF text, and analyze sentiment with Gemini."""
     if fno_only:
@@ -279,6 +280,7 @@ def run_poller(
             pass
 
     effective_auto_order = settings.auto_order if auto_order is None else auto_order
+    effective_market_hours_only = settings.poll_market_hours_only if market_hours_only is None else market_hours_only
     fno_count = len(get_fno_symbols())
     sec_count = len(get_security_id_map())
     universe_desc = f"DhanHQ Active F&O Universe ({fno_count} tickers | {sec_count} mapped SecIDs)" if fno_only else f"All NSE Stocks ({sec_count} mapped SecIDs)"
@@ -335,6 +337,7 @@ def run_poller(
     )
 
     mode_str = "Simulated Feed (--simulate)" if simulate else ("Single Shot (--once)" if once else f"Continuous (every {interval_seconds}s)")
+    mkt_hours_desc = f"Active ({settings.market_open_time} - {settings.market_close_time} IST / Mon-Fri)" if effective_market_hours_only else "24/7 Scanning (Disabled)"
 
     is_exp, exp_msg, _ = check_token_expiry(executor.access_token)
     if not executor.access_token:
@@ -351,6 +354,7 @@ def run_poller(
     print(f"   Persistence: {db_desc}")
     print(f"   Dhan Token: {token_desc}")
     print(f"   Order Style: {order_style}")
+    print(f"   Market Hours Only: {mkt_hours_desc}")
     print(f"   AI Intelligence: {ai_desc}")
     print(f"   Noise Rejection: {'Active (Trading window, share certs, etc. suppressed)' if filter_noise else 'Disabled'}")
     print(f"   Max News Age: {max_age_seconds}s (Stale news circuit breaker)" if max_age_seconds > 0 else "   Max News Age: Disabled")
@@ -368,6 +372,9 @@ def run_poller(
         api_url=settings.nse_api_url,
         headers=settings.headers,
         storage=storage,
+        market_hours_only=effective_market_hours_only,
+        market_open_time=settings.market_open_time,
+        market_close_time=settings.market_close_time,
     )
 
     if simulate:
@@ -382,7 +389,24 @@ def run_poller(
     cycle = 1
     try:
         while True:
-            now_str = get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST")
+            now = get_ist_now()
+            now_str = now.strftime("%Y-%m-%d %H:%M:%S IST")
+            is_open = RiskManager.is_market_open(
+                now,
+                open_str=settings.market_open_time,
+                close_str=settings.market_close_time,
+            )
+
+            if effective_market_hours_only and not simulate and not is_open:
+                print(f"\n[{now_str}] 🌙 Market is closed ({settings.market_open_time} - {settings.market_close_time} IST / Mon-Fri). NSE news polling is paused.", flush=True)
+                if once:
+                    print("✅ Single poll complete (--once, market closed). Exiting.")
+                    break
+                print(f"⏳ Sleeping for {interval_seconds} seconds until next market check...")
+                time.sleep(interval_seconds)
+                cycle += 1
+                continue
+
             print(f"\n[{now_str}] Cycle #{cycle}: Polling NSE announcements...", end=" ", flush=True)
 
             new_items = monitor.get_new_announcements(
@@ -521,6 +545,19 @@ def main() -> int:
         default=180,
         help="Max age in seconds before news is deemed stale (default: 180s, 0 disables)",
     )
+    parser.add_argument(
+        "--bypass-market-hours",
+        "--all-hours",
+        dest="bypass_market_hours",
+        action="store_true",
+        help="Bypass market hours check and poll NSE announcements 24/7 (overrides POLL_MARKET_HOURS_ONLY)",
+    )
+    parser.add_argument(
+        "--market-hours-only",
+        dest="market_hours_only_flag",
+        action="store_true",
+        help="Enforce market hours only polling (09:15-15:30 IST / Mon-Fri)",
+    )
 
     args = parser.parse_args()
 
@@ -535,6 +572,12 @@ def main() -> int:
     elif args.require_approval:
         auto_order_override = False
 
+    market_hours_override = None
+    if args.bypass_market_hours:
+        market_hours_override = False
+    elif args.market_hours_only_flag:
+        market_hours_override = True
+
     return run_poller(
         interval_seconds=args.interval,
         once=args.once or args.simulate,
@@ -548,6 +591,7 @@ def main() -> int:
         enable_ai=not args.no_ai,
         simulate=args.simulate,
         auto_order=auto_order_override,
+        market_hours_only=market_hours_override,
     )
 
 

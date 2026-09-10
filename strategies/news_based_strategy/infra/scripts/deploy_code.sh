@@ -166,6 +166,8 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" $GCLOUD_PROJECT_FLAG --comman
   curl -s http://localhost:8000/api/status | grep -o '\"dry_run\":[^,]*' || true
   curl -s http://localhost:8000/api/status | grep -o '\"auto_order\":[^,]*' || true
   curl -s http://localhost:8000/api/status | grep -o '\"expiry_message\":[^,]*' || true
+  curl -s http://localhost:8000/api/status | grep -o '\"poll_market_hours_only\":[^,]*' || true
+  curl -s http://localhost:8000/api/status | grep -o '\"is_market_open\":[^,]*' || true
   curl -s http://localhost:8000/api/status | grep -o '\"trade_cutoff_time\":[^,]*' || true
   curl -s http://localhost:8000/api/status | grep -o '\"square_off_time\":[^,]*' || true
 "

@@ -33,30 +33,54 @@ class RiskManager:
         return get_ist_now()
 
     @classmethod
-    def is_market_open(cls, dt: Optional[datetime] = None) -> bool:
-        """Check if the current time falls within live NSE equity market hours (09:15 - 15:30 IST)."""
+    def is_market_open(
+        cls,
+        dt: Optional[datetime] = None,
+        open_str: Optional[str] = None,
+        close_str: Optional[str] = None,
+    ) -> bool:
+        """Check if the current time falls within live NSE equity market hours (default: 09:15 - 15:30 IST)."""
         now = dt or cls.get_ist_now()
         # Monday is 0 and Friday is 4. Saturday (5) and Sunday (6) are closed.
         if now.weekday() >= 5:
             return False
 
-        current_time = now.time()
-        market_open = datetime.strptime(f"{cls.MARKET_OPEN_HOUR}:{cls.MARKET_OPEN_MINUTE}", "%H:%M").time()
-        market_close = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+        open_time = None
+        if open_str:
+            try:
+                open_time = datetime.strptime(open_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+        if not open_time:
+            open_time = datetime.strptime(f"{cls.MARKET_OPEN_HOUR}:{cls.MARKET_OPEN_MINUTE}", "%H:%M").time()
 
-        return market_open <= current_time <= market_close
+        close_time = None
+        if close_str:
+            try:
+                close_time = datetime.strptime(close_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+        if not close_time:
+            close_time = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+
+        current_time = now.time()
+        return open_time <= current_time <= close_time
 
     @classmethod
     def is_trade_allowed(
         cls,
         dt: Optional[datetime] = None,
         cutoff_str: Optional[str] = None,
+        open_str: Optional[str] = None,
+        close_str: Optional[str] = None,
     ) -> tuple[bool, str]:
         """Check if new trade entries are allowed based on market hours and trade cutoff (default: 02:45 PM IST).
         
         Args:
             dt: Evaluation datetime (defaults to current IST time).
             cutoff_str: Optional cutoff time string (e.g. '14:45').
+            open_str: Optional market open time string (e.g. '09:15').
+            close_str: Optional market close time string (e.g. '15:30').
 
         Returns:
             tuple of (is_allowed: bool, reason: str)
@@ -65,15 +89,32 @@ class RiskManager:
         if now.weekday() >= 5:
             return False, "Market is closed (Weekend)"
 
+        open_time = None
+        if open_str:
+            try:
+                open_time = datetime.strptime(open_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+        if not open_time:
+            open_time = datetime.strptime(f"{cls.MARKET_OPEN_HOUR}:{cls.MARKET_OPEN_MINUTE}", "%H:%M").time()
+
+        close_time = None
+        if close_str:
+            try:
+                close_time = datetime.strptime(close_str.strip(), "%H:%M").time()
+            except ValueError:
+                pass
+        if not close_time:
+            close_time = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+
         current_time = now.time()
-        market_open = datetime.strptime(f"{cls.MARKET_OPEN_HOUR}:{cls.MARKET_OPEN_MINUTE}", "%H:%M").time()
-        market_close = datetime.strptime(f"{cls.MARKET_CLOSE_HOUR}:{cls.MARKET_CLOSE_MINUTE}", "%H:%M").time()
+        if current_time < open_time:
+            open_formatted = open_time.strftime("%I:%M %p")
+            return False, f"Market is not open yet (Opens at {open_formatted} IST)"
 
-        if current_time < market_open:
-            return False, f"Market is not open yet (Opens at {cls.MARKET_OPEN_HOUR:02d}:{cls.MARKET_OPEN_MINUTE:02d} IST)"
-
-        if current_time > market_close:
-            return False, f"Market is closed for the day (Closed at {cls.MARKET_CLOSE_HOUR:02d}:{cls.MARKET_CLOSE_MINUTE:02d} IST)"
+        if current_time > close_time:
+            close_formatted = close_time.strftime("%I:%M %p")
+            return False, f"Market is closed for the day (Closed at {close_formatted} IST)"
 
         # Parse cutoff time
         cutoff_time = None
