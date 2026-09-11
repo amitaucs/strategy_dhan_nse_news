@@ -77,7 +77,23 @@ class StrategyEngine:
 
         # 2. Gate AI reasoning strictly to market trading hours (09:15 to 14:45 IST)
         if not bypass_market_hours:
-            allowed, reason = RiskManager.is_trade_allowed(cutoff_str=self.executor.trade_cutoff_time)
+            an_dt_obj = RiskManager.parse_exchange_timestamp(item.an_dt) if item.an_dt else RiskManager.get_ist_now()
+            allowed, reason = RiskManager.is_trade_allowed(
+                dt=an_dt_obj,
+                cutoff_str=self.executor.trade_cutoff_time,
+                open_str=settings.market_open_time,
+                close_str=settings.market_close_time,
+            )
+            if allowed:
+                wall_allowed, wall_reason = RiskManager.is_trade_allowed(
+                    dt=RiskManager.get_ist_now(),
+                    cutoff_str=self.executor.trade_cutoff_time,
+                    open_str=settings.market_open_time,
+                    close_str=settings.market_close_time,
+                )
+                if not wall_allowed:
+                    allowed = False
+                    reason = wall_reason
             if not allowed:
                 logger.info("🌙 [%s] Skipped Gemini evaluation (Market Closed): %s", item.symbol, reason)
                 return None

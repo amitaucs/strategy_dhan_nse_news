@@ -250,6 +250,17 @@ class NSEFilingMonitor:
 
                     an_dt = item.get("an_dt", "") or ""
 
+                    # Filter out pre-market / post-market announcements if market_hours_only is enforced
+                    if self.market_hours_only and not bypass_market_hours and an_dt:
+                        from news_based_strategy.execution.risk import RiskManager
+                        an_dt_obj = RiskManager.parse_exchange_timestamp(an_dt)
+                        if an_dt_obj:
+                            if not RiskManager.is_market_open(dt=an_dt_obj, open_str=self.market_open_time, close_str=self.market_close_time):
+                                logger.debug("Skipping off-market broadcast for %s (an_dt: %s)", symbol, an_dt)
+                                if self.storage and seq_id:
+                                    self.storage.mark_processed(seq_id, symbol, an_dt)
+                                continue
+
                     # 2. Resolve attachment: Check all keys dynamically
                     attmnt_file = None
                     for k, v in item.items():

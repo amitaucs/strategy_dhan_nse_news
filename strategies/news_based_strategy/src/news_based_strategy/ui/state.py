@@ -309,7 +309,23 @@ class DashboardState:
 
         # 2. Gate Gemini LLM evaluation strictly to live market trading hours (09:15 to 14:45 IST cutoff)
         if not bypass_market_hours:
-            allowed, market_reason = RiskManager.is_trade_allowed(cutoff_str=self.executor.trade_cutoff_time)
+            ann_dt_obj = RiskManager.parse_exchange_timestamp(ann.an_dt) if ann.an_dt else RiskManager.get_ist_now()
+            allowed, market_reason = RiskManager.is_trade_allowed(
+                dt=ann_dt_obj,
+                cutoff_str=self.executor.trade_cutoff_time,
+                open_str=settings.market_open_time,
+                close_str=settings.market_close_time,
+            )
+            if allowed:
+                wall_allowed, wall_reason = RiskManager.is_trade_allowed(
+                    dt=RiskManager.get_ist_now(),
+                    cutoff_str=self.executor.trade_cutoff_time,
+                    open_str=settings.market_open_time,
+                    close_str=settings.market_close_time,
+                )
+                if not wall_allowed:
+                    allowed = False
+                    market_reason = wall_reason
             if not allowed:
                 self.suppressed_noise_count += 1
                 if not any(f.get("seq_id") == ann.seq_id for f in self.feed_items):
