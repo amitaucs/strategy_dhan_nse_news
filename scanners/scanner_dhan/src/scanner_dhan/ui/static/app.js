@@ -965,6 +965,14 @@ function renderTable(items) {
               <span>${r.symbol}</span>
               <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 transition"></i>
             </a>
+            <a
+              href="https://tv.dhan.co/?symbol=NSE:${encodeURIComponent(r.symbol)}"
+              target="_blank"
+              class="p-0.5 px-1.5 rounded bg-[#00b060]/15 hover:bg-[#00b060]/35 text-[#00e676] border border-[#00b060]/40 transition text-[10px] font-bold"
+              title="Open ${r.symbol} on Dhan TradingView (tv.dhan.co)"
+            >
+              Dhan
+            </a>
           </div>
         </td>
         <td class="py-3.5 px-4 font-mono font-medium text-slate-200">₹${Number(r.ltp).toLocaleString(

@@ -1005,6 +1005,43 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
   </div>
 
+  <!-- EMBEDDED REAL-TIME INTERACTIVE CHART MODAL -->
+  <div id="chart-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6">
+    <div class="bg-[#111827] border border-gray-700/90 rounded-2xl w-full max-w-6xl h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+      
+      <!-- Chart Modal Header -->
+      <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between bg-[#162032]">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-base shadow-inner">
+            📈
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span id="chart-modal-symbol" class="text-sm font-black px-2.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded tracking-wider">SYMBOL</span>
+              <span class="text-xs text-gray-300 font-semibold hidden sm:inline">NSE Real-Time Interactive Candlestick Chart</span>
+            </div>
+            <div class="text-[10px] text-gray-400 font-mono mt-0.5">Live Market Datafeed • Asia/Kolkata (IST)</div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <!-- Direct Fullscreen Link -->
+          <a id="chart-modal-tv-link" href="#" target="_blank" rel="noopener noreferrer" class="px-3 py-1.5 text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center gap-1.5 shadow transition active:scale-95" title="Open Fullscreen on TradingView.com">
+            <span>↗</span>
+            <span class="hidden sm:inline">Open Fullscreen</span>
+          </a>
+          <!-- Close Button -->
+          <button onclick="closeChartModal()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 text-xl font-bold leading-none transition" title="Close Chart (Esc)">✕</button>
+        </div>
+      </div>
+
+      <!-- Live Chart iFrame Container -->
+      <div id="chart-modal-container" class="flex-1 w-full h-full bg-[#0b0f19]">
+        <!-- Injected dynamically on open -->
+      </div>
+    </div>
+  </div>
+
   <!-- SLIDE-OUT DETAILS DRAWER (RIGHT OVERLAY) -->
   <div id="details-drawer-backdrop" onclick="closeDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 opacity-0 pointer-events-none transition-opacity duration-300"></div>
   <aside id="details-drawer" class="fixed inset-y-0 right-0 w-full sm:w-[540px] bg-[#111827] border-l border-gray-700/80 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
@@ -1015,7 +1052,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         <span id="drawer-sec-id" class="text-xs font-mono text-cyan-300 bg-cyan-950/80 px-2 py-0.5 border border-cyan-800/60 rounded">#0</span>
         <span id="drawer-sentiment-badge" class="text-xs font-bold px-2 py-0.5 rounded font-mono">BULLISH</span>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1.5">
+        <button onclick="if (activeDrawerItem) openChartModal(activeDrawerItem.symbol);" class="px-2.5 py-1 text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-500/40 rounded-lg flex items-center gap-1.5 transition shadow-sm active:scale-95" title="Open Interactive Real-Time Candlestick Chart">
+          <span>📈</span>
+          <span>Live Chart</span>
+        </button>
+        <a id="drawer-tv-chart-btn" href="#" target="_blank" rel="noopener noreferrer" class="px-2 py-1 text-xs font-bold bg-sky-950/60 hover:bg-sky-900/60 text-sky-300 border border-sky-700/60 rounded-lg flex items-center gap-1 transition shadow-sm" title="Open on TradingView.com">
+          <span>↗</span>
+          <span class="hidden sm:inline">TradingView</span>
+        </a>
         <button onclick="copyFilingText()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition" title="Copy Announcement Text">📋</button>
         <button onclick="closeDrawer()" class="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 text-lg font-bold leading-none transition" title="Close Drawer (Esc)">✕</button>
       </div>
@@ -1653,6 +1698,16 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       document.getElementById('drawer-symbol-badge').textContent = item.symbol;
       document.getElementById('drawer-sec-id').textContent = item.security_id && item.security_id !== '0' ? `#${item.security_id}` : '#0';
       
+      const cleanSym = (item.symbol || '').toUpperCase().trim();
+      const dhanChartBtn = document.getElementById('drawer-dhan-chart-btn');
+      if (dhanChartBtn) {
+        dhanChartBtn.href = `https://tv.dhan.co/?symbol=NSE:${encodeURIComponent(cleanSym)}-EQ`;
+      }
+      const tvChartBtn = document.getElementById('drawer-tv-chart-btn');
+      if (tvChartBtn) {
+        tvChartBtn.href = `https://in.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(cleanSym)}`;
+      }
+      
       const sentimentBadge = document.getElementById('drawer-sentiment-badge');
       const isBullish = item.sentiment === 'BULLISH';
       const isBearish = item.sentiment === 'BEARISH';
@@ -1768,6 +1823,37 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       activeDrawerItem = null;
     }
 
+    // --- REAL-TIME INTERACTIVE CHART MODAL CONTROLLER ---
+    function openChartModal(symbol) {
+      if (!symbol) return;
+      const cleanSym = symbol.toUpperCase().trim();
+      const modal = document.getElementById('chart-modal');
+      const symBadge = document.getElementById('chart-modal-symbol');
+      const tvLink = document.getElementById('chart-modal-tv-link');
+      const container = document.getElementById('chart-modal-container');
+
+      if (symBadge) symBadge.textContent = cleanSym;
+      if (tvLink) tvLink.href = `https://in.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(cleanSym)}`;
+      if (modal) modal.classList.remove('hidden');
+
+      if (container) {
+        container.innerHTML = `
+          <iframe
+            src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=NSE%3A${encodeURIComponent(cleanSym)}&interval=5&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=162032&studies=%5B%22STD%3BVWAP%22%2C%22STD%3BEverget%2FSuperTrend%22%5D&theme=dark&style=1&timezone=Asia%2FKolkata&studies_overrides=%7B%7D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=in&utmsource=localhost"
+            style="width: 100%; height: 100%; border: none;"
+            allowfullscreen
+          ></iframe>
+        `;
+      }
+    }
+
+    function closeChartModal() {
+      const modal = document.getElementById('chart-modal');
+      if (modal) modal.classList.add('hidden');
+      const container = document.getElementById('chart-modal-container');
+      if (container) container.innerHTML = '';
+    }
+
     function copyFilingText() {
       if (activeDrawerItem) {
         const text = `${activeDrawerItem.symbol} [${activeDrawerItem.an_dt || ''}]\n${activeDrawerItem.desc}\n\n${activeDrawerItem.details || ''}`;
@@ -1798,6 +1884,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const isShift = e.shiftKey;
       
       if (key === 'ESCAPE') {
+        closeChartModal();
         closeDrawer();
         closeHotkeysModal();
         closeSquareOffModal();
@@ -2947,6 +3034,17 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             <div class="flex items-center gap-2">
               <span class="text-sm font-black ${isNoise ? 'text-gray-300' : 'text-white'} px-2 py-0.5 bg-gray-800 border border-gray-700 rounded tracking-wider">${item.symbol}</span>
               ${item.security_id && item.security_id !== '0' ? `<span class="text-[10px] font-mono px-1.5 py-0.5 bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 rounded">#${item.security_id}</span>` : ''}
+              
+              <!-- 1-Click Interactive Live Chart Modal Button -->
+              <button onclick="event.stopPropagation(); openChartModal('${item.symbol}')" class="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-500/40 transition shadow-xs flex items-center gap-1 text-[11px] font-bold active:scale-95 group" title="Open ${item.symbol} Live Interactive Candlestick Chart">
+                <span>📈</span>
+                <span class="text-[10px]">Chart</span>
+              </button>
+
+              <!-- 1-Click TradingView Fullscreen Chart Link -->
+              <a href="https://in.tradingview.com/chart/?symbol=NSE:${encodeURIComponent((item.symbol || '').toUpperCase())}" onclick="event.stopPropagation()" target="_blank" rel="noopener noreferrer" class="px-1.5 py-0.5 rounded bg-sky-950/40 hover:bg-sky-900/60 text-sky-400 border border-sky-800/40 transition shadow-xs flex items-center text-[10px] font-mono font-bold" title="Open ${item.symbol} Fullscreen on TradingView.com">
+                TV ↗
+              </a>
             </div>
             <div class="text-[10px] text-gray-500 mt-1 font-mono">${item.filter_reason && item.filter_reason.includes('Non-F&O') ? 'NSE_EQ • Equity' : 'NSE_EQ • F&O'}</div>
           </td>
