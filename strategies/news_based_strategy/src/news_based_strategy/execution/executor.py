@@ -351,6 +351,87 @@ class DhanExecutor:
         except (EOFError, KeyboardInterrupt):
             return False
 
+    @staticmethod
+    def _parse_dhan_order_response(order_resp: any, order_type_label: str = "Order") -> Tuple[bool, str, str]:
+        """
+        Parses DhanHQ API response for order/super_order placement.
+        Returns: (success: bool, order_id: str, message: str)
+        """
+        if not order_resp:
+            return False, "", "Empty response received from Dhan API"
+
+        # If it's a raw integer or string ID
+        if isinstance(order_resp, (int, str)):
+            order_id = str(order_resp).strip()
+            if order_id and order_id not in ("None", "", "UNKNOWN_SUPER_ID", "UNKNOWN_DHAN_ID"):
+                return True, order_id, f"Dhan {order_type_label} placed successfully! ID: {order_id}"
+            return False, "", f"Invalid Dhan order ID received: {order_resp}"
+
+        if isinstance(order_resp, dict):
+            status = str(order_resp.get("status", "")).strip().lower()
+
+            # Check for failure status
+            if status in ("failure", "error", "rejected"):
+                remarks = order_resp.get("remarks") or order_resp.get("message") or order_resp.get("error") or ""
+                err_detail = ""
+                if isinstance(remarks, dict):
+                    err_detail = remarks.get("errorMessage") or remarks.get("errorType") or str(remarks)
+                    if remarks.get("errorCode"):
+                        err_detail = f"[{remarks.get('errorCode')}] {err_detail}"
+                elif remarks:
+                    err_detail = str(remarks)
+                else:
+                    err_detail = str(order_resp)
+                return False, "", f"Dhan {order_type_label} rejected: {err_detail}"
+
+            # Check for error fields at root level
+            if "errorCode" in order_resp or "errorType" in order_resp or "errorMessage" in order_resp:
+                code = order_resp.get("errorCode", "")
+                msg = order_resp.get("errorMessage") or order_resp.get("remarks") or str(order_resp)
+                prefix = f"[{code}] " if code else ""
+                return False, "", f"Dhan {order_type_label} rejected: {prefix}{msg}"
+
+            # Extract order ID from data dict or root
+            data = order_resp.get("data")
+            order_id = ""
+            if isinstance(data, dict):
+                order_id = str(
+                    data.get("orderId")
+                    or data.get("superOrderId")
+                    or data.get("foreverOrderId")
+                    or data.get("id")
+                    or ""
+                ).strip()
+            elif isinstance(data, (int, str)) and str(data).strip():
+                order_id = str(data).strip()
+
+            if not order_id:
+                order_id = str(
+                    order_resp.get("orderId")
+                    or order_resp.get("superOrderId")
+                    or order_resp.get("foreverOrderId")
+                    or order_resp.get("id")
+                    or ""
+                ).strip()
+
+            if order_id and order_id not in ("None", "", "UNKNOWN_SUPER_ID", "UNKNOWN_DHAN_ID"):
+                remarks = order_resp.get("remarks", "")
+                msg = f"Dhan {order_type_label} placed successfully! ID: {order_id}"
+                if remarks and isinstance(remarks, str) and remarks.lower() != "success":
+                    msg += f" ({remarks})"
+                return True, order_id, msg
+
+            # If status == 'success' but orderId is missing, check if data has orderStatus
+            if status == "success":
+                data_str = str(data) if data is not None else ""
+                return True, "DHAN_CONFIRMED", f"Dhan {order_type_label} confirmed ({data_str or 'Success'})"
+
+            # If no status and no orderId, it's an unrecognized or rejected response
+            remarks = order_resp.get("remarks") or order_resp.get("message") or str(order_resp)
+            return False, "", f"Dhan {order_type_label} unconfirmed: {remarks}"
+
+        return False, "", f"Unexpected Dhan API response: {order_resp}"
+
     def execute_order(self, signal: TradeSignal, ltp: Optional[float] = None) -> TradeResult:
         """Place an order or simulate execution with staleness circuit breaker, SecID, and Super Orders."""
         safe_product = RiskManager.get_safe_product_type(signal.action, signal.product_type)
@@ -539,12 +620,23 @@ class DhanExecutor:
                     trailingJump=self.trailing_jump_points,
                     tag="news_super",
                 )
-                order_id = str(order_resp.get("orderId", "UNKNOWN_SUPER_ID")) if isinstance(order_resp, dict) else str(order_resp)
-                remarks = (
-                    f"Dhan Super Order placed successfully! ID: {order_id} "
-                    f"(Entry ₹{entry_price:.2f}, TP ₹{target_price:.2f}, SL ₹{sl_price:.2f})"
+                success, order_id, remarks = self._parse_dhan_order_response(order_resp, order_type_label="Super Order")
+                if not success:
+                    logger.error("❌ [%s] %s", signal.symbol, remarks)
+                    return TradeResult(
+                        success=False,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        quantity=quantity,
+                        product_type="INTRADAY",
+                        remarks=remarks,
+                        dry_run=False,
+                    )
+
+                full_remarks = (
+                    f"{remarks} (Entry ₹{entry_price:.2f}, TP ₹{target_price:.2f}, SL ₹{sl_price:.2f})"
                 )
-                logger.info("🚀 [%s] %s", signal.symbol, remarks)
+                logger.info("🚀 [%s] %s", signal.symbol, full_remarks)
                 self.record_placed_order()
                 return TradeResult(
                     success=True,
@@ -553,7 +645,7 @@ class DhanExecutor:
                     quantity=quantity,
                     product_type="INTRADAY",
                     order_id=order_id,
-                    remarks=remarks,
+                    remarks=full_remarks,
                     dry_run=False,
                 )
             else:
@@ -566,8 +658,19 @@ class DhanExecutor:
                     product_type=self.dhan.CNC if safe_product == "CNC" else self.dhan.INTRA,
                     price=0,
                 )
-                order_id = str(order_resp.get("orderId", "UNKNOWN_DHAN_ID")) if isinstance(order_resp, dict) else str(order_resp)
-                remarks = f"Dhan order placed successfully! Order ID: {order_id}"
+                success, order_id, remarks = self._parse_dhan_order_response(order_resp, order_type_label="Regular Order")
+                if not success:
+                    logger.error("❌ [%s] %s", signal.symbol, remarks)
+                    return TradeResult(
+                        success=False,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        quantity=quantity,
+                        product_type=safe_product,
+                        remarks=remarks,
+                        dry_run=False,
+                    )
+
                 logger.info("🚀 [%s] %s", signal.symbol, remarks)
                 self.record_placed_order()
                 return TradeResult(

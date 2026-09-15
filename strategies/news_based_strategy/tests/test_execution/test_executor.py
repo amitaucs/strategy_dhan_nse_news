@@ -168,6 +168,105 @@ class TestDhanExecutor(unittest.TestCase):
             self.assertEqual(kwargs["stopLossPrice"], 297.0)
             self.assertEqual(kwargs["trailingJump"], 5.0)
 
+    def test_parse_dhan_order_response_formats(self):
+        """Test _parse_dhan_order_response with various success and failure shapes from DhanHQ API."""
+        # 1. Nested data with orderId
+        s1, id1, m1 = DhanExecutor._parse_dhan_order_response(
+            {"status": "success", "data": {"orderId": "11223344", "orderStatus": "PENDING"}},
+            order_type_label="Super Order"
+        )
+        self.assertTrue(s1)
+        self.assertEqual(id1, "11223344")
+        self.assertIn("11223344", m1)
+
+        # 2. Nested data with superOrderId
+        s2, id2, m2 = DhanExecutor._parse_dhan_order_response(
+            {"status": "success", "data": {"superOrderId": "SO_9988", "orderStatus": "PENDING"}},
+            order_type_label="Super Order"
+        )
+        self.assertTrue(s2)
+        self.assertEqual(id2, "SO_9988")
+
+        # 3. Direct top-level orderId
+        s3, id3, m3 = DhanExecutor._parse_dhan_order_response(
+            {"status": "success", "orderId": "ORD_5544"},
+            order_type_label="Regular Order"
+        )
+        self.assertTrue(s3)
+        self.assertEqual(id3, "ORD_5544")
+
+        # 4. Dhan Failure with error dict
+        s4, id4, m4 = DhanExecutor._parse_dhan_order_response(
+            {
+                "status": "failure",
+                "remarks": {
+                    "errorType": "BusinessException",
+                    "errorCode": "DH-902",
+                    "errorMessage": "Access Token expired"
+                }
+            },
+            order_type_label="Super Order"
+        )
+        self.assertFalse(s4)
+        self.assertEqual(id4, "")
+        self.assertIn("DH-902", m4)
+        self.assertIn("Access Token expired", m4)
+        self.assertNotIn("UNKNOWN_SUPER_ID", m4)
+
+        # 5. Dhan Failure with plain string remarks
+        s5, id5, m5 = DhanExecutor._parse_dhan_order_response(
+            {"status": "failure", "remarks": "Static IP not whitelisted on Dhan"},
+            order_type_label="Super Order"
+        )
+        self.assertFalse(s5)
+        self.assertEqual(id5, "")
+        self.assertIn("Static IP not whitelisted", m5)
+        self.assertNotIn("UNKNOWN_SUPER_ID", m5)
+
+        # 6. Raw order ID
+        s6, id6, m6 = DhanExecutor._parse_dhan_order_response(987654321, order_type_label="Order")
+        self.assertTrue(s6)
+        self.assertEqual(id6, "987654321")
+
+    def test_live_mode_handles_dhan_rejection_gracefully(self):
+        """When Dhan rejects super order, execute_order must return success=False with rejection reason."""
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            super_order_enabled=True,
+        )
+        mock_dhan = MagicMock()
+        mock_dhan.BUY = "BUY"
+        mock_dhan.NSE = "NSE_EQ"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.place_super_order.return_value = {
+            "status": "failure",
+            "remarks": {
+                "errorCode": "DH-911",
+                "errorMessage": "Static IP not whitelisted"
+            }
+        }
+        executor.dhan = mock_dhan
+        executor.dry_run = False
+
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="CNC",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Defense order",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, ltp=300.0)
+            self.assertFalse(res.success)
+            self.assertIn("DH-911", res.remarks)
+            self.assertIn("Static IP not whitelisted", res.remarks)
+            self.assertNotIn("UNKNOWN_SUPER_ID", res.remarks)
+
     def test_jwt_expiry_check_valid_and_expired(self):
         """Test parse_jwt_claims and check_token_expiry with future and past timestamps."""
         import base64
