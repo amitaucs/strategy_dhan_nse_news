@@ -104,8 +104,8 @@ fi
 # Ensure remote user has write permissions
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" ${PROJECT_ID:+--project="$PROJECT_ID"} --command="sudo mkdir -p $REMOTE_DIR && sudo chown -R \$USER:\$USER $REMOTE_DIR"
 
-# Copy project files (excluding .venv, git, database, and terraform cache)
-cd "$PROJECT_ROOT"
+# Copy project files and scanners (excluding .venv, git, database, and terraform cache)
+cd "$REPO_ROOT"
 tar \
   --exclude='.venv' \
   --exclude='.git' \
@@ -116,7 +116,7 @@ tar \
   --exclude='*terraform*' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
-  -czf /tmp/nse_app_bundle.tar.gz .
+  -czf /tmp/nse_app_bundle.tar.gz scanners strategies/news_based_strategy
 gcloud compute scp /tmp/nse_app_bundle.tar.gz "${INSTANCE_NAME}:/tmp/nse_app_bundle.tar.gz" --zone="$ZONE" ${PROJECT_ID:+--project="$PROJECT_ID"}
 rm -f /tmp/nse_app_bundle.tar.gz
 
@@ -124,6 +124,7 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" ${PROJECT_ID:+--project="$PRO
   cd $REMOTE_DIR
   tar -xzf /tmp/nse_app_bundle.tar.gz
   rm -f /tmp/nse_app_bundle.tar.gz
+  cd strategies/news_based_strategy
   chmod +x infra/scripts/docker.sh
   sudo ./infra/scripts/docker.sh up -d --build
 "

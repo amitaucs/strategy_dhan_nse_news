@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DhanHQ Trading Scanners Dashboard</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#22c55e',
+              600: '#16a34a',
+              900: '#14532d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-sky-500 selection:text-white">
+
+  <!-- Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand Logo -->
+      <div class="flex items-center space-x-3 cursor-pointer" onclick="showHomeView()">
+        <div class="p-2 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 shadow-lg shadow-sky-500/20 text-white">
+          <i data-lucide="radar" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="text-base font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+            DhanHQ Scanners
+          </h1>
+          <p class="text-[10px] text-slate-400 -mt-0.5">Automated Technical Analysis & Level Detection</p>
+        </div>
+      </div>
+
+      <!-- Dhan Connection Status & Actions -->
+      <div class="flex items-center space-x-4">
+        <div id="dhan-status-badge" class="flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-800 border border-slate-700">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span class="text-xs text-slate-300 font-medium">Checking DhanHQ API...</span>
+        </div>
+
+        <button
+          id="btn-copy-tv"
+          class="hidden px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium text-xs transition duration-150 flex items-center space-x-1.5 shadow-md shadow-blue-900/30"
+          title="Copy TradingView Watchlist"
+        >
+          <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+          <span id="btn-copy-tv-text">Copy TradingView Watchlist</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full">
+
+    <!-- View 1: Scanners Directory & Pro Studio (Home View) -->
+    <section id="view-home" class="space-y-6">
+      
+      <!-- Top Overview Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-xl">
+        <div class="space-y-1.5">
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-semibold">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Indian Equities Algorithmic Scanners</span>
+          </div>
+          <h2 class="text-xl md:text-2xl font-black text-white tracking-tight">
+            Scanner Studio & Strategy Studio
+          </h2>
+          <p class="text-xs text-slate-400 max-w-2xl leading-relaxed">
+            Select a strategy on the left to customize live parameters (Universe, Timeframe, Proximity & Multipliers), then launch the real-time scan.
+          </p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <div class="relative w-full md:w-72">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            <input
+              type="text"
+              id="home-scanner-search"
+              placeholder="Search strategy (e.g. Order Block)..."
+              class="w-full pl-10 pr-4 py-2.5 bg-slate-950/80 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-inner"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Master-Detail 2-Column Studio Workspace -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <!-- LEFT COLUMN: Master Scanner Selector (4 Cols) -->
+        <div class="lg:col-span-4 col-span-12 space-y-3">
+          <div class="flex items-center justify-between px-1">
+            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5 text-sky-400"></i>
+              <span>Available Strategies</span>
+            </span>
+            <span id="scanners-count-badge" class="text-[11px] font-mono text-sky-400 bg-sky-950/60 border border-sky-800/40 px-2 py-0.5 rounded-full">5 Registered</span>
+          </div>
+
+          <!-- Category Filter Tabs -->
+          <div class="flex items-center space-x-1.5 overflow-x-auto pb-1 text-xs no-scrollbar" id="home-category-tabs">
+            <button data-cat-filter="ALL" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/40 whitespace-nowrap transition">All</button>
+            <button data-cat-filter="Reversal" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Reversal</button>
+            <button data-cat-filter="Breakout" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Breakout</button>
+            <button data-cat-filter="Smart Money Concepts" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">SMC</button>
+            <button data-cat-filter="Trend Following" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Trend</button>
+            <button data-cat-filter="Support & Resistance" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">S&R</button>
+            <button data-cat-filter="Momentum" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Momentum</button>
+          </div>
+
+          <!-- Scanner Navigation List -->
+          <div id="scanner-nav-list" class="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
+            <!-- Populated dynamically by app.js -->
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Active Scanner Studio & Parameters (8 Cols) -->
+        <div class="lg:col-span-8 col-span-12">
+          <div id="scanner-studio-panel" class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
+            <!-- Populated dynamically for selected scanner by app.js -->
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- View 2: Scan Results View -->
+    <section id="view-results" class="hidden space-y-6">
+      
+      <!-- Top Action Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center space-x-3">
+          <button
+            id="btn-back-home"
+            class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center border border-slate-700"
+            title="Back to All Scanners"
+          >
+            <i data-lucide="arrow-left" class="w-5 h-5"></i>
+          </button>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h2 id="results-scanner-title" class="text-lg font-bold text-white leading-none">Scanner Results</h2>
+              <span id="scan-time-badge" class="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] font-mono text-slate-400"></span>
+            </div>
+            <p id="results-scanner-desc" class="text-xs text-slate-400 mt-1"></p>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 shrink-0 flex-wrap sm:flex-nowrap gap-y-2">
+          <!-- Universe Switcher Dropdown -->
+          <div class="relative flex items-center">
+            <select
+              id="results-select-universe"
+              class="pl-3 pr-8 py-2 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none"
+              title="Select Stock Universe"
+            >
+              <option value="NIFTY_500">Nifty 500 (Broad Market)</option>
+              <option value="NIFTY_100">Nifty 100</option>
+              <option value="NIFTY_50">Nifty 50</option>
+              <option value="NIFTY_SMALLCAP_100">Smallcap 100</option>
+              <option value="ALL_F_AND_O">All F&O (215)</option>
+            </select>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+          </div>
+
+          <!-- Timeframe Switcher Dropdown -->
+          <div class="relative flex items-center">
+            <select
+              id="results-select-timeframe"
+              class="pl-3 pr-8 py-2 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none"
+              title="Select Candle Timeframe"
+            >
+              <option value="1D">1D (Daily)</option>
+              <option value="2H">2H (120m)</option>
+              <option value="1H">1H (60m)</option>
+              <option value="15M">15M (15m)</option>
+            </select>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+          </div>
+
+          <!-- Re-Run Button -->
+          <button
+            id="btn-rerun"
+            class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-md shadow-sky-950 cursor-pointer whitespace-nowrap"
+            title="Re-run scanner with current settings"
+          >
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Re-Run</span>
+          </button>
+
+          <!-- Export CSV Button -->
+          <button
+            id="btn-export-csv"
+            class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-md shadow-emerald-950 cursor-pointer whitespace-nowrap"
+            title="Export results to CSV file"
+          >
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Export CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="results-loading" class="py-24 text-center space-y-4">
+        <div class="inline-flex p-4 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400">
+          <svg class="animate-spin h-8 w-8 text-sky-400" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-white">Fetching Live Market Candles from DhanHQ...</h3>
+        <p class="text-xs text-slate-400 max-w-md mx-auto">
+          Downloading OHLCV histories, computing fractal swing zones, EMAs (20, 50, 100, 200), and candlestick patterns.
+        </p>
+      </div>
+
+      <!-- Results Content (Metrics + 2-Column Layout) -->
+      <div id="results-content" class="hidden space-y-6">
+
+        <!-- 4 Summary Metrics -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="metric-badge rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400">Total Constituents</span>
+            <span id="metric-total" class="text-lg font-black text-white font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 bg-emerald-950/30 border-emerald-800/40 flex items-center justify-between">
+            <span class="text-xs font-semibold text-emerald-400">Matched Criteria</span>
+            <span id="metric-matched" class="text-lg font-black text-emerald-400 font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 bg-sky-950/30 border-sky-800/40 flex items-center justify-between">
+            <span id="metric-third-label" class="text-xs font-semibold text-sky-400">Bullish Reversals</span>
+            <span id="metric-reversals" class="text-lg font-black text-sky-400 font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400">Average RSI (14)</span>
+            <span id="metric-avg-rsi" class="text-lg font-black text-indigo-400 font-mono ml-2">-</span>
+          </div>
+        </div>
+
+        <!-- Clean Full-Width Results Area -->
+        <div class="w-full space-y-4">
+          
+          <!-- Table Header Bar: Search + Signal Dropdown + Match Status + Count Badge -->
+          <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
+            
+            <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+              <!-- Search Input + Signal Filter Dropdown + Volume Filter Dropdown -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+                <!-- Search Input -->
+                <div class="relative flex-1">
+                  <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-2.5"></i>
+                  <input
+                    type="text"
+                    id="table-search"
+                    placeholder="Quick search symbol (e.g. INFY, TCS)..."
+                    class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 transition"
+                  />
+                </div>
+
+                <!-- Signal Filter Dropdown -->
+                <div id="container-signal-filter" class="relative flex items-center shrink-0">
+                  <select
+                    id="table-signal-filter"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[220px] truncate"
+                    title="Filter by Candle Signal"
+                  >
+                    <option value="ALL">All Signals</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+                </div>
+
+                <!-- Volume Filter Dropdown -->
+                <div id="container-volume-filter" class="relative flex items-center shrink-0">
+                  <select
+                    id="table-volume-filter"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[200px] truncate"
+                    title="Filter by Volume"
+                  >
+                    <option value="ALL">All Volumes</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+                </div>
+              </div>
+
+              <!-- Match Status Pill Switcher + Count Badge -->
+              <div class="flex items-center space-x-3">
+                <div class="inline-flex bg-slate-800/80 p-1 rounded-xl border border-slate-700">
+                  <button
+                    id="filter-status-matched"
+                    data-status="matched"
+                    class="status-pill px-3 py-1 rounded-lg text-xs font-semibold transition bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                  >
+                    Matched 🟢
+                  </button>
+                  <button
+                    id="filter-status-all"
+                    data-status="all"
+                    class="status-pill px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition"
+                  >
+                    All Stocks
+                  </button>
+                </div>
+                <span id="results-count-badge" class="text-xs font-semibold text-slate-300 whitespace-nowrap bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700"></span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Clean Results Table -->
+          <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/40 shadow-xl">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-800/90 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                <tr>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="symbol">
+                    <div class="flex items-center space-x-1">
+                      <span>Symbol</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="ltp">
+                    <div class="flex items-center space-x-1">
+                      <span>LTP (₹)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="support_price">
+                    <div class="flex items-center space-x-1">
+                      <span>Key Level (₹)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="distance_pct">
+                    <div class="flex items-center space-x-1">
+                      <span>Distance (%)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4">Level Description</th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="volume">
+                    <div class="flex items-center space-x-1">
+                      <span>Volume</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="rsi">
+                    <div class="flex items-center space-x-1">
+                      <span>RSI (14)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4">Candle Signal</th>
+                </tr>
+              </thead>
+              <tbody id="results-tbody" class="divide-y divide-slate-800/60">
+                <!-- Populated by app.js -->
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="mt-auto border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500">
+    DhanHQ Trading Dashboard • Real-time Data Adapter with Rate-Limited Execution
+  </footer>
+
+  <!-- Application Logic -->
+  <script src="/static/app.js"></script>
+</body>
+</html>

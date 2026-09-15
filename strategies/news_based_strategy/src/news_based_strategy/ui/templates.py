@@ -244,75 +244,115 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
     tbody tr:hover { background-color: rgba(30, 41, 59, 0.5) !important; }
   </style>
+  <!-- Lucide Icons & Scanner Assets -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/scanner/style.css" />
 </head>
 <body class="bg-[#0b0f19] text-gray-200 font-sans antialiased min-h-screen flex flex-col custom-scrollbar">
 
   <!-- TOP APP BAR -->
-  <header class="bg-[#111827] border-b border-gray-800 sticky top-0 z-50 px-6 py-3 shadow-md">
-    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
+  <header class="bg-[#111827] border-b border-gray-800 sticky top-0 z-50 px-5 py-2.5 shadow-md">
+    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
       
-      <!-- Brand & Telemetry -->
+      <!-- Brand & Strategy Selector Hub -->
       <div class="flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-lg">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-lg shadow-sm">
           ⚡
         </div>
+        
         <div>
-          <div class="flex items-center gap-2.5">
-            <h1 class="text-sm font-bold text-white tracking-wide uppercase">NSE Catalyst Trading Terminal</h1>
-            <!-- Dynamic Market Status Badge (Green when Open, Red when Closed) -->
-            <span id="market-status-badge" class="px-2.5 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full flex items-center gap-1.5 shadow-sm transition-all duration-300" title="NSE Trading Hours (Mon-Fri 09:15 - 15:30 IST)">
+          <div class="flex items-center gap-2">
+            <h1 class="text-xs font-bold text-white tracking-wider uppercase">NSE TERMINAL</h1>
+            <!-- Dynamic Market Status Badge -->
+            <span id="market-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full flex items-center gap-1 shadow-sm transition-all" title="NSE Trading Hours (Mon-Fri 09:15 - 15:30 IST)">
               <span id="market-status-dot" class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
               <span id="market-status-text">MARKET CLOSED</span>
             </span>
             <!-- Dynamic Cutoff Status Badge -->
-            <span id="cutoff-status-badge" class="px-2.5 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full flex items-center gap-1.5 shadow-sm transition-all duration-300" title="New Trades Cutoff: 14:45 IST | Intraday Square-Off: 15:00 IST">
+            <span id="cutoff-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full flex items-center gap-1 shadow-sm transition-all" title="Cutoff 14:45 | Square-Off 15:00">
               <span id="cutoff-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               <span id="cutoff-status-text">CUTOFF 14:45</span>
             </span>
           </div>
-          <div class="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5">
-            <span>Model: <span class="text-indigo-400 font-mono font-semibold">gemini-3.7-flash</span></span>
-            <span>•</span>
-            <span>Broker: <span id="mode-text" class="text-amber-400 font-mono font-semibold">VIRTUAL</span></span>
-            <span>•</span>
-            <span>Token: <span id="telemetry-token-status" class="text-emerald-400 font-mono font-bold">Active</span></span>
+        </div>
+
+        <!-- Vertical Divider -->
+        <div class="h-6 w-px bg-gray-800 hidden sm:block"></div>
+
+        <!-- Strategy Quick-Selector Dropdown -->
+        <div class="relative" id="strategy-selector-container">
+          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" class="bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95" title="Switch Active Quantitative Strategy">
+            <span id="header-strat-icon" class="text-base">⚡</span>
+            <div class="text-left">
+              <div class="flex items-center gap-1.5">
+                <span id="header-strat-code" class="text-[10px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-800/80 px-1.5 py-0.2 rounded">ST-NEWS</span>
+                <span id="header-strat-name" class="text-xs font-bold text-white max-w-[170px] truncate">NSE Catalyst News Engine</span>
+              </div>
+            </div>
+            <span class="text-[10px] text-gray-400 ml-0.5">▼</span>
+          </button>
+
+          <!-- Floating Strategy Popover Menu -->
+          <div id="strategy-menu-dropdown" class="hidden absolute left-0 top-12 w-80 sm:w-96 bg-[#111827] border border-gray-700/90 rounded-2xl shadow-2xl p-3.5 z-50 space-y-2.5">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-2">
+              <span class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Select Quantitative Strategy</span>
+              <span id="strategies-count-badge" class="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">5 Registered</span>
+            </div>
+            
+            <!-- Category Filter Pills inside popover -->
+            <div class="flex items-center gap-1 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
+              <button onclick="filterStrategyCategory('ALL')" data-strat-cat="ALL" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition bg-emerald-600 text-white">All (5)</button>
+              <button onclick="filterStrategyCategory('event_news')" data-strat-cat="event_news" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">News</button>
+              <button onclick="filterStrategyCategory('trend_momentum')" data-strat-cat="trend_momentum" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Momentum</button>
+              <button onclick="filterStrategyCategory('breakouts')" data-strat-cat="breakouts" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Breakouts</button>
+              <button onclick="filterStrategyCategory('reversals')" data-strat-cat="reversals" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Reversals</button>
+              <button onclick="filterStrategyCategory('smart_money')" data-strat-cat="smart_money" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Smart Money</button>
+            </div>
+
+            <!-- List of strategies -->
+            <div id="strategy-cards-grid" class="space-y-1.5 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+              <!-- Populated dynamically -->
+            </div>
           </div>
         </div>
+
+        <!-- Navigation Tabs Switcher (Strategies vs Scanner) -->
+        <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
+          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5">
+            <span>⚡</span> <span>Strategies</span>
+          </button>
+          <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+            <span>🔭</span> <span>Scanner</span>
+          </button>
+        </div>
+
       </div>
 
-      <!-- Controls & Actions (Separated Strategy Controls & Dedicated Dhan Token Widget) -->
-      <div class="flex items-center gap-3.5">
+      <!-- Controls & Actions (Execution, Auto Order, Quick Actions & Profile) -->
+      <div class="flex items-center gap-2.5">
         
         <!-- Strategy Controls Group -->
-        <div class="flex items-center gap-2.5">
-          <!-- EXECUTION MODE (VIRTUAL / LIVE) Toggle Switch -->
-          <div class="flex items-center gap-2 bg-[#1e293b]/80 border border-gray-700/80 px-3 py-1.5 rounded-lg shadow-sm">
-            <span class="text-xs font-semibold text-gray-300">EXECUTION:</span>
-            <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
-              <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
-              <span id="mode-status-label">VIRTUAL</span>
-            </button>
-          </div>
+        <div id="strategy-controls-group" class="flex items-center gap-2">
+          <!-- EXECUTION MODE (VIRTUAL / LIVE) -->
+          <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
+            <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
+            <span id="mode-status-label">VIRTUAL</span>
+          </button>
 
           <!-- AUTO_ORDER Toggle Switch -->
-          <div class="flex items-center gap-2 bg-[#1e293b]/80 border border-gray-700/80 px-3 py-1.5 rounded-lg shadow-sm">
-            <span class="text-xs font-semibold text-gray-300">AUTO ORDER:</span>
-            <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow">
-              <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
-              <span id="auto-status-label">LOADING...</span>
-            </button>
-          </div>
+          <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Toggle AI Automatic Order Placement">
+            <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
+            <span id="auto-status-label">AUTO: ON</span>
+          </button>
 
           <!-- Audio Synthesizer Toggle -->
-          <button onclick="toggleAudioSound()" id="sound-toggle-btn" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-emerald-400 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1.5 shadow" title="Toggle Synthesized Audio Chimes for Catalysts">
+          <button onclick="toggleAudioSound()" id="sound-toggle-btn" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-emerald-400 text-xs font-semibold px-2 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1 shadow" title="Toggle Synthesized Audio Chimes">
             <span id="sound-icon">🔊</span>
-            <span id="sound-label" class="hidden md:inline font-mono">Audio ON</span>
           </button>
 
           <!-- Shortcuts Cheat Sheet Button -->
-          <button onclick="openHotkeysModal()" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1 shadow" title="Keyboard Shortcuts Cheat Sheet (?)">
-            <span>⌨️</span>
-            <span class="hidden lg:inline text-gray-400 font-mono text-[11px]">[?]</span>
+          <button onclick="openHotkeysModal()" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-300 text-xs font-semibold px-2 py-1.5 rounded-lg transition border border-gray-700 flex items-center shadow" title="Keyboard Shortcuts Cheat Sheet (?)">
+            <span class="font-mono text-xs">⌨️</span>
           </button>
 
           <!-- Emergency Square-Off Button -->
@@ -324,13 +364,13 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           __SIM_HEADER_BTN__
 
           <!-- Refresh Button -->
-          <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-2 rounded-lg transition border border-gray-700" title="Refresh Table">
+          <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-1.5 rounded-lg transition border border-gray-700" title="Refresh Table">
             🔄
           </button>
         </div>
 
         <!-- Vertical Divider -->
-        <div class="h-8 w-px bg-gray-700/60 hidden sm:block"></div>
+        <div class="h-6 w-px bg-gray-800 hidden sm:block"></div>
 
         <!-- RIGHT-TOP USER LOGIN & ACCOUNT WIDGET -->
         <div class="relative" id="user-account-container">
@@ -342,20 +382,20 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
           <!-- Authenticated User Profile Button -->
           <div id="user-profile-widget" class="flex items-center gap-2">
-            <button onclick="toggleUserMenu()" id="token-btn" class="group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3.5 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5" title="Manage Dhan Account & Session">
-              <div class="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-inner">
+            <button onclick="toggleUserMenu()" id="token-btn" class="group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2" title="Manage Dhan Account & Session">
+              <div class="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-inner">
                 👤
               </div>
               <div class="text-left">
-                <div class="text-[10px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
-                  <span id="user-client-id-label">DHAN USER</span>
-                  <span id="token-indicator-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <div class="text-[9px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1">
+                  <span id="user-client-id-label">DHAN</span>
+                  <span id="token-indicator-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 </div>
-                <div id="header-token-mask" class="text-xs font-mono font-bold text-emerald-400 group-hover:text-emerald-300">
+                <div id="header-token-mask" class="text-[11px] font-mono font-bold text-emerald-400 group-hover:text-emerald-300">
                   Active
                 </div>
               </div>
-              <span class="text-[10px] text-gray-400 group-hover:text-white transition ml-1">▼</span>
+              <span class="text-[10px] text-gray-400 group-hover:text-white transition ml-0.5">▼</span>
             </button>
 
             <!-- User Menu Dropdown -->
@@ -387,138 +427,119 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     </div>
   </header>
 
-  <!-- METRICS RIBBON -->
-  <div class="bg-[#0e1422] border-b border-gray-800/80 px-6 py-2.5">
-    <div class="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-6 gap-3 text-center">
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-gray-400 font-medium whitespace-nowrap">FILTERED CATALYSTS</span>
-        <span id="stat-total" class="text-base font-bold text-white font-mono">0</span>
-      </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-emerald-400 font-medium whitespace-nowrap">🟢 BULLISH SIGNALS</span>
-        <span id="stat-bullish" class="text-base font-bold text-emerald-400 font-mono">0</span>
-      </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-rose-400 font-medium whitespace-nowrap">🔴 BEARISH SIGNALS</span>
-        <span id="stat-bearish" class="text-base font-bold text-rose-400 font-mono">0</span>
-      </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-indigo-400 font-medium whitespace-nowrap">ORDERS PLACED</span>
-        <span id="stat-placed" class="text-base font-bold text-indigo-300 font-mono">0</span>
-      </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between">
-        <span class="text-[11px] text-amber-400 font-medium whitespace-nowrap">PENDING APPROVAL</span>
-        <span id="stat-pending" class="text-base font-bold text-amber-300 font-mono">0</span>
-      </div>
-      <div class="bg-[#131b2e] border border-gray-800/80 px-3 py-2 rounded-lg flex items-center justify-between col-span-2 md:col-span-1">
-        <span class="text-[11px] text-cyan-400 font-medium whitespace-nowrap">🛡️ ORDERS RISK GAUGE</span>
-        <div class="flex items-center gap-2 font-mono flex-shrink-0">
-          <div id="risk-gauge-bars" class="flex items-center gap-1">
-            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
-            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
-            <span class="w-2.5 h-3 rounded-sm bg-gray-700/80 border border-gray-600/40"></span>
+  <!-- STRATEGIES TAB CONTAINER -->
+  <div id="main-tab-strategies" class="w-full flex-1 flex flex-col">
+
+    <!-- WORKSPACE 1: ST-NEWS CATALYST WORKSPACE -->
+    <div id="workspace-st-news" class="strategy-workspace-pane w-full flex-1 flex flex-col">
+
+      <!-- UNIFIED 1-ROW COMMAND & TELEMETRY STRIP (36px high) -->
+      <div class="bg-[#0e1422] border-b border-gray-800/90 px-6 py-1.5 shadow-sm">
+        <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+          
+          <!-- Left: Radar Status & Universe -->
+          <div class="flex items-center gap-2.5">
+            <div class="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full font-bold text-[11px] shadow-sm" id="radar-badge-container">
+              <span class="relative flex h-2 w-2">
+                <span id="radar-ping-dot" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span id="radar-solid-dot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span id="poller-status-badge">NSE RADAR</span>
+            </div>
+            <div class="text-gray-300 flex items-center gap-1.5 font-medium text-[11px]">
+              <span>Watching <b id="poller-fno-count" class="text-white font-mono font-bold">228</b> F&O</span>
+              <span class="text-gray-600">•</span>
+              <span>Check: <span id="poller-last-time" class="text-emerald-400 font-mono font-bold">Just now</span></span>
+              <span id="poller-elapsed-tag" class="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-semibold">0s ago</span>
+              <span class="text-gray-600 hidden md:inline">•</span>
+              <span class="hidden md:inline text-gray-400">Noise Filtered: <span id="poller-noise-count" class="text-amber-400 font-mono font-bold">0</span></span>
+            </div>
           </div>
-          <span id="risk-gauge-text" class="text-emerald-400 text-xs font-mono font-bold whitespace-nowrap">0/3</span>
+
+          <!-- Right: Inline High-Density KPI Badges -->
+          <div class="flex items-center gap-2 text-[11px] font-mono flex-wrap">
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-gray-400">Filtered:</span>
+              <span id="stat-total" class="font-bold text-white">0</span>
+            </div>
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-emerald-400">🟢 Bull:</span>
+              <span id="stat-bullish" class="font-bold text-emerald-400">0</span>
+            </div>
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-rose-400">🔴 Bear:</span>
+              <span id="stat-bearish" class="font-bold text-rose-400">0</span>
+            </div>
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-indigo-300">🎯 Orders:</span>
+              <span id="stat-placed" class="font-bold text-indigo-300">0</span>
+            </div>
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-amber-400">⏳ Pending:</span>
+              <span id="stat-pending" class="font-bold text-amber-300">0</span>
+            </div>
+            <div class="bg-[#131b2e] border border-gray-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <span class="text-cyan-400">🛡️ Risk:</span>
+              <div id="risk-gauge-bars" class="flex items-center gap-0.5">
+                <span class="w-1.5 h-2.5 rounded-xs bg-gray-700 border border-gray-600"></span>
+                <span class="w-1.5 h-2.5 rounded-xs bg-gray-700 border border-gray-600"></span>
+                <span class="w-1.5 h-2.5 rounded-xs bg-gray-700 border border-gray-600"></span>
+              </div>
+              <span id="risk-gauge-text" class="font-bold text-emerald-400">0/3</span>
+            </div>
+          </div>
+
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- LIVE FEED MONITORING RADAR BAR -->
-  <div class="bg-[#0b101d] border-b border-gray-800/90 px-6 py-2 shadow-inner">
-    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
-      
-      <!-- Left: Poller Status & Universe -->
-      <div class="flex items-center gap-3">
-        <div class="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-full font-bold shadow-sm" id="radar-badge-container">
-          <span class="relative flex h-2.5 w-2.5">
-            <span id="radar-ping-dot" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span id="radar-solid-dot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-          </span>
-          <span id="poller-status-badge">NSE RADAR ACTIVE</span>
+      <!-- TABLE TOOLBAR (TABS & SEARCH) -->
+      <div class="max-w-[1600px] mx-auto w-full px-6 pt-3 pb-2 flex flex-wrap items-center justify-between gap-3">
+        
+        <!-- Filter Dropdown & Scope Indicator -->
+        <div class="flex items-center flex-wrap gap-2.5">
+          <div class="relative flex items-center">
+            <span class="absolute left-2.5 text-xs text-gray-400 pointer-events-none">🎯</span>
+            <select id="feed-filter-select" onchange="setFilter(this.value)" class="bg-[#111827] border border-gray-700/80 hover:border-emerald-500/60 text-xs font-semibold text-gray-200 rounded-lg pl-7 pr-8 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition appearance-none cursor-pointer" title="Filter table signals by conviction verdict or noise">
+              <option value="ALL" id="opt-filter-all">⚡ All Actionable (0)</option>
+              <option value="BULLISH" id="opt-filter-bullish">🟢 Bullish Only (0)</option>
+              <option value="BEARISH" id="opt-filter-bearish">🔴 Bearish Only (0)</option>
+              <option value="PENDING" id="opt-filter-pending">⏳ Pending Approval (0)</option>
+              <option value="NOISE" id="opt-filter-noise">🔇 Noise Suppressed (0)</option>
+            </select>
+            <span class="absolute right-2.5 text-[10px] text-gray-400 pointer-events-none">▼</span>
+          </div>
+
+          <!-- Scope Indicator (Today / All History Toggle) -->
+          <button onclick="toggleScopeMode()" id="btn-session-scope" class="flex items-center gap-1.5 bg-[#111827] hover:bg-[#162032] border border-gray-800 px-2.5 py-1.5 rounded-lg shadow-sm transition active:scale-95" title="Toggle between Today and Historical Signals">
+            <span class="text-xs text-gray-400">📅</span>
+            <span id="session-scope-badge" class="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 rounded flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span id="session-scope-text">Today Only</span>
+            </span>
+          </button>
         </div>
-        <div class="text-gray-300 flex items-center gap-1.5 font-medium">
-          <span>Watching <b id="poller-fno-count" class="text-white font-mono font-bold">228</b> F&O Stocks</span>
-          <span class="text-gray-600">•</span>
-          <span>Poll Interval: <span id="poller-interval-val" class="text-gray-200 font-mono font-semibold">60s</span></span>
+
+        <!-- Search input & View Controls -->
+        <div class="flex items-center flex-wrap gap-2.5">
+          <div class="relative">
+            <input type="text" id="search-input" onkeyup="renderFeed()" placeholder="Search symbol or catalyst..." class="bg-[#111827] border border-gray-800 text-xs text-gray-200 placeholder-gray-500 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 w-52 sm:w-60 transition">
+            <span class="absolute left-2.5 top-2 text-xs text-gray-500">🔍</span>
+          </div>
+
+          <!-- Load All History Button -->
+          <button onclick="loadFeedHistory()" id="btn-load-history" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#162032] hover:bg-[#1f293d] text-gray-300 hover:text-white border border-gray-700/80 hover:border-gray-600 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Load all past evaluated signals from database">
+            <span>📜</span>
+            <span>Show History (DB)</span>
+          </button>
+
+          <!-- Clear Display Button -->
+          <button onclick="clearFeedList()" id="btn-clear-feed" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#162032] hover:bg-rose-950/40 text-gray-300 hover:text-rose-200 border border-gray-700/80 hover:border-rose-500/50 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Clear displayed table list from screen (Database remains untouched)">
+            <span>🗑️</span>
+            <span>Clear Display</span>
+          </button>
         </div>
+
       </div>
-
-      <!-- Right: Real-Time Telemetry Counters -->
-      <div class="flex items-center gap-4 text-gray-400">
-        <div class="flex items-center gap-1.5">
-          <span>Last Exchange Check (IST):</span>
-          <span id="poller-last-time" class="text-emerald-400 font-mono font-bold">Just now</span>
-          <span id="poller-elapsed-tag" class="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded font-mono font-semibold">0s ago</span>
-        </div>
-        <div class="flex items-center gap-1.5 border-l border-gray-800 pl-3">
-          <span>Compliance Noise Suppressed:</span>
-          <span id="poller-noise-count" class="text-amber-400 font-mono font-bold">0</span>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- TABLE TOOLBAR (TABS & SEARCH) -->
-  <div class="max-w-[1600px] mx-auto w-full px-6 pt-5 pb-3 flex flex-wrap items-center justify-between gap-3">
-    
-    <!-- Filter Dropdown & Scope Indicator -->
-    <div class="flex items-center flex-wrap gap-2.5">
-      <div class="relative flex items-center">
-        <span class="absolute left-2.5 text-xs text-gray-400 pointer-events-none">🎯</span>
-        <select id="feed-filter-select" onchange="setFilter(this.value)" class="bg-[#111827] border border-gray-700/80 hover:border-emerald-500/60 text-xs font-semibold text-gray-200 rounded-lg pl-7 pr-8 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition appearance-none cursor-pointer" title="Filter table signals by conviction verdict or noise">
-          <option value="ALL" id="opt-filter-all">⚡ All Actionable (0)</option>
-          <option value="BULLISH" id="opt-filter-bullish">🟢 Bullish Only (0)</option>
-          <option value="BEARISH" id="opt-filter-bearish">🔴 Bearish Only (0)</option>
-          <option value="PENDING" id="opt-filter-pending">⏳ Pending Approval (0)</option>
-          <option value="NOISE" id="opt-filter-noise">🔇 Noise Suppressed (0)</option>
-        </select>
-        <span class="absolute right-2.5 text-[10px] text-gray-400 pointer-events-none">▼</span>
-      </div>
-
-      <!-- Scope Indicator Badge -->
-      <div class="flex items-center gap-1.5 bg-[#111827] border border-gray-800 px-2.5 py-1.5 rounded-lg shadow-sm">
-        <span class="text-xs text-gray-400 flex items-center gap-1">
-          <span>📅</span>
-          <span>Scope:</span>
-        </span>
-        <span id="session-scope-badge" class="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 rounded flex items-center gap-1">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-          <span id="session-scope-text">Today Only</span>
-        </span>
-      </div>
-    </div>
-
-    <!-- Search input & View Controls -->
-    <div class="flex items-center flex-wrap gap-2.5">
-      <div class="relative">
-        <input type="text" id="search-input" onkeyup="renderFeed()" placeholder="Search symbol or catalyst..." class="bg-[#111827] border border-gray-800 text-xs text-gray-200 placeholder-gray-500 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 w-52 sm:w-60 transition">
-        <span class="absolute left-2.5 top-2 text-xs text-gray-500">🔍</span>
-      </div>
-      
-      <!-- Toggle: Today's Signals Only Button -->
-      <button onclick="loadTodaySignals()" id="btn-today-signals" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-600 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Filter to today's trading session signals only">
-        <span>📅</span>
-        <span>Today Only</span>
-      </button>
-
-      <!-- Load All History Button -->
-      <button onclick="loadFeedHistory()" id="btn-load-history" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#162032] hover:bg-[#1f293d] text-gray-300 hover:text-white border border-gray-700/80 hover:border-gray-600 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Load all past evaluated signals from database">
-        <span>📜</span>
-        <span>Show History (DB)</span>
-      </button>
-
-      <!-- Clear Display Button -->
-      <button onclick="clearFeedList()" id="btn-clear-feed" class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-[#162032] hover:bg-rose-950/40 text-gray-300 hover:text-rose-200 border border-gray-700/80 hover:border-rose-500/50 transition flex items-center gap-1.5 shadow-sm active:scale-95" title="Clear displayed table list from screen (Database remains untouched)">
-        <span>🗑️</span>
-        <span>Clear Display</span>
-      </button>
-
-      <span class="text-xs text-gray-500 hidden xl:inline">Auto-Refreshes Daily</span>
-    </div>
-
-  </div>
 
   <!-- TABLE CONTAINER -->
   <main class="max-w-[1600px] mx-auto w-full px-6 pb-8 flex-1 flex flex-col">
@@ -573,6 +594,416 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
     </div>
   </main>
+  </div> <!-- /workspace-st-news -->
+
+  <!-- WORKSPACE 2: MODULAR STRATEGY WORKSPACE (For ST-15, ST-08, ST-01, ST-OB) -->
+  <div id="workspace-st-modular" class="strategy-workspace-pane hidden max-w-[1600px] mx-auto px-6 py-6 w-full space-y-6 flex-1">
+    
+    <!-- Strategy Header & Status Banner -->
+    <div class="bg-[#111827] border border-gray-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="space-y-1.5">
+        <div class="flex items-center gap-2.5">
+          <span id="mod-strat-icon" class="text-2xl">📈</span>
+          <span id="mod-strat-code" class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">ST-15</span>
+          <h2 id="mod-strat-title" class="text-lg font-bold text-white tracking-wide">NIFTY 200 LargeCap Momentum</h2>
+          <span id="mod-strat-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">🟢 READY</span>
+        </div>
+        <p id="mod-strat-desc" class="text-xs text-gray-400 max-w-3xl leading-relaxed">
+          Multi-timeframe Heikin-Ashi EMA momentum strategy with dynamic trailing stop-loss on Nifty 200 leaders.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <div class="bg-[#0b0f19] border border-gray-800 px-3.5 py-2 rounded-xl text-right font-mono">
+          <div class="text-[10px] uppercase text-gray-500 font-bold">Execution Engine</div>
+          <div id="mod-strat-engine-mode" class="text-xs font-bold text-amber-400">🛡️ VIRTUAL MODE</div>
+        </div>
+        <button onclick="launchModularStrategyScan()" id="btn-run-modular-strat" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center gap-2 active:scale-95">
+          <span>⚡</span>
+          <span>Run Strategy Screener</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Key Parameters & Metadata Row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl space-y-1">
+        <span class="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Trading Universe</span>
+        <div id="mod-strat-universe" class="text-xs font-bold text-gray-200">NIFTY 200 LargeCap</div>
+      </div>
+      <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl space-y-1">
+        <span class="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Candle Timeframe</span>
+        <div id="mod-strat-timeframe" class="text-xs font-bold text-blue-400 font-mono">15m / Daily Heikin-Ashi</div>
+      </div>
+      <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl space-y-1">
+        <span class="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Risk Profile & Bracket</span>
+        <div id="mod-strat-risk" class="text-xs font-bold text-amber-400 font-mono">1.5% SL / 4.5% TP (1:3 R:R)</div>
+      </div>
+      <div class="bg-[#111827] border border-gray-800 p-4 rounded-xl space-y-1">
+        <span class="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Allocated Capital</span>
+        <div id="mod-strat-capital" class="text-xs font-bold text-emerald-400 font-mono">₹50,000 / trade</div>
+      </div>
+    </div>
+
+    <!-- Strategy Live Triggers & Execution Feed Area -->
+    <div class="bg-[#111827] border border-gray-800 rounded-2xl p-6 shadow-xl space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold text-white">Live Strategy Triggers & Signal Monitor</span>
+          <span id="mod-signals-count" class="text-xs font-mono text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2 py-0.5 rounded-full">0 Signals Generated</span>
+        </div>
+        <div class="text-xs text-gray-400">
+          Dhan Automated Order Routing: <span class="text-emerald-400 font-bold">Enabled</span>
+        </div>
+      </div>
+
+      <div id="mod-strat-empty" class="text-center py-12 border border-dashed border-gray-800 rounded-xl bg-[#0b0f19]/60 space-y-3">
+        <div class="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-2xl mx-auto text-blue-400">
+          📡
+        </div>
+        <h3 class="text-sm font-bold text-white">Strategy Engine Ready for Execution</h3>
+        <p class="text-xs text-gray-400 max-w-md mx-auto">
+          Click <strong class="text-blue-400">Run Strategy Screener</strong> or toggle on auto-trading to stream live multi-timeframe signals from the DhanHQ market feed.
+        </p>
+        <div class="pt-2">
+          <button onclick="switchMainTab('scanner')" class="text-xs font-semibold text-blue-400 hover:text-blue-300 transition flex items-center gap-1 mx-auto">
+            <span>View technical scanner rules in Scanner Studio →</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div> <!-- /workspace-st-modular -->
+
+  </div> <!-- /main-tab-strategies -->
+
+  <!-- TECHNICAL SCANNER TAB CONTAINER -->
+  <div id="main-tab-scanner" class="hidden max-w-[1600px] mx-auto px-6 py-6 w-full space-y-6 flex-1">
+    
+    <!-- View 1: Scanners Directory & Pro Studio (Home View) -->
+    <section id="view-home" class="space-y-6">
+      
+      <!-- Top Overview Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-xl">
+        <div class="space-y-1.5">
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-semibold">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Indian Equities Algorithmic Scanners</span>
+          </div>
+          <h2 class="text-xl md:text-2xl font-black text-white tracking-tight">
+            Scanner Studio & Strategy Studio
+          </h2>
+          <p class="text-xs text-slate-400 max-w-2xl leading-relaxed">
+            Select a strategy on the left to customize live parameters (Universe, Timeframe, Proximity & Multipliers), then launch the real-time scan.
+          </p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <div id="dhan-status-badge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700">
+            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+            <span class="text-xs text-slate-300 font-medium">Checking DhanHQ API...</span>
+          </div>
+          <div class="relative w-full md:w-64">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            <input
+              type="text"
+              id="home-scanner-search"
+              placeholder="Search strategy (e.g. Order Block)..."
+              class="w-full pl-10 pr-4 py-2 bg-slate-950/80 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-inner"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Master-Detail 2-Column Studio Workspace -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <!-- LEFT COLUMN: Master Scanner Selector (4 Cols) -->
+        <div class="lg:col-span-4 col-span-12 space-y-3">
+          <div class="flex items-center justify-between px-1">
+            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
+              <i data-lucide="layers" class="w-3.5 h-3.5 text-sky-400"></i>
+              <span>Available Strategies</span>
+            </span>
+            <span id="scanners-count-badge" class="text-[11px] font-mono text-sky-400 bg-sky-950/60 border border-sky-800/40 px-2 py-0.5 rounded-full">-- Registered</span>
+          </div>
+
+          <!-- Category Filter Tabs -->
+          <div class="flex items-center space-x-1.5 overflow-x-auto pb-1 text-xs no-scrollbar" id="home-category-tabs">
+            <button data-cat-filter="ALL" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/40 whitespace-nowrap transition">All</button>
+            <button data-cat-filter="Reversal" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Reversal</button>
+            <button data-cat-filter="Breakout" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Breakout</button>
+            <button data-cat-filter="Smart Money Concepts" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">SMC</button>
+            <button data-cat-filter="Trend Following" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Trend</button>
+            <button data-cat-filter="Support & Resistance" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">S&R</button>
+            <button data-cat-filter="Momentum" class="home-cat-tab px-3 py-1.5 rounded-xl font-semibold bg-slate-800/60 text-slate-400 border border-transparent hover:text-white whitespace-nowrap transition">Momentum</button>
+          </div>
+
+          <!-- Scanner Navigation List -->
+          <div id="scanner-nav-list" class="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
+            <!-- Populated dynamically by app.js -->
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Active Scanner Studio & Parameters (8 Cols) -->
+        <div class="lg:col-span-8 col-span-12">
+          <div id="scanner-studio-panel" class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
+            <!-- Populated dynamically for selected scanner by app.js -->
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- View 2: Scan Results View -->
+    <section id="view-results" class="hidden space-y-6">
+      
+      <!-- Top Action Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+        <div class="flex items-center space-x-3">
+          <button
+            id="btn-back-home"
+            class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center border border-slate-700"
+            title="Back to All Scanners"
+          >
+            <i data-lucide="arrow-left" class="w-5 h-5"></i>
+          </button>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h2 id="results-scanner-title" class="text-lg font-bold text-white leading-none">Scanner Results</h2>
+              <span id="scan-time-badge" class="px-2 py-0.5 rounded-md bg-slate-800 text-[10px] font-mono text-slate-400"></span>
+            </div>
+            <p id="results-scanner-desc" class="text-xs text-slate-400 mt-1"></p>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 shrink-0 flex-wrap sm:flex-nowrap gap-y-2">
+          <!-- Universe Switcher Dropdown -->
+          <div class="relative flex items-center">
+            <select
+              id="results-select-universe"
+              class="pl-3 pr-8 py-2 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none"
+              title="Select Stock Universe"
+            >
+              <option value="NIFTY_500">Nifty 500 (Broad Market)</option>
+              <option value="NIFTY_100">Nifty 100</option>
+              <option value="NIFTY_50">Nifty 50</option>
+              <option value="NIFTY_SMALLCAP_100">Smallcap 100</option>
+              <option value="ALL_F_AND_O">All F&O (215)</option>
+            </select>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+          </div>
+
+          <!-- Timeframe Switcher Dropdown -->
+          <div class="relative flex items-center">
+            <select
+              id="results-select-timeframe"
+              class="pl-3 pr-8 py-2 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none"
+              title="Select Candle Timeframe"
+            >
+              <option value="1D">1D (Daily)</option>
+              <option value="2H">2H (120m)</option>
+              <option value="1H">1H (60m)</option>
+              <option value="15M">15M (15m)</option>
+            </select>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+          </div>
+
+          <!-- Re-Run Button -->
+          <button
+            id="btn-rerun"
+            class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-md shadow-sky-950 cursor-pointer whitespace-nowrap"
+            title="Re-run scanner with current settings"
+          >
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Re-Run</span>
+          </button>
+
+          <!-- Export CSV Button -->
+          <button
+            id="btn-export-csv"
+            class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-md shadow-emerald-950 cursor-pointer whitespace-nowrap"
+            title="Export results to CSV file"
+          >
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Export CSV</span>
+          </button>
+
+          <!-- Copy TradingView Watchlist Button -->
+          <button
+            id="btn-copy-tv"
+            class="hidden px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-xs transition flex items-center space-x-1.5 shadow-md shadow-blue-950 cursor-pointer whitespace-nowrap"
+            title="Copy TradingView Watchlist"
+          >
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span id="btn-copy-tv-text">Copy TradingView</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="results-loading" class="py-24 text-center space-y-4">
+        <div class="inline-flex p-4 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400">
+          <svg class="animate-spin h-8 w-8 text-sky-400" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-white">Fetching Live Market Candles from DhanHQ...</h3>
+        <p class="text-xs text-slate-400 max-w-md mx-auto">
+          Downloading OHLCV histories, computing fractal swing zones, EMAs (20, 50, 100, 200), and candlestick patterns.
+        </p>
+      </div>
+
+      <!-- Results Content (Metrics + 2-Column Layout) -->
+      <div id="results-content" class="hidden space-y-6">
+
+        <!-- 4 Summary Metrics -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="metric-badge rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400">Total Constituents</span>
+            <span id="metric-total" class="text-lg font-black text-white font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 bg-emerald-950/30 border-emerald-800/40 flex items-center justify-between">
+            <span class="text-xs font-semibold text-emerald-400">Matched Criteria</span>
+            <span id="metric-matched" class="text-lg font-black text-emerald-400 font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 bg-sky-950/30 border-sky-800/40 flex items-center justify-between">
+            <span id="metric-third-label" class="text-xs font-semibold text-sky-400">Bullish Reversals</span>
+            <span id="metric-reversals" class="text-lg font-black text-sky-400 font-mono ml-2">-</span>
+          </div>
+          <div class="metric-badge rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-400">Average RSI (14)</span>
+            <span id="metric-avg-rsi" class="text-lg font-black text-indigo-400 font-mono ml-2">-</span>
+          </div>
+        </div>
+
+        <!-- Clean Full-Width Results Area -->
+        <div class="w-full space-y-4">
+          
+          <!-- Table Header Bar: Search + Signal Dropdown + Match Status + Count Badge -->
+          <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
+            
+            <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+              <!-- Search Input + Signal Filter Dropdown + Volume Filter Dropdown -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+                <!-- Search Input -->
+                <div class="relative flex-1">
+                  <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-2.5"></i>
+                  <input
+                    type="text"
+                    id="table-search"
+                    placeholder="Quick search symbol (e.g. INFY, TCS)..."
+                    class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 transition"
+                  />
+                </div>
+
+                <!-- Signal Filter Dropdown -->
+                <div id="container-signal-filter" class="relative flex items-center shrink-0">
+                  <select
+                    id="table-signal-filter"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[220px] truncate"
+                    title="Filter by Candle Signal"
+                  >
+                    <option value="ALL">All Signals</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+                </div>
+
+                <!-- Volume Filter Dropdown -->
+                <div id="container-volume-filter" class="relative flex items-center shrink-0">
+                  <select
+                    id="table-volume-filter"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[200px] truncate"
+                    title="Filter by Volume"
+                  >
+                    <option value="ALL">All Volumes</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+                </div>
+              </div>
+
+              <!-- Match Status Pill Switcher + Count Badge -->
+              <div class="flex items-center space-x-3">
+                <div class="inline-flex bg-slate-800/80 p-1 rounded-xl border border-slate-700">
+                  <button
+                    id="filter-status-matched"
+                    data-status="matched"
+                    class="status-pill px-3 py-1 rounded-lg text-xs font-semibold transition bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                  >
+                    Matched 🟢
+                  </button>
+                  <button
+                    id="filter-status-all"
+                    data-status="all"
+                    class="status-pill px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition"
+                  >
+                    All Stocks
+                  </button>
+                </div>
+                <span id="results-count-badge" class="text-xs font-semibold text-slate-300 whitespace-nowrap bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700"></span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Clean Results Table -->
+          <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/40 shadow-xl">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-800/90 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                <tr>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="symbol">
+                    <div class="flex items-center space-x-1">
+                      <span>Symbol</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="ltp">
+                    <div class="flex items-center space-x-1">
+                      <span>LTP (₹)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="support_price">
+                    <div class="flex items-center space-x-1">
+                      <span>Key Level (₹)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="distance_pct">
+                    <div class="flex items-center space-x-1">
+                      <span>Distance (%)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4">Level Description</th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="volume">
+                    <div class="flex items-center space-x-1">
+                      <span>Volume</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="rsi">
+                    <div class="flex items-center space-x-1">
+                      <span>RSI (14)</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
+                  <th class="py-3.5 px-4">Candle Signal</th>
+                </tr>
+              </thead>
+              <tbody id="results-tbody" class="divide-y divide-slate-800/60">
+                <!-- Populated by app.js -->
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </div>
 
   <!-- SLIDE-OUT DETAILS DRAWER (RIGHT OVERLAY) -->
   <div id="details-drawer-backdrop" onclick="closeDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 opacity-0 pointer-events-none transition-opacity duration-300"></div>
@@ -2095,6 +2526,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    async function toggleScopeMode() {
+      if (currentScope === 'TODAY') {
+        await loadFeedHistory();
+      } else {
+        await loadTodaySignals();
+      }
+    }
+
     async function fetchFeed() {
       try {
         const res = await fetch('/api/feed');
@@ -2752,6 +3191,205 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    let registeredStrategies = [];
+    let activeStrategyId = 'st_news';
+    let currentStrategyCategory = 'ALL';
+
+    function toggleStrategyMenu() {
+      const btn = document.getElementById('btn-strategy-selector');
+      if (btn && btn.disabled) return;
+      const menu = document.getElementById('strategy-menu-dropdown');
+      if (menu) {
+        menu.classList.toggle('hidden');
+      }
+    }
+
+    // Dismiss dropdowns when clicking outside
+    document.addEventListener('click', function(e) {
+      const stratContainer = document.getElementById('strategy-selector-container');
+      const stratMenu = document.getElementById('strategy-menu-dropdown');
+      if (stratContainer && stratMenu && !stratContainer.contains(e.target)) {
+        stratMenu.classList.add('hidden');
+      }
+
+      const userContainer = document.getElementById('user-account-container');
+      const userMenu = document.getElementById('user-menu-dropdown');
+      if (userContainer && userMenu && !userContainer.contains(e.target)) {
+        userMenu.classList.add('hidden');
+      }
+    });
+
+    async function loadStrategies() {
+      try {
+        const res = await fetch('/api/strategies');
+        if (res.ok) {
+          registeredStrategies = await res.json();
+          renderStrategyCards();
+        }
+      } catch (err) {
+        console.debug('Failed loading strategies catalog:', err);
+      }
+    }
+
+    function filterStrategyCategory(cat) {
+      currentStrategyCategory = cat || 'ALL';
+      document.querySelectorAll('.strat-cat-pill').forEach(btn => {
+        const pillCat = btn.getAttribute('data-strat-cat');
+        if (pillCat === currentStrategyCategory) {
+          btn.className = 'strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition bg-emerald-600 text-white';
+        } else {
+          btn.className = 'strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800';
+        }
+      });
+      renderStrategyCards();
+    }
+
+    function renderStrategyCards() {
+      const container = document.getElementById('strategy-cards-grid');
+      if (!container || !registeredStrategies || registeredStrategies.length === 0) return;
+
+      const filtered = registeredStrategies.filter(strat => {
+        if (currentStrategyCategory === 'ALL') return true;
+        return strat.category === currentStrategyCategory;
+      });
+
+      const countBadge = document.getElementById('strategies-count-badge');
+      if (countBadge) {
+        countBadge.textContent = `${registeredStrategies.length} Registered`;
+      }
+
+      container.innerHTML = filtered.map(strat => {
+        const isSelected = strat.id === activeStrategyId;
+        const activeCardClass = isSelected
+          ? 'bg-emerald-950/50 border-emerald-500/80 ring-1 ring-emerald-500/60 shadow-md'
+          : 'bg-[#162032]/90 hover:bg-[#1f293d] border-gray-800 hover:border-gray-700';
+
+        const statusBg = strat.status === 'ACTIVE'
+          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+          : strat.status === 'READY'
+          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+          : 'bg-gray-800 text-gray-400 border-gray-700';
+
+        return `
+          <div onclick="selectStrategy('${strat.id}')" class="cursor-pointer rounded-xl border p-2.5 transition-all duration-150 flex items-center justify-between gap-3 ${activeCardClass}">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="text-xl flex-shrink-0">${strat.icon || '⚡'}</span>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-gray-800 text-gray-200 border border-gray-700">${strat.code}</span>
+                  <span class="text-xs font-bold text-white truncate">${strat.name}</span>
+                </div>
+                <div class="text-[10px] text-gray-400 font-mono mt-0.5 truncate">${strat.category_label || strat.category} • ${strat.timeframe}</div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusBg}">${strat.status}</span>
+              ${isSelected ? '<span class="text-emerald-400 font-bold text-xs">✓</span>' : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectStrategy(strategyId) {
+      activeStrategyId = strategyId;
+      renderStrategyCards();
+
+      // Close dropdown menu
+      const menu = document.getElementById('strategy-menu-dropdown');
+      if (menu) menu.classList.add('hidden');
+
+      // Update header active strategy badge
+      const strat = registeredStrategies.find(s => s.id === strategyId);
+      if (strat) {
+        if (document.getElementById('header-strat-icon')) document.getElementById('header-strat-icon').textContent = strat.icon || '⚡';
+        if (document.getElementById('header-strat-code')) document.getElementById('header-strat-code').textContent = strat.code;
+        if (document.getElementById('header-strat-name')) document.getElementById('header-strat-name').textContent = strat.name;
+      }
+
+      const wsNews = document.getElementById('workspace-st-news');
+      const wsModular = document.getElementById('workspace-st-modular');
+      const strategyControls = document.getElementById('strategy-controls-group');
+
+      if (strategyId === 'st_news') {
+        if (wsNews) wsNews.classList.remove('hidden');
+        if (wsModular) wsModular.classList.add('hidden');
+        if (strategyControls) strategyControls.classList.remove('hidden');
+      } else {
+        if (wsNews) wsNews.classList.add('hidden');
+        if (wsModular) wsModular.classList.remove('hidden');
+        if (strategyControls) strategyControls.classList.add('hidden');
+
+        if (strat) {
+          if (document.getElementById('mod-strat-icon')) document.getElementById('mod-strat-icon').textContent = strat.icon || '📈';
+          if (document.getElementById('mod-strat-code')) document.getElementById('mod-strat-code').textContent = strat.code;
+          if (document.getElementById('mod-strat-title')) document.getElementById('mod-strat-title').textContent = strat.name;
+          if (document.getElementById('mod-strat-desc')) document.getElementById('mod-strat-desc').textContent = strat.description;
+          if (document.getElementById('mod-strat-universe')) document.getElementById('mod-strat-universe').textContent = strat.universe;
+          if (document.getElementById('mod-strat-timeframe')) document.getElementById('mod-strat-timeframe').textContent = strat.timeframe;
+          if (document.getElementById('mod-strat-risk')) document.getElementById('mod-strat-risk').textContent = strat.risk_level;
+          if (document.getElementById('mod-strat-capital')) {
+            const cap = strat.metrics && strat.metrics.allocated_capital ? strat.metrics.allocated_capital : 20000;
+            document.getElementById('mod-strat-capital').textContent = `₹${cap.toLocaleString('en-IN')} / trade`;
+          }
+          if (document.getElementById('mod-strat-engine-mode')) {
+            document.getElementById('mod-strat-engine-mode').textContent = `🛡️ ${strat.execution_mode} MODE`;
+          }
+          if (document.getElementById('mod-strat-status-badge')) {
+            document.getElementById('mod-strat-status-badge').textContent = `🟢 ${strat.status}`;
+          }
+        }
+      }
+    }
+
+    function launchModularStrategyScan() {
+      switchMainTab('scanner');
+      showToast(`Switched to Technical Scanner Studio for ${activeStrategyId.toUpperCase()}`, '🔍');
+    }
+
+    function switchMainTab(tabName) {
+      const strategiesTab = document.getElementById('main-tab-strategies');
+      const scannerTab = document.getElementById('main-tab-scanner');
+      const btnStrategies = document.getElementById('nav-tab-strategies');
+      const btnScanner = document.getElementById('nav-tab-scanner');
+      const strategyControls = document.getElementById('strategy-controls-group');
+      const btnStratSelector = document.getElementById('btn-strategy-selector');
+      const stratMenu = document.getElementById('strategy-menu-dropdown');
+
+      if (tabName === 'scanner') {
+        if (strategiesTab) strategiesTab.classList.add('hidden');
+        if (scannerTab) scannerTab.classList.remove('hidden');
+        if (strategyControls) strategyControls.classList.add('hidden');
+        if (stratMenu) stratMenu.classList.add('hidden');
+        
+        // Disable Strategy Dropdown in Scanner view
+        if (btnStratSelector) {
+          btnStratSelector.disabled = true;
+          btnStratSelector.classList.add('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
+          btnStratSelector.setAttribute('title', 'Strategy selector disabled in Technical Scanner mode. Switch to Strategies tab to change strategy.');
+        }
+
+        if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+        if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
+      } else {
+        if (scannerTab) scannerTab.classList.add('hidden');
+        if (strategiesTab) strategiesTab.classList.remove('hidden');
+        if (activeStrategyId === 'st_news' && strategyControls) {
+          strategyControls.classList.remove('hidden');
+        }
+
+        // Re-enable Strategy Dropdown in Strategies view
+        if (btnStratSelector) {
+          btnStratSelector.disabled = false;
+          btnStratSelector.classList.remove('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
+          btnStratSelector.setAttribute('title', 'Switch Active Quantitative Strategy');
+        }
+
+        if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+        if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5";
+      }
+    }
+
     window.onload = function() {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('auth_success') === 'true') {
@@ -2767,9 +3405,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       renderMarketStatusUI(computeMarketStatusClient());
       fetchStatus();
       fetchTokenStatus();
+      loadStrategies();
       fetchFeed();
       connectSSE();
       setInterval(fetchFeed, 4000);
+      setInterval(loadStrategies, 10000);
       setInterval(pollLivePrices, 30000);
       setInterval(fetchTokenStatus, 30000);
       setInterval(updatePollerTimer, 1000);
@@ -2777,6 +3417,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       setInterval(() => renderMarketStatusUI(computeMarketStatusClient()), 10000);
     };
   </script>
+
+  <!-- Scanner Application Logic -->
+  <script src="/static/scanner/app.js"></script>
 </body>
 </html>
 """

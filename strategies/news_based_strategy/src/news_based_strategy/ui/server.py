@@ -5,8 +5,10 @@ from contextlib import asynccontextmanager
 import logging
 from typing import Optional
 import requests
+from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
@@ -55,6 +57,22 @@ def create_app() -> FastAPI:
 
     # Register all modular endpoint routes
     register_routes(app, state)
+
+    # Mount static assets for scanner UI
+    def _find_scanner_static() -> Optional[Path]:
+        p_docker = Path("/app/scanners/scanner_dhan/src/scanner_dhan/ui/static")
+        if p_docker.exists():
+            return p_docker
+        cur = Path(__file__).resolve()
+        for parent in cur.parents:
+            cand = parent / "scanners" / "scanner_dhan" / "src" / "scanner_dhan" / "ui" / "static"
+            if cand.exists():
+                return cand
+        return None
+
+    scanner_static = _find_scanner_static()
+    if scanner_static and scanner_static.exists():
+        app.mount("/static/scanner", StaticFiles(directory=str(scanner_static)), name="scanner_static")
 
     return app
 

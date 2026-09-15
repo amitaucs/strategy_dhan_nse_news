@@ -511,6 +511,47 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("/login?error=", res_unauth.headers["location"])
             self.assertIn("Unauthorized", res_unauth.headers["location"])
 
+    def test_scanner_endpoints(self):
+        """Verify scanner API endpoints list registered scanners and health check."""
+        app = create_app()
+        client = TestClient(app)
+
+        res_health = client.get("/api/health")
+        self.assertEqual(res_health.status_code, 200)
+        data_health = res_health.json()
+        self.assertEqual(data_health["status"], "healthy")
+        self.assertGreaterEqual(data_health["registered_scanners_count"], 1)
+
+        res_scanners = client.get("/api/scanners")
+        self.assertEqual(res_scanners.status_code, 200)
+        scanners_list = res_scanners.json()
+        self.assertIsInstance(scanners_list, list)
+        self.assertGreaterEqual(len(scanners_list), 1)
+
+    def test_strategy_endpoints(self):
+        """Verify strategy API endpoints list registered strategies and return metadata."""
+        app = create_app()
+        client = TestClient(app)
+
+        res_strategies = client.get("/api/strategies")
+        self.assertEqual(res_strategies.status_code, 200)
+        strategies_list = res_strategies.json()
+        self.assertIsInstance(strategies_list, list)
+        self.assertGreaterEqual(len(strategies_list), 4)
+
+        # Verify ST-NEWS strategy is present and active
+        st_news = next((s for s in strategies_list if s["id"] == "st_news"), None)
+        self.assertIsNotNone(st_news)
+        self.assertEqual(st_news["code"], "ST-NEWS")
+        self.assertEqual(st_news["status"], "ACTIVE")
+
+        # Verify individual strategy metadata endpoint
+        res_single = client.get("/api/strategies/st15_largecap")
+        self.assertEqual(res_single.status_code, 200)
+        st15 = res_single.json()
+        self.assertEqual(st15["code"], "ST-15")
+        self.assertEqual(st15["category"], "trend_momentum")
+
     def test_database_persistence_across_server_restarts(self):
         """Verify that credentials saved in DB persist when creating a new server instance."""
         import tempfile

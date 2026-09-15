@@ -104,10 +104,10 @@ if ! command -v gcloud &> /dev/null; then
   exit 1
 fi
 
-# 2. Package source code
+# Package source code
 echo ""
 echo "📦 [1/4] Packaging application source files..."
-cd "$PROJECT_ROOT"
+cd "$REPO_ROOT"
 
 # Clean any existing local bundle
 rm -f "$BUNDLE_TMP"
@@ -123,7 +123,7 @@ tar \
   --exclude='*terraform*' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
-  -czf "$BUNDLE_TMP" .
+  -czf "$BUNDLE_TMP" scanners strategies/news_based_strategy
 
 BUNDLE_SIZE=$(du -h "$BUNDLE_TMP" | cut -f1)
 echo "✅ Archive created ($BUNDLE_SIZE)."
@@ -150,7 +150,7 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" $GCLOUD_PROJECT_FLAG --comman
   sudo mkdir -p ${REMOTE_DIR}
   sudo tar -xzf /tmp/nse_app_bundle.tar.gz -C ${REMOTE_DIR}
   rm -f /tmp/nse_app_bundle.tar.gz
-  cd ${REMOTE_DIR}
+  cd ${REMOTE_DIR}/strategies/news_based_strategy
   sudo chmod +x infra/scripts/docker.sh
   sudo ./infra/scripts/docker.sh up -d --build
 "

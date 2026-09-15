@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Prevent python from writing pyc files and buffering stdout/stderr; configure IST timezone
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src \
+    PYTHONPATH=/app/src:/app/scanners/scanner_dhan/src \
     TZ=Asia/Kolkata
 
 WORKDIR /app
@@ -17,11 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies first to leverage Docker layer caching
-COPY requirements.txt .
+COPY strategies/news_based_strategy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code (excluding .env & secrets via .dockerignore)
-COPY src/ ./src/
+# Copy application source code and scanners package
+COPY strategies/news_based_strategy/src/ ./src/
+COPY scanners/ ./scanners/
 
 # Create data directory for persistent SQLite database and runtime files
 RUN mkdir -p /app/data

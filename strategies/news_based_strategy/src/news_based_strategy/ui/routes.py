@@ -28,10 +28,41 @@ from news_based_strategy.ui.schemas import (
     ToggleDryRunRequest,
     UpdateTokenRequest,
 )
+from news_based_strategy.core.strategy_registry import StrategyRegistry
 from news_based_strategy.ui.state import DashboardState
 from news_based_strategy.ui.templates import get_dashboard_html, get_login_html
 
 logger = logging.getLogger(__name__)
+
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import sys
+
+def _find_scanners_src() -> Optional[Path]:
+    p_docker = Path("/app/scanners/scanner_dhan/src")
+    if p_docker.exists():
+        return p_docker
+    cur = Path(__file__).resolve()
+    for parent in cur.parents:
+        cand = parent / "scanners" / "scanner_dhan" / "src"
+        if cand.exists():
+            return cand
+    return None
+
+_repo_scanners_src = _find_scanners_src()
+if _repo_scanners_src and str(_repo_scanners_src) not in sys.path:
+    sys.path.insert(0, str(_repo_scanners_src))
+
+try:
+    import scanner_dhan.scanner  # noqa: F401
+    from scanner_dhan.data.dhan_provider import DhanDataProvider
+    from scanner_dhan.scanner.registry import ScannerRegistry
+    SCANNER_AVAILABLE = True
+except Exception as _scanner_err:
+    logger.warning(f"scanner_dhan package not available: {_scanner_err}")
+    SCANNER_AVAILABLE = False
+
+_scanner_executor = ThreadPoolExecutor(max_workers=3)
 
 COOKIE_NAME = "app_session_token"
 
@@ -629,6 +660,94 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+    # ==================== SCANNER API ENDPOINTS ====================
+
+    @app.get("/api/health")
+    async def get_scanner_health():
+        has_creds = bool(state.executor.access_token and state.executor.client_id)
+        cid = state.executor.client_id or ""
+        masked_id = f"{cid[:3]}***{cid[-2:]}" if len(cid) > 5 else ("Configured" if has_creds else "")
+        return {
+            "status": "healthy",
+            "dhan_connected": has_creds,
+            "client_id": masked_id,
+            "registered_scanners_count": len(ScannerRegistry.list_all()) if SCANNER_AVAILABLE else 0,
+        }
+
+    @app.get("/api/scanners")
+    async def list_scanners():
+        if not SCANNER_AVAILABLE:
+            return []
+        return ScannerRegistry.list_all()
+
+    @app.post("/api/scanners/{scanner_id}/run")
+    async def run_scanner(scanner_id: str, request: Request):
+        if not SCANNER_AVAILABLE:
+            raise HTTPException(status_code=500, detail="Scanner module not installed")
+        scanner = ScannerRegistry.get(scanner_id)
+        if not scanner:
+            raise HTTPException(status_code=404, detail=f"Scanner '{scanner_id}' not found")
+
+        params = {}
+        try:
+            body = await request.json()
+            params = body.get("parameters", {})
+        except Exception:
+            pass
+
+        provider = None
+        if state.executor.access_token and state.executor.client_id:
+            try:
+                provider = DhanDataProvider(
+                    client_id=state.executor.client_id,
+                    access_token=state.executor.access_token,
+                )
+            except Exception as pe:
+                logger.warning(f"Could not init DhanDataProvider with state executor creds: {pe}")
+
+        loop = asyncio.get_event_loop()
+        try:
+            report = await loop.run_in_executor(
+                _scanner_executor,
+                lambda: ScannerRegistry.run(scanner_id, params=params, provider=provider),
+            )
+            return report.to_dict()
+        except Exception as exc:
+            logger.error(f"Error running scanner {scanner_id}: {exc}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    # ==================== STRATEGY API ENDPOINTS ====================
+
+    @app.get("/api/strategies")
+    async def list_strategies():
+        # Update live telemetry metrics for active ST-NEWS strategy
+        StrategyRegistry.update_metrics("st_news", {
+            "signals_today": len(state.feed_items),
+            "orders_placed": state.executor.get_daily_order_count(),
+            "allocated_capital": state.executor.capital_per_trade,
+            "auto_order_enabled": state.executor.auto_order,
+            "execution_mode": "VIRTUAL" if state.executor.dry_run else "LIVE",
+        })
+        strat_obj = StrategyRegistry.get("st_news")
+        if strat_obj:
+            strat_obj.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
+            strat_obj.auto_order_enabled = state.executor.auto_order
+        return StrategyRegistry.list_all()
+
+    @app.get("/api/strategies/{strategy_id}")
+    async def get_strategy(strategy_id: str):
+        strat = StrategyRegistry.get(strategy_id)
+        if not strat:
+            raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
+        if strategy_id == "st_news":
+            strat.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
+            strat.auto_order_enabled = state.executor.auto_order
+            strat.metrics.update({
+                "signals_today": len(state.feed_items),
+                "orders_placed": state.executor.get_daily_order_count(),
+                "allocated_capital": state.executor.capital_per_trade,
+            })
+        return strat.to_dict()
 
 
 __all__ = ["register_routes", "COOKIE_NAME"]

@@ -1,8 +1,8 @@
 services:
   trading-terminal:
     build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile
+      context: ../../../..
+      dockerfile: strategies/news_based_strategy/infra/docker/Dockerfile
     container_name: nse_catalyst_terminal
     restart: unless-stopped
     ports:
