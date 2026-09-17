@@ -14,9 +14,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from datetime import datetime
+
 # Import all registered scanners so they register on startup
 import scanner_dhan.scanner  # noqa: F401
-from scanner_dhan.data.dhan_provider import load_dhan_credentials
+from scanner_dhan.data.dhan_provider import (
+    DhanDataProvider,
+    DhanDataAPIError,
+    DhanDataAPISubscriptionError,
+    DhanAuthError,
+    DhanRateLimitError,
+    load_dhan_credentials,
+)
 from scanner_dhan.scanner.registry import ScannerRegistry
 
 logger = logging.getLogger(__name__)
@@ -49,11 +58,14 @@ def create_app() -> FastAPI:
         """Check system and Dhan credentials status."""
         has_creds = False
         client_id_masked = ""
+        data_api_health = {"active": False, "status": "no_creds", "message": "Credentials not configured"}
         try:
             cid, token = load_dhan_credentials()
             if cid and token:
                 has_creds = True
                 client_id_masked = f"{cid[:3]}***{cid[-2:]}" if len(cid) > 5 else "Configured"
+                prov = DhanDataProvider(client_id=cid, access_token=token)
+                data_api_health = prov.check_data_api_health()
         except Exception:
             has_creds = False
 
@@ -61,6 +73,10 @@ def create_app() -> FastAPI:
             "status": "healthy",
             "dhan_connected": has_creds,
             "client_id": client_id_masked,
+            "data_api_active": data_api_health.get("active", False),
+            "data_api_status": data_api_health.get("status", "unknown"),
+            "data_api_message": data_api_health.get("message", ""),
+            "data_api_error_code": data_api_health.get("error_code"),
             "registered_scanners_count": len(ScannerRegistry.list_all()),
         }
 
@@ -88,9 +104,79 @@ def create_app() -> FastAPI:
                 lambda: ScannerRegistry.run(scanner_id, params=params),
             )
             return report.to_dict()
+        except DhanDataAPISubscriptionError as exc:
+            logger.warning("Dhan Data API plan inactive running %s: %s", scanner_id, exc)
+            return {
+                "status": "error",
+                "error_type": "DATA_API_UNSUBSCRIBED",
+                "error_title": "DhanHQ Data API Subscription Required",
+                "error_message": (
+                    "Your Dhan account has not subscribed to Historical Data APIs (DH-902 / HTTP 451). "
+                    "Historical candlestick scans require an active Data API subscription from DhanHQ."
+                ),
+                "action_url": "https://web.dhan.co",
+                "action_label": "Enable Data Plan on DhanHQ",
+                "timestamp": datetime.now().isoformat(),
+                "scanner_id": scanner_id,
+                "scanner_name": scanner.name,
+                "total_scanned": 0,
+                "matched_count": 0,
+                "results": [],
+            }
+        except DhanAuthError as exc:
+            logger.warning("Dhan Auth error running %s: %s", scanner_id, exc)
+            return {
+                "status": "error",
+                "error_type": "AUTH_ERROR",
+                "error_title": "Dhan Access Token Expired or Invalid",
+                "error_message": (
+                    "Your Dhan Access Token is expired or invalid (DH-901 / 401). "
+                    "Please generate a fresh token on web.dhan.co and update your configuration."
+                ),
+                "action_url": "https://web.dhan.co",
+                "action_label": "Generate Access Token",
+                "timestamp": datetime.now().isoformat(),
+                "scanner_id": scanner_id,
+                "scanner_name": scanner.name,
+                "total_scanned": 0,
+                "matched_count": 0,
+                "results": [],
+            }
+        except DhanRateLimitError as exc:
+            logger.warning("Dhan Rate Limit exceeded running %s: %s", scanner_id, exc)
+            return {
+                "status": "error",
+                "error_type": "RATE_LIMIT",
+                "error_title": "DhanHQ Rate Limit Exceeded",
+                "error_message": (
+                    "Dhan API request rate limit was reached (DH-904). "
+                    "Please wait a few moments and click Re-Run."
+                ),
+                "action_url": None,
+                "action_label": None,
+                "timestamp": datetime.now().isoformat(),
+                "scanner_id": scanner_id,
+                "scanner_name": scanner.name,
+                "total_scanned": 0,
+                "matched_count": 0,
+                "results": [],
+            }
         except Exception as exc:
             logger.error("Error executing scanner %s: %s", scanner_id, exc, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {
+                "status": "error",
+                "error_type": "EXECUTION_ERROR",
+                "error_title": "Scanner Execution Failed",
+                "error_message": str(exc),
+                "action_url": None,
+                "action_label": None,
+                "timestamp": datetime.now().isoformat(),
+                "scanner_id": scanner_id,
+                "scanner_name": scanner.name,
+                "total_scanned": 0,
+                "matched_count": 0,
+                "results": [],
+            }
 
     # Mount static assets
     if STATIC_DIR.exists():

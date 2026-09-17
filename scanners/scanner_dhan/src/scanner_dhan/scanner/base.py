@@ -53,6 +53,12 @@ class ScanReport:
     total_scanned: int
     matched_count: int
     results: list[Any]
+    status: str = "success"  # "success" or "error"
+    error_message: str | None = None
+    error_type: str | None = None
+    error_title: str | None = None
+    action_url: str | None = None
+    action_label: str | None = None
 
     @property
     def at_support_count(self) -> int:
@@ -93,6 +99,12 @@ class ScanReport:
     def to_dict(self) -> dict[str, Any]:
         """Convert full report to JSON-serializable dictionary."""
         return {
+            "status": self.status,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+            "error_title": self.error_title,
+            "action_url": self.action_url,
+            "action_label": self.action_label,
             "timestamp": self.timestamp.isoformat(),
             "scanner_id": self.scanner_id,
             "scanner_name": self.scanner_name,

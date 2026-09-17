@@ -53,8 +53,8 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("square-off-btn", res.text)
             self.assertIn("Square Off (15:00)", res.text)
             self.assertIn("feed-filter-select", res.text)
-            self.assertIn("All Passed", res.text)
-            self.assertIn("AUTO ORDER", res.text)
+            self.assertIn("toggle-auto-btn", res.text)
+            self.assertIn("auto-status-label", res.text)
             self.assertIn("Show History (DB)", res.text)
             self.assertIn("Today Only", res.text)
             self.assertIn("Simulate Feed", res.text)
@@ -76,8 +76,8 @@ class TestUIServer(unittest.TestCase):
             self.assertIn("square-off-btn", res_no_sim.text)
             self.assertIn("Square Off (15:00)", res_no_sim.text)
             self.assertIn("feed-filter-select", res_no_sim.text)
-            self.assertIn("All Passed", res_no_sim.text)
-            self.assertIn("AUTO ORDER", res_no_sim.text)
+            self.assertIn("toggle-auto-btn", res_no_sim.text)
+            self.assertIn("auto-status-label", res_no_sim.text)
             self.assertIn("Show History (DB)", res_no_sim.text)
             self.assertIn("Today Only", res_no_sim.text)
             self.assertNotIn("Simulate Feed", res_no_sim.text)
@@ -527,6 +527,23 @@ class TestUIServer(unittest.TestCase):
         scanners_list = res_scanners.json()
         self.assertIsInstance(scanners_list, list)
         self.assertGreaterEqual(len(scanners_list), 1)
+
+    def test_scanner_data_api_unsubscribed_error_response(self):
+        """Verify that when Dhan Data API is unsubscribed (DH-902), scanner returns a structured error response."""
+        from unittest.mock import patch
+        from scanner_dhan.data.dhan_provider import DhanDataAPISubscriptionError
+
+        app = create_app()
+        client = TestClient(app)
+
+        with patch("scanner_dhan.scanner.registry.ScannerRegistry.run", side_effect=DhanDataAPISubscriptionError()):
+            res = client.post("/api/scanners/order_block/run", json={"parameters": {}})
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "error")
+            self.assertEqual(data["error_type"], "DATA_API_UNSUBSCRIBED")
+            self.assertIn("DH-902", data["error_message"])
+            self.assertEqual(data["action_url"], "https://web.dhan.co")
 
     def test_strategy_endpoints(self):
         """Verify strategy API endpoints list registered strategies and return metadata."""

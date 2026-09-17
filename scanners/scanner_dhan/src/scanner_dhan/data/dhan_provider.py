@@ -1,0 +1,632 @@
+"""DhanHQ Historical and Real-time Market Data Provider with Rate Limiting and Explicit Error Handling."""
+
+from __future__ import annotations
+
+import logging
+import os
+import random
+import threading
+import time
+from datetime import date, timedelta
+from typing import Any
+
+import pandas as pd
+from dhanhq import DhanContext, dhanhq
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "DhanDataProvider",
+    "DhanDataAPIError",
+    "DhanDataAPISubscriptionError",
+    "DhanAuthError",
+    "DhanRateLimitError",
+    "load_dhan_credentials",
+]
+
+
+class DhanDataAPIError(Exception):
+    """Base exception for DhanHQ data provider failures."""
+
+    def __init__(self, message: str, error_code: str | None = None, details: Any = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.details = details
+
+
+class DhanDataAPISubscriptionError(DhanDataAPIError):
+    """Raised when Dhan account has not subscribed to Historical Data APIs (DH-902 / HTTP 451)."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Your Dhan account has not subscribed to the Historical Data API (DH-902 / HTTP 451). "
+            "Please enable the Data API Plan in your Dhan portal at web.dhan.co -> DhanHQ -> API Plans."
+        ),
+        error_code: str = "DH-902",
+        details: Any = None,
+    ) -> None:
+        super().__init__(message, error_code=error_code, details=details)
+
+
+class DhanAuthError(DhanDataAPIError):
+    """Raised when Dhan Client ID or Access Token is missing, invalid, or expired (DH-901 / 401)."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Dhan Access Token is invalid or expired (DH-901 / 401). "
+            "Please generate a fresh Access Token at web.dhan.co and update your configuration."
+        ),
+        error_code: str = "DH-901",
+        details: Any = None,
+    ) -> None:
+        super().__init__(message, error_code=error_code, details=details)
+
+
+class DhanRateLimitError(DhanDataAPIError):
+    """Raised when Dhan rate limit is persistently breached (DH-904)."""
+
+    def __init__(
+        self,
+        message: str = "Dhan API rate limit reached (DH-904). Please retry in a few moments.",
+        error_code: str = "DH-904",
+        details: Any = None,
+    ) -> None:
+        super().__init__(message, error_code=error_code, details=details)
+
+
+def load_dhan_credentials(env_path: str = ".env") -> tuple[str, str]:
+    """Load Dhan Client ID and Access Token from environment or .env file."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(dotenv_path=env_path)
+    except ImportError:
+        pass
+
+    client_id = os.getenv("DHAN_CLIENT_ID", "").strip()
+    access_token = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
+
+    if not client_id or client_id == "YOUR_CLIENT_ID_HERE":
+        raise DhanAuthError("DHAN_CLIENT_ID is missing or not configured in .env or environment")
+    if not access_token or access_token == "YOUR_ACCESS_TOKEN_HERE":
+        raise DhanAuthError("DHAN_ACCESS_TOKEN is missing or not configured in .env or environment")
+
+    return client_id, access_token
+
+
+class DhanDataProvider:
+    """Historical and snapshot market data provider using DhanHQ Data APIs with rate-limit protection."""
+
+    _rate_lock = threading.Lock()
+    _last_request_time = 0.0
+    _data_api_health_cache: tuple[float, dict[str, Any]] | None = None
+    request_delay: float = 0.25
+    max_retries: int = 4
+
+    def __init__(
+        self,
+        client_id: str | None = None,
+        access_token: str | None = None,
+        request_delay: float = 0.25,
+        max_retries: int = 4,
+    ) -> None:
+        if not client_id or not access_token:
+            try:
+                cid, token = load_dhan_credentials()
+                client_id = client_id or cid
+                access_token = access_token or token
+            except Exception:
+                pass
+
+        self.client_id = client_id or ""
+        self.access_token = access_token or ""
+        self.request_delay = max(0.15, request_delay)
+        self.max_retries = max_retries
+
+        if self.client_id and self.access_token:
+            self.context = DhanContext(self.client_id, self.access_token)
+            self.dhan = dhanhq(self.context)
+        else:
+            self.context = None
+            self.dhan = None
+
+    def _pace_request(self) -> None:
+        """Ensure thread-safe inter-request pacing across all concurrent scanner workers."""
+        with DhanDataProvider._rate_lock:
+            now = time.time()
+            elapsed = now - DhanDataProvider._last_request_time
+            if elapsed < self.request_delay:
+                time.sleep(self.request_delay - elapsed)
+            DhanDataProvider._last_request_time = time.time()
+
+    @staticmethod
+    def _is_rate_limit_response(response: Any) -> bool:
+        """Check if a response from DhanHQ indicates a rate limit breach (DH-904)."""
+        if not isinstance(response, dict):
+            resp_str = str(response).lower()
+            return "rate_limit" in resp_str or "dh-904" in resp_str or "too many requests" in resp_str
+
+        if response.get("error_code") == "DH-904" or response.get("error_type") == "Rate_Limit":
+            return True
+
+        remarks = response.get("remarks")
+        if isinstance(remarks, dict):
+            if remarks.get("error_code") == "DH-904" or remarks.get("error_type") == "Rate_Limit":
+                return True
+        elif isinstance(remarks, str):
+            r_lower = remarks.lower()
+            if "rate_limit" in r_lower or "dh-904" in r_lower or "too many requests" in r_lower:
+                return True
+
+        err_msg = str(response.get("error_message", "")).lower()
+        if "rate limit" in err_msg or "too many requests" in err_msg or "throttling" in err_msg:
+            return True
+
+        return False
+
+    @staticmethod
+    def _is_data_api_unsubscribed(response: Any) -> bool:
+        """Check if response indicates Dhan account has not subscribed to Data APIs (DH-902 / 451)."""
+        if not isinstance(response, dict):
+            resp_str = str(response).lower()
+            return "dh-902" in resp_str or "data api" in resp_str or "451" in resp_str
+
+        if response.get("error_code") in ("DH-902", "806") or response.get("error_type") in ("Invalid_Access", "Data_API_Invalid"):
+            return True
+
+        err_msg = str(response.get("error_message", "")).lower()
+        if "data api" in err_msg or "http status 451" in err_msg or "dh-902" in err_msg or "not subscribed" in err_msg:
+            return True
+
+        remarks = response.get("remarks", {})
+        if isinstance(remarks, dict):
+            if remarks.get("error_code") in ("DH-902", "806") or remarks.get("error_type") in ("Invalid_Access", "Data_API_Invalid"):
+                return True
+        elif isinstance(remarks, str):
+            r_lower = remarks.lower()
+            if "data api" in r_lower or "http status 451" in r_lower or "dh-902" in r_lower or "not subscribed" in r_lower:
+                return True
+
+        return False
+
+    @staticmethod
+    def _is_auth_error(response: Any) -> bool:
+        """Check if response indicates invalid or expired access token (DH-901 / 401)."""
+        if not isinstance(response, dict):
+            resp_str = str(response).lower()
+            return "dh-901" in resp_str or "token expired" in resp_str or "invalid token" in resp_str or "401" in resp_str
+
+        if response.get("error_code") in ("DH-901", "805", "401") or response.get("error_type") in ("Token_Expired", "Authentication_Error", "Invalid_Token"):
+            return True
+
+        err_msg = str(response.get("error_message", "")).lower()
+        if "token expired" in err_msg or "invalid token" in err_msg or "unauthorized" in err_msg or "dh-901" in err_msg:
+            return True
+
+        remarks = response.get("remarks", {})
+        if isinstance(remarks, dict):
+            if remarks.get("error_code") in ("DH-901", "805", "401"):
+                return True
+        elif isinstance(remarks, str):
+            r_lower = remarks.lower()
+            if "token expired" in r_lower or "invalid token" in r_lower or "dh-901" in r_lower:
+                return True
+
+        return False
+
+    def check_data_api_health(self, force_refresh: bool = False) -> dict[str, Any]:
+        """Test Dhan Data API availability with a lightweight sample probe (cached for 60s)."""
+        now = time.time()
+        if not force_refresh and DhanDataProvider._data_api_health_cache is not None:
+            cached_ts, cached_res = DhanDataProvider._data_api_health_cache
+            if now - cached_ts < 60.0:
+                return dict(cached_res)
+
+        if not self.client_id or not self.access_token or self.dhan is None:
+            result = {
+                "active": False,
+                "status": "missing_credentials",
+                "error_code": "NO_CREDS",
+                "message": "Dhan Client ID or Access Token is missing.",
+            }
+            DhanDataProvider._data_api_health_cache = (now, result)
+            return result
+
+        try:
+            # Probe using Reliance (SecID 2885)
+            to_date = date.today()
+            from_date = to_date - timedelta(days=5)
+            resp = self.dhan.historical_daily_data(
+                security_id="2885",
+                exchange_segment=dhanhq.NSE,
+                instrument_type="EQUITY",
+                from_date=from_date.strftime("%Y-%m-%d"),
+                to_date=to_date.strftime("%Y-%m-%d"),
+                expiry_code=0,
+                oi=False,
+            )
+
+            if self._is_data_api_unsubscribed(resp):
+                result = {
+                    "active": False,
+                    "status": "unsubscribed",
+                    "error_code": "DH-902",
+                    "message": "Dhan Data API plan is not active on this account (DH-902 / 451).",
+                }
+            elif self._is_auth_error(resp):
+                result = {
+                    "active": False,
+                    "status": "token_expired",
+                    "error_code": "DH-901",
+                    "message": "Dhan Access Token is expired or invalid (DH-901).",
+                }
+            elif isinstance(resp, dict) and resp.get("status") == "success":
+                result = {
+                    "active": True,
+                    "status": "active",
+                    "error_code": None,
+                    "message": "Dhan Data API is active and functioning.",
+                }
+            else:
+                err_msg = resp.get("error_message") if isinstance(resp, dict) else str(resp)
+                result = {
+                    "active": False,
+                    "status": "error",
+                    "error_code": "UNKNOWN",
+                    "message": f"Dhan API returned: {err_msg}",
+                }
+        except Exception as exc:
+            result = {
+                "active": False,
+                "status": "error",
+                "error_code": "EXCEPTION",
+                "message": f"Connection check error: {exc}",
+            }
+
+        DhanDataProvider._data_api_health_cache = (now, result)
+        return result
+
+    def fetch_daily_bars(
+        self,
+        security_id: str,
+        days: int = 150,
+        exchange_segment: str = dhanhq.NSE,
+        instrument_type: str = "EQUITY",
+    ) -> pd.DataFrame:
+        """Fetch historical daily OHLCV bars directly from DhanHQ with rate-limit and subscription error checks."""
+        if self.dhan is None:
+            raise DhanAuthError("Dhan client is not configured. Please provide DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
+
+        to_date = date.today()
+        from_date = to_date - timedelta(days=days)
+        from_str = from_date.strftime("%Y-%m-%d")
+        to_str = to_date.strftime("%Y-%m-%d")
+
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                response = self.dhan.historical_daily_data(
+                    security_id=str(security_id),
+                    exchange_segment=exchange_segment,
+                    instrument_type=instrument_type,
+                    from_date=from_str,
+                    to_date=to_str,
+                    expiry_code=0,
+                    oi=False,
+                )
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    backoff = (1.5**attempt) + random.uniform(0.2, 0.5)
+                    time.sleep(backoff)
+                    continue
+                logger.error("Dhan daily fetch failed for %s: %s", security_id, exc)
+                raise DhanDataAPIError(f"Dhan historical_daily_data connection error for {security_id}: {exc}") from exc
+
+            # 1. Check for Unsubscribed Data Plan (DH-902)
+            if self._is_data_api_unsubscribed(response):
+                err_msg = (
+                    "Dhan Data API (Historical Candle Data) is not active or subscribed on your account (DH-902 / HTTP 451). "
+                    "Please enable the Data API Plan at web.dhan.co -> DhanHQ -> API Plans."
+                )
+                logger.error("Dhan Data API not subscribed for security %s: %s", security_id, response)
+                raise DhanDataAPISubscriptionError(err_msg, details=response)
+
+            # 2. Check for Token Expired (DH-901 / 401)
+            if self._is_auth_error(response):
+                err_msg = (
+                    "Dhan Access Token is invalid or expired (DH-901 / 401). "
+                    "Please generate a fresh token at web.dhan.co and update your configuration."
+                )
+                logger.error("Dhan Auth error for security %s: %s", security_id, response)
+                raise DhanAuthError(err_msg, details=response)
+
+            # 3. Check for Rate Limit (DH-904)
+            if self._is_rate_limit_response(response):
+                if attempt < self.max_retries:
+                    backoff = (1.8**attempt) * 0.8 + random.uniform(0.3, 0.7)
+                    time.sleep(backoff)
+                    continue
+                else:
+                    logger.error("Rate limit exceeded fetching daily bars for %s: %s", security_id, response)
+                    raise DhanRateLimitError(f"Rate limit exceeded while fetching daily bars for {security_id}.")
+
+            if not isinstance(response, dict) or response.get("status") != "success":
+                logger.warning("Dhan historical_daily_data unsuccessful for %s: %s", security_id, response)
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+            data = response.get("data", {})
+            if not data or "timestamp" not in data or len(data["timestamp"]) == 0:
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+            df = pd.DataFrame(data)
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert(
+                    "Asia/Kolkata"
+                )
+
+            for col in ["open", "high", "low", "close", "volume"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            return df.sort_values("timestamp").reset_index(drop=True)
+
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+    def fetch_ltp_batch(
+        self,
+        security_ids: list[str],
+        exchange_segment: str = "NSE_EQ",
+    ) -> dict[str, float]:
+        """Fetch latest price for multiple securities in a single ticker request with retries and error checks."""
+        if not security_ids or self.dhan is None:
+            return {}
+
+        int_ids: list[int] = []
+        for sid in security_ids:
+            try:
+                int_ids.append(int(sid))
+            except ValueError:
+                continue
+
+        if not int_ids:
+            return {}
+
+        ltp_map: dict[str, float] = {}
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                response = self.dhan.ticker_data({exchange_segment: int_ids})
+                if self._is_data_api_unsubscribed(response):
+                    raise DhanDataAPISubscriptionError()
+                if self._is_auth_error(response):
+                    raise DhanAuthError()
+                if self._is_rate_limit_response(response):
+                    if attempt < self.max_retries:
+                        time.sleep(1.0)
+                        continue
+                if (
+                    isinstance(response, dict)
+                    and response.get("status") == "success"
+                    and "data" in response
+                ):
+                    seg_data = response["data"].get(exchange_segment, {})
+                    for sid_str, tick_info in seg_data.items():
+                        if isinstance(tick_info, dict) and "last_price" in tick_info:
+                            ltp_map[sid_str] = float(tick_info["last_price"])
+                    return ltp_map
+            except (DhanDataAPISubscriptionError, DhanAuthError):
+                raise
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(0.5)
+                    continue
+                logger.error("Error fetching LTP batch: %s", exc)
+                break
+
+        return ltp_map
+
+    def fetch_intraday_minute_bars(
+        self,
+        security_id: str,
+        days: int = 25,
+        exchange_segment: str = "NSE_EQ",
+        instrument_type: str = "EQUITY",
+    ) -> pd.DataFrame:
+        """Fetch raw 1-minute historical intraday bars directly from DhanHQ with error checks."""
+        if self.dhan is None:
+            raise DhanAuthError("Dhan client is not configured. Please provide DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
+
+        safe_days = min(max(1, days), 30)
+        to_date = date.today()
+        from_date = to_date - timedelta(days=safe_days)
+        from_str = from_date.strftime("%Y-%m-%d")
+        to_str = to_date.strftime("%Y-%m-%d")
+
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                response = self.dhan.intraday_minute_data(
+                    security_id=str(security_id),
+                    exchange_segment=exchange_segment,
+                    instrument_type=instrument_type,
+                    from_date=from_str,
+                    to_date=to_str,
+                )
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(1.0)
+                    continue
+                logger.error("Dhan intraday minute fetch failed for %s: %s", security_id, exc)
+                raise DhanDataAPIError(f"Dhan intraday_minute_data connection error for {security_id}: {exc}") from exc
+
+            # 1. Check for Unsubscribed Data Plan (DH-902)
+            if self._is_data_api_unsubscribed(response):
+                err_msg = (
+                    "Dhan Data API (Intraday Minute Data) is not active or subscribed on your account (DH-902 / HTTP 451). "
+                    "Please enable the Data API Plan at web.dhan.co -> DhanHQ -> API Plans."
+                )
+                logger.error("Dhan Data API not subscribed for security %s: %s", security_id, response)
+                raise DhanDataAPISubscriptionError(err_msg, details=response)
+
+            # 2. Check for Token Expired (DH-901 / 401)
+            if self._is_auth_error(response):
+                err_msg = (
+                    "Dhan Access Token is invalid or expired (DH-901 / 401). "
+                    "Please generate a fresh token at web.dhan.co and update your configuration."
+                )
+                logger.error("Dhan Auth error for security %s: %s", security_id, response)
+                raise DhanAuthError(err_msg, details=response)
+
+            # 3. Check for Rate Limit (DH-904)
+            if self._is_rate_limit_response(response):
+                if attempt < self.max_retries:
+                    time.sleep(1.0)
+                    continue
+                else:
+                    logger.error("Rate limit exceeded fetching intraday bars for %s", security_id)
+                    raise DhanRateLimitError(f"Rate limit exceeded while fetching intraday bars for {security_id}.")
+
+            if not isinstance(response, dict) or response.get("status") != "success":
+                logger.warning("Dhan intraday_minute_data unsuccessful for %s: %s", security_id, response)
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+            data = response.get("data", {})
+            if not data or "timestamp" not in data or len(data["timestamp"]) == 0:
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+            df = pd.DataFrame(data)
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert(
+                    "Asia/Kolkata"
+                )
+
+            for col in ["open", "high", "low", "close", "volume"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            return df.sort_values("timestamp").reset_index(drop=True)
+
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+    def fetch_2h_bars(
+        self,
+        security_id: str,
+        days: int = 25,
+    ) -> pd.DataFrame:
+        """Fetch 1-minute bars from Dhan and resample into 2-Hour OHLCV candles aligned to 09:15 IST."""
+        return self.fetch_resampled_bars(security_id=security_id, rule="120min", days=min(days, 30))
+
+    def fetch_resampled_bars(
+        self,
+        security_id: str,
+        rule: str = "15min",
+        days: int = 25,
+    ) -> pd.DataFrame:
+        """Fetch 1-minute bars from Dhan and resample into custom OHLCV candles aligned to 09:15 IST."""
+        safe_days = min(days, 30)
+        m_df = self.fetch_intraday_minute_bars(security_id=security_id, days=safe_days)
+        if m_df.empty:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        m_df = m_df.set_index("timestamp")
+        resampled = (
+            m_df.resample(rule, origin="start_day", offset="9h15min")
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            .dropna()
+            .reset_index()
+        )
+        return resampled
+
+    def fetch_monthly_bars(
+        self,
+        security_id: str,
+        days: int = 4500,
+    ) -> pd.DataFrame:
+        """Fetch daily historical bars from Dhan and resample to Monthly OHLCV candles."""
+        daily_df = self.fetch_daily_bars(security_id=security_id, days=days)
+        if daily_df.empty:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = daily_df.copy()
+        if "timestamp" not in df.columns:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = df.set_index("timestamp")
+        monthly = (
+            df.resample("MS")
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            .dropna(subset=["open", "high", "low", "close"])
+            .reset_index()
+        )
+        return monthly
+
+    def fetch_weekly_bars(
+        self,
+        security_id: str,
+        days: int = 7500,
+    ) -> pd.DataFrame:
+        """Fetch daily historical bars from Dhan and resample to Weekly OHLCV candles."""
+        daily_df = self.fetch_daily_bars(security_id=security_id, days=days)
+        if daily_df.empty:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = daily_df.copy()
+        if "timestamp" not in df.columns:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        df = df.set_index("timestamp")
+        weekly = (
+            df.resample("W-FRI")
+            .agg(
+                {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+            )
+            .dropna(subset=["open", "high", "low", "close"])
+            .reset_index()
+        )
+        return weekly
+
+    def fetch_bars(
+        self,
+        security_id: str,
+        timeframe: str = "1D",
+        days: int | None = None,
+    ) -> pd.DataFrame:
+        """Fetch OHLCV candles for any supported timeframe (1M, 1W, 1D, 2H, 1H, 15M)."""
+        tf = str(timeframe).strip().upper()
+        if tf in ("1M", "M", "MONTH", "MONTHLY"):
+            return self.fetch_monthly_bars(security_id, days=days or 4500)
+        elif tf in ("1W", "W", "WEEK", "WEEKLY"):
+            return self.fetch_weekly_bars(security_id, days=days or 7500)
+        elif tf in ("15M", "15MIN", "15_MIN"):
+            return self.fetch_resampled_bars(security_id, rule="15min", days=min(days or 25, 30))
+        elif tf in ("1H", "60M", "60MIN", "1_HOUR"):
+            return self.fetch_resampled_bars(security_id, rule="60min", days=min(days or 25, 30))
+        elif tf in ("2H", "120M", "120MIN", "2_HOUR"):
+            return self.fetch_2h_bars(security_id, days=min(days or 25, 30))
+        else:
+            return self.fetch_daily_bars(security_id, days=days or 150)

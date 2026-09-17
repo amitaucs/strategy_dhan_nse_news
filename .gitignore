@@ -73,7 +73,9 @@ htmlcov/
 Thumbs.db
 
 # Databases & Runtime Data
-data/
+/data/
+/scanners/scanner_dhan/data/
+strategies/*/data/
 *.db
 *.sqlite
 *.sqlite3

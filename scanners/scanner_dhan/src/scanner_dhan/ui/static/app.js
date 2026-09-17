@@ -10,6 +10,7 @@ let currentlyDisplayedItems = [];
 // Streamlined Filter State
 const filterState = {
   status: "matched", // "matched" or "all"
+  selectedLevelDropdown: "ALL", // Active key level description dropdown value
   selectedSignalDropdown: "ALL", // Active signal dropdown value
   selectedVolumeDropdown: "ALL", // Active volume dropdown value
   searchQuery: "",
@@ -17,12 +18,18 @@ const filterState = {
   sortAsc: true,
 };
 
-document.addEventListener("DOMContentLoaded", () => {
+function initializeScannerApp() {
   initLucide();
   checkHealth();
   loadScanners();
   setupEventListeners();
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeScannerApp);
+} else {
+  initializeScannerApp();
+}
 
 function initLucide() {
   if (window.lucide) {
@@ -35,15 +42,34 @@ async function checkHealth() {
     const res = await fetch("/api/health");
     const data = await res.json();
     const badge = document.getElementById("dhan-status-badge");
-    if (data.dhan_connected) {
-      badge.innerHTML = `
-        <span class="w-2 h-2 rounded-full bg-emerald-400 live-dot"></span>
-        <span class="text-emerald-400 text-xs font-semibold">DhanHQ Connected (${data.client_id})</span>
-      `;
-    } else {
+    if (!badge) return;
+
+    if (!data.dhan_connected) {
       badge.innerHTML = `
         <span class="w-2 h-2 rounded-full bg-amber-400"></span>
         <span class="text-amber-400 text-xs font-semibold">Credentials Not Set (.env)</span>
+      `;
+    } else if (data.data_api_active === false) {
+      if (data.data_api_error_code === "DH-902" || data.data_api_status === "unsubscribed") {
+        badge.innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span class="text-amber-300 text-xs font-semibold" title="${data.data_api_message || 'Data API Plan not subscribed'}">⚠️ Data API Inactive (DH-902)</span>
+        `;
+      } else if (data.data_api_error_code === "DH-901" || data.data_api_status === "token_expired") {
+        badge.innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+          <span class="text-red-400 text-xs font-semibold" title="${data.data_api_message || 'Token Expired'}">⚠️ Token Expired (DH-901)</span>
+        `;
+      } else {
+        badge.innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+          <span class="text-amber-300 text-xs font-semibold" title="${data.data_api_message || ''}">DhanHQ Connected (${data.client_id})</span>
+        `;
+      }
+    } else {
+      badge.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-emerald-400 live-dot"></span>
+        <span class="text-emerald-400 text-xs font-semibold">DhanHQ Connected (${data.client_id})</span>
       `;
     }
   } catch (err) {
@@ -462,12 +488,15 @@ async function runScanner(scannerId, overrideParams = null) {
     }
   }
 
+  selectedScannerId = scannerId;
+
   // Switch to Results view in Loading state
   showResultsView();
   document.getElementById("results-scanner-title").innerText = scanner.name;
   document.getElementById("results-scanner-desc").innerText = scanner.description;
-  document.getElementById("results-loading").classList.remove("hidden");
-  document.getElementById("results-content").classList.add("hidden");
+  document.getElementById("results-loading")?.classList.remove("hidden");
+  document.getElementById("results-content")?.classList.add("hidden");
+  document.getElementById("results-error")?.classList.add("hidden");
 
   try {
     const res = await fetch(`/api/scanners/${scannerId}/run`, {
@@ -476,42 +505,250 @@ async function runScanner(scannerId, overrideParams = null) {
       body: JSON.stringify({ parameters: params }),
     });
 
-    if (!res.ok) {
-      const errData = await res.json();
-      throw new Error(errData.detail || "Scan execution failed");
+    let resData;
+    try {
+      resData = await res.json();
+    } catch (e) {
+      resData = { status: "error", error_message: "Invalid response from server" };
     }
 
-    currentReport = await res.json();
+    if (!res.ok || resData.status === "error") {
+      renderErrorView(resData, scanner, params);
+      return;
+    }
+
+    currentReport = resData;
     currentReport.scanner_id = scannerId;
     currentReport._lastParams = params;
     renderReport(currentReport);
   } catch (err) {
-    alert("Error running scanner: " + err.message);
-    showHomeView();
+    renderErrorView({
+      status: "error",
+      error_title: "Scan Execution Failed",
+      error_message: err.message || "Could not complete scan request.",
+      error_type: "EXECUTION_ERROR",
+    }, scanner, params);
   } finally {
-    document.getElementById("results-loading").classList.add("hidden");
+    document.getElementById("results-loading")?.classList.add("hidden");
   }
+}
+
+function renderErrorView(errReport, scanner, params) {
+  const errContainer = document.getElementById("results-error");
+  document.getElementById("results-content")?.classList.add("hidden");
+  document.getElementById("results-loading")?.classList.add("hidden");
+  document.getElementById("btn-copy-tv")?.classList.add("hidden");
+
+  const errType = errReport.error_type || "EXECUTION_ERROR";
+  const errTitle = errReport.error_title || (errType === "DATA_API_UNSUBSCRIBED" ? "DhanHQ Data API Subscription Required" : "Scan Execution Failed");
+  const errMsg = errReport.error_message || errReport.detail || "An error occurred while fetching live market data.";
+  const actionUrl = errReport.action_url || (errType === "DATA_API_UNSUBSCRIBED" || errType === "AUTH_ERROR" ? "https://web.dhan.co" : "");
+  const actionLabel = errReport.action_label || (errType === "DATA_API_UNSUBSCRIBED" ? "Enable Data Plan on Dhan" : "Open DhanHQ Portal");
+
+  let helpStepsHtml = "";
+  if (errType === "DATA_API_UNSUBSCRIBED" || (errMsg && (errMsg.includes("DH-902") || errMsg.includes("451") || errMsg.includes("Data API")))) {
+    helpStepsHtml = `
+      <div class="mt-4 p-4 rounded-2xl bg-amber-950/40 border border-amber-600/30 text-left space-y-2">
+        <h4 class="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center space-x-1.5">
+          <i data-lucide="help-circle" class="w-4 h-4 text-amber-400"></i>
+          <span>How to Enable Historical Data APIs on Dhan:</span>
+        </h4>
+        <ol class="list-decimal list-inside text-xs text-slate-300 space-y-1.5 leading-relaxed">
+          <li>Log in to your Dhan web dashboard at <a href="https://web.dhan.co" target="_blank" class="text-sky-400 font-semibold underline hover:text-sky-300">web.dhan.co</a>.</li>
+          <li>Click your <strong>Profile Icon</strong> (top-right) and select <strong>DhanHQ Trading APIs</strong>.</li>
+          <li>Go to the <strong>API Plans</strong> tab and activate / subscribe to the <strong>Data APIs Plan</strong>.</li>
+          <li>Once subscribed, return here and click <strong>Re-Run Scan</strong> below.</li>
+        </ol>
+      </div>
+    `;
+  } else if (errType === "AUTH_ERROR" || (errMsg && (errMsg.includes("DH-901") || errMsg.includes("401") || errMsg.includes("Token")))) {
+    helpStepsHtml = `
+      <div class="mt-4 p-4 rounded-2xl bg-red-950/40 border border-red-600/30 text-left space-y-2">
+        <h4 class="text-xs font-bold text-red-300 uppercase tracking-wider flex items-center space-x-1.5">
+          <i data-lucide="key" class="w-4 h-4 text-red-400"></i>
+          <span>How to Refresh Your Dhan Access Token:</span>
+        </h4>
+        <ol class="list-decimal list-inside text-xs text-slate-300 space-y-1.5 leading-relaxed">
+          <li>Log in to <a href="https://web.dhan.co" target="_blank" class="text-sky-400 font-semibold underline hover:text-sky-300">web.dhan.co</a>.</li>
+          <li>Navigate to <strong>DhanHQ Trading APIs > Access Tokens</strong>.</li>
+          <li>Generate a new 24-hour Access Token.</li>
+          <li>Click <strong>API Settings (🔑)</strong> in the top header of this terminal to save the fresh token.</li>
+        </ol>
+      </div>
+    `;
+  }
+
+  if (errContainer) {
+    errContainer.innerHTML = `
+      <div class="max-w-2xl mx-auto py-8 px-6 text-center space-y-5 bg-slate-900/90 border border-slate-800 rounded-3xl shadow-2xl">
+        <div class="inline-flex p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+          <i data-lucide="alert-triangle" class="w-10 h-10 text-amber-400"></i>
+        </div>
+        <div class="space-y-2">
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-950/60 border border-amber-800/40 text-amber-300 text-xs font-mono font-bold">
+            <span>${errType}</span>
+          </div>
+          <h3 class="text-xl font-black text-white">${errTitle}</h3>
+          <p class="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed">
+            ${errMsg}
+          </p>
+        </div>
+
+        ${helpStepsHtml}
+
+        <div class="flex items-center justify-center space-x-3 pt-3 flex-wrap gap-y-2">
+          ${actionUrl ? `
+            <a
+              href="${actionUrl}"
+              target="_blank"
+              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-sky-950/60 flex items-center space-x-2 transition"
+            >
+              <i data-lucide="external-link" class="w-4 h-4"></i>
+              <span>${actionLabel}</span>
+            </a>
+          ` : ''}
+          <button
+            onclick="rerunCurrentScanner()"
+            class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 flex items-center space-x-2 transition cursor-pointer"
+          >
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            <span>Retry Scan</span>
+          </button>
+          <button
+            onclick="showHomeView()"
+            class="px-4 py-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-700/80 text-slate-400 hover:text-slate-200 font-semibold text-xs border border-transparent transition cursor-pointer"
+          >
+            <span>Back to Scanners</span>
+          </button>
+        </div>
+      </div>
+    `;
+    errContainer.classList.remove("hidden");
+  }
+
+  // Update Dhan Status Badge in Header
+  const badge = document.getElementById("dhan-status-badge");
+  if (badge) {
+    if (errType === "DATA_API_UNSUBSCRIBED" || (errMsg && errMsg.includes("DH-902"))) {
+      badge.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+        <span class="text-amber-300 text-xs font-semibold">⚠️ Data API Inactive (DH-902)</span>
+      `;
+    } else if (errType === "AUTH_ERROR" || (errMsg && errMsg.includes("DH-901"))) {
+      badge.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+        <span class="text-red-400 text-xs font-semibold">⚠️ Token Expired (DH-901)</span>
+      `;
+    }
+  }
+
+  initLucide();
+}
+
+function rerunCurrentScanner() {
+  if (currentReport && currentReport.scanner_id) {
+    const univSelect = document.getElementById("results-select-universe");
+    const tfSelect = document.getElementById("results-select-timeframe");
+    const updatedParams = { ...(currentReport._lastParams || {}) };
+    if (univSelect && univSelect.value) updatedParams.universe = univSelect.value;
+    if (tfSelect && tfSelect.value) updatedParams.timeframe = tfSelect.value;
+    runScanner(currentReport.scanner_id, updatedParams);
+  } else if (selectedScannerId) {
+    runScanner(selectedScannerId);
+  }
+}
+window.rerunCurrentScanner = rerunCurrentScanner;
+window.showHomeView = showHomeView;
+
+function getItemLevelDesc(r, report) {
+  if (!r) return "";
+
+  // 1. Extract raw level description from whichever field is populated by the backend search
+  let raw =
+    r.support_desc ||
+    (r.nearest_support && r.nearest_support.description) ||
+    r.setup_type ||
+    r.scan_category ||
+    r.ath_class ||
+    r.block_type ||
+    (r.nearest_order_block && r.nearest_order_block.block_type) ||
+    r.nearest_ema_name ||
+    r.support_type ||
+    "";
+
+  if (typeof raw !== "string") raw = String(raw || "");
+  raw = raw.trim();
+
+  if (!raw || raw === "N/A" || raw === "NONE" || raw === "null" || raw === "undefined") {
+    return "Key Level";
+  }
+
+  // 2. Clean out stock-specific price/bounce tags in parentheses e.g. "(₹1013.90)", "(4 Bounces | ₹2653-₹2711)"
+  let clean = raw
+    .replace(/\s*\([^)]*₹[^)]*\)/g, "")
+    .replace(/\s*\([^)]*bounces?[^)]*\)/gi, "")
+    .replace(/\s*\([^)]*rejections?[^)]*\)/gi, "")
+    .replace(/\s*@\s*₹?[0-9.,]+/g, "")
+    .trim();
+
+  // If cleaning resulted in empty string, fallback to original without parentheses
+  if (!clean) {
+    clean = raw.replace(/[()]/g, "").trim() || raw;
+  }
+
+  // 3. Format enum/raw identifiers nicely if applicable
+  if (clean === "BULLISH_DEMAND" || clean === "DEMAND") clean = "Demand OB (Bullish)";
+  else if (clean === "BEARISH_SUPPLY" || clean === "SUPPLY") clean = "Supply OB (Bearish)";
+
+  return clean;
+}
+
+function renderLevelFilterDropdown(report) {
+  const container = document.getElementById("container-level-filter");
+  const select = document.getElementById("table-level-filter");
+  if (!container || !select || !report) return;
+
+  container.classList.remove("hidden");
+  container.classList.add("flex");
+
+  // Collect all distinct Level Description values across all scanned stocks in report.results
+  const allResults = report.results || [];
+  const currentValue = filterState.selectedLevelDropdown || "ALL";
+
+  const levelCounts = {};
+  allResults.forEach((r) => {
+    const desc = getItemLevelDesc(r, report);
+    if (desc && desc !== "N/A") {
+      levelCounts[desc] = (levelCounts[desc] || 0) + 1;
+    }
+  });
+
+  const uniqueLevels = Object.keys(levelCounts).sort((a, b) => levelCounts[b] - levelCounts[a]);
+
+  let optionsHtml = `<option value="ALL" ${currentValue === "ALL" ? "selected" : ""}>🎯 All Levels (${allResults.length})</option>`;
+  uniqueLevels.forEach((lvl) => {
+    const count = levelCounts[lvl];
+    const isSelected = currentValue === lvl ? "selected" : "";
+    optionsHtml += `<option value="${lvl.replace(/"/g, "&quot;")}" ${isSelected}>${lvl} (${count})</option>`;
+  });
+
+  select.innerHTML = optionsHtml;
+  initLucide();
 }
 
 function renderSignalFilterDropdown(report) {
   const container = document.getElementById("container-signal-filter");
   const select = document.getElementById("table-signal-filter");
-  if (!container || !select) return;
+  if (!container || !select || !report) return;
 
   container.classList.remove("hidden");
   container.classList.add("flex");
 
-  const baseItems = (report.results || []).filter((r) => {
-    if (filterState.status === "matched") {
-      return r.is_at_support || r.is_pullback;
-    }
-    return true;
-  });
-
+  const allResults = report.results || [];
   const scannerId = report.scanner_id;
   const currentValue = filterState.selectedSignalDropdown || "ALL";
 
-  let optionsHtml = `<option value="ALL" ${currentValue === "ALL" ? "selected" : ""}>⚡ All Signals (${baseItems.length})</option>`;
+  let optionsHtml = `<option value="ALL" ${currentValue === "ALL" ? "selected" : ""}>⚡ All Signals (${allResults.length})</option>`;
 
   if (scannerId === "nifty50_rsi") {
     const oversoldVal =
@@ -523,13 +760,13 @@ function renderSignalFilterDropdown(report) {
         ? parseFloat(report._lastParams.overbought_threshold)
         : 68.0;
 
-    const oversoldCount = baseItems.filter(
+    const oversoldCount = allResults.filter(
       (r) => r.rsi !== null && r.rsi !== undefined && r.rsi <= oversoldVal
     ).length;
-    const overboughtCount = baseItems.filter(
+    const overboughtCount = allResults.filter(
       (r) => r.rsi !== null && r.rsi !== undefined && r.rsi >= overboughtVal
     ).length;
-    const neutralCount = baseItems.filter(
+    const neutralCount = allResults.filter(
       (r) =>
         r.rsi !== null &&
         r.rsi !== undefined &&
@@ -541,9 +778,9 @@ function renderSignalFilterDropdown(report) {
     optionsHtml += `<option value="RSI_OVERBOUGHT" ${currentValue === "RSI_OVERBOUGHT" ? "selected" : ""}>🔥 Overbought (RSI ≥ ${overboughtVal}) (${overboughtCount})</option>`;
     optionsHtml += `<option value="RSI_NEUTRAL" ${currentValue === "RSI_NEUTRAL" ? "selected" : ""}>⚖️ Neutral (${oversoldVal} - ${overboughtVal}) (${neutralCount})</option>`;
   } else {
-    // Collect all distinct candle_signal values from baseItems
+    // Collect all distinct candle_signal values from allResults
     const signalCounts = {};
-    baseItems.forEach((r) => {
+    allResults.forEach((r) => {
       const sig = (r.candle_signal || "Standard").trim();
       if (sig) {
         signalCounts[sig] = (signalCounts[sig] || 0) + 1;
@@ -566,28 +803,22 @@ function renderSignalFilterDropdown(report) {
 function renderVolumeFilterDropdown(report) {
   const container = document.getElementById("container-volume-filter");
   const select = document.getElementById("table-volume-filter");
-  if (!container || !select) return;
+  if (!container || !select || !report) return;
 
   container.classList.remove("hidden");
   container.classList.add("flex");
 
-  const baseItems = (report.results || []).filter((r) => {
-    if (filterState.status === "matched") {
-      return r.is_at_support || r.is_pullback;
-    }
-    return true;
-  });
-
+  const allResults = report.results || [];
   const currentValue = filterState.selectedVolumeDropdown || "ALL";
 
-  const count10M = baseItems.filter((r) => (r.volume || 0) >= 10000000).length;
-  const count5M = baseItems.filter((r) => (r.volume || 0) >= 5000000).length;
-  const count1M = baseItems.filter((r) => (r.volume || 0) >= 1000000).length;
-  const count500K = baseItems.filter((r) => (r.volume || 0) >= 500000).length;
-  const count100K = baseItems.filter((r) => (r.volume || 0) >= 100000).length;
-  const countLow = baseItems.filter((r) => (r.volume || 0) < 100000).length;
+  const count10M = allResults.filter((r) => (r.volume || 0) >= 10000000).length;
+  const count5M = allResults.filter((r) => (r.volume || 0) >= 5000000).length;
+  const count1M = allResults.filter((r) => (r.volume || 0) >= 1000000).length;
+  const count500K = allResults.filter((r) => (r.volume || 0) >= 500000).length;
+  const count100K = allResults.filter((r) => (r.volume || 0) >= 100000).length;
+  const countLow = allResults.filter((r) => (r.volume || 0) < 100000).length;
 
-  let optionsHtml = `<option value="ALL" ${currentValue === "ALL" ? "selected" : ""}>📊 All Volumes (${baseItems.length})</option>`;
+  let optionsHtml = `<option value="ALL" ${currentValue === "ALL" ? "selected" : ""}>📊 All Volumes (${allResults.length})</option>`;
   if (count10M > 0) {
     optionsHtml += `<option value="VOL_10M" ${currentValue === "VOL_10M" ? "selected" : ""}>🚀 > 10M / 1 Cr (${count10M})</option>`;
   }
@@ -616,7 +847,8 @@ function renderReport(report) {
   document.getElementById("btn-copy-tv")?.classList.remove("hidden");
 
   // Reset basic filter state
-  filterState.status = "matched";
+  filterState.status = (report.matched_count && report.matched_count > 0) ? "matched" : "all";
+  filterState.selectedLevelDropdown = "ALL";
   filterState.selectedSignalDropdown = "ALL";
   filterState.selectedVolumeDropdown = "ALL";
   filterState.searchQuery = "";
@@ -627,13 +859,24 @@ function renderReport(report) {
   // Reset status buttons styling
   const btnMatched = document.getElementById("filter-status-matched");
   const btnAll = document.getElementById("filter-status-all");
-  if (btnMatched) {
-    btnMatched.classList.add("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
-    btnMatched.classList.remove("text-slate-400", "border-transparent");
-  }
-  if (btnAll) {
-    btnAll.classList.remove("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
-    btnAll.classList.add("text-slate-400", "border-transparent");
+  if (filterState.status === "matched") {
+    if (btnMatched) {
+      btnMatched.classList.add("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
+      btnMatched.classList.remove("text-slate-400", "border-transparent");
+    }
+    if (btnAll) {
+      btnAll.classList.remove("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
+      btnAll.classList.add("text-slate-400", "border-transparent");
+    }
+  } else {
+    if (btnMatched) {
+      btnMatched.classList.remove("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
+      btnMatched.classList.add("text-slate-400", "border-transparent");
+    }
+    if (btnAll) {
+      btnAll.classList.add("bg-sky-500/20", "text-sky-300", "border-sky-500/40");
+      btnAll.classList.remove("text-slate-400", "border-transparent");
+    }
   }
 
   // Update Metric badges
@@ -703,6 +946,7 @@ function renderReport(report) {
     report.timestamp
   ).toLocaleTimeString()}`;
 
+  renderLevelFilterDropdown(report);
   renderSignalFilterDropdown(report);
   renderVolumeFilterDropdown(report);
   applyFiltersAndRender();
@@ -718,7 +962,16 @@ function applyFiltersAndRender() {
     items = items.filter((r) => r.is_at_support || r.is_pullback);
   }
 
-  // 2. Candlestick / Dynamic Signal Dropdown Filter
+  // 2. Key Level / Setup Description Dropdown Filter
+  if (filterState.selectedLevelDropdown && filterState.selectedLevelDropdown !== "ALL") {
+    const selectedLvl = filterState.selectedLevelDropdown;
+    items = items.filter((r) => {
+      const desc = getItemLevelDesc(r, currentReport);
+      return desc === selectedLvl;
+    });
+  }
+
+  // 3. Candlestick / Dynamic Signal Dropdown Filter
   if (filterState.selectedSignalDropdown && filterState.selectedSignalDropdown !== "ALL") {
     if (currentReport && currentReport.scanner_id === "nifty50_rsi") {
       const oversoldVal =
@@ -752,7 +1005,7 @@ function applyFiltersAndRender() {
     }
   }
 
-  // 3. Volume Dropdown Filter
+  // 4. Volume Dropdown Filter
   if (filterState.selectedVolumeDropdown && filterState.selectedVolumeDropdown !== "ALL") {
     const vFilter = filterState.selectedVolumeDropdown;
     if (vFilter === "VOL_10M") {
@@ -770,21 +1023,28 @@ function applyFiltersAndRender() {
     }
   }
 
-  // 4. Global Search Query
+  // 5. Global Search Query
   if (filterState.searchQuery.trim()) {
     const q = filterState.searchQuery.toLowerCase().trim();
     items = items.filter(
       (r) =>
         r.symbol.toLowerCase().includes(q) ||
+        getItemLevelDesc(r, currentReport).toLowerCase().includes(q) ||
         (r.support_desc && r.support_desc.toLowerCase().includes(q)) ||
         (r.candle_signal && r.candle_signal.toLowerCase().includes(q))
     );
   }
 
-  // 4. Sorting
+  // 6. Sorting
   items.sort((a, b) => {
-    let valA = a[filterState.sortColumn];
-    let valB = b[filterState.sortColumn];
+    let valA, valB;
+    if (filterState.sortColumn === "support_desc" || filterState.sortColumn === "level_desc") {
+      valA = getItemLevelDesc(a, currentReport);
+      valB = getItemLevelDesc(b, currentReport);
+    } else {
+      valA = a[filterState.sortColumn];
+      valB = b[filterState.sortColumn];
+    }
     if (valA === null || valA === undefined) valA = 999999;
     if (valB === null || valB === undefined) valB = 999999;
 
@@ -895,13 +1155,7 @@ function renderTable(items) {
         : isSt07
         ? r.ema_89
         : (r.support_price !== undefined ? r.support_price : (r.nearest_support ? r.nearest_support.price : null));
-      const keyLevelDesc = isAth08
-        ? (r.ath_class || "ATH Breakout")
-        : isHaSt01
-        ? (r.setup_type || "HA+RSI Reversal")
-        : isSt07
-        ? (r.scan_category || (r.is_ema_89_rising ? "89 EMA (Rising)" : "89 EMA"))
-        : (r.support_desc || "N/A");
+      const keyLevelDesc = getItemLevelDesc(r, currentReport);
       const hoverTitle = isAth08
         ? `Trigger Entry: ₹${r.trigger_entry_price} (+1%) | 30W SMA: ₹${r.weekly_30_sma} | ATH Date: ${r.prior_ath_date} | Exp: ${r.expansion_ratio}x`
         : isHaSt01
@@ -1075,6 +1329,15 @@ function setupEventListeners() {
     });
   }
 
+  // Level Description Filter Dropdown
+  const levelFilterSelect = document.getElementById("table-level-filter");
+  if (levelFilterSelect) {
+    levelFilterSelect.addEventListener("change", (e) => {
+      filterState.selectedLevelDropdown = e.target.value;
+      applyFiltersAndRender();
+    });
+  }
+
   // Volume Filter Dropdown
   const volumeFilterSelect = document.getElementById("table-volume-filter");
   if (volumeFilterSelect) {
@@ -1098,6 +1361,7 @@ function setupEventListeners() {
       }
       if (currentReport) {
         renderSignalFilterDropdown(currentReport);
+        renderLevelFilterDropdown(currentReport);
         renderVolumeFilterDropdown(currentReport);
       }
       applyFiltersAndRender();
@@ -1117,6 +1381,7 @@ function setupEventListeners() {
       }
       if (currentReport) {
         renderSignalFilterDropdown(currentReport);
+        renderLevelFilterDropdown(currentReport);
         renderVolumeFilterDropdown(currentReport);
       }
       applyFiltersAndRender();
@@ -1232,7 +1497,7 @@ function exportCSV() {
     r.ltp,
     r.support_price ?? r.stop_loss ?? r.prior_ath_price ?? r.ema_89 ?? "",
     r.distance_pct,
-    `"${(r.support_desc || r.setup_type || r.ath_class || r.scan_category || "").replace(/"/g, '""')}"`,
+    `"${(getItemLevelDesc(r, currentReport) || "").replace(/"/g, '""')}"`,
     r.volume || 0,
     (r.is_at_support || r.is_pullback) ? "YES" : "NO",
     r.rsi ?? "",

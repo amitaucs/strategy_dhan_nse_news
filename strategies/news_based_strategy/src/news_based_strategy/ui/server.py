@@ -59,6 +59,14 @@ def create_app() -> FastAPI:
     register_routes(app, state)
 
     # Mount static assets for scanner UI
+    class NoCacheStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+
     def _find_scanner_static() -> Optional[Path]:
         p_docker = Path("/app/scanners/scanner_dhan/src/scanner_dhan/ui/static")
         if p_docker.exists():
@@ -72,7 +80,7 @@ def create_app() -> FastAPI:
 
     scanner_static = _find_scanner_static()
     if scanner_static and scanner_static.exists():
-        app.mount("/static/scanner", StaticFiles(directory=str(scanner_static)), name="scanner_static")
+        app.mount("/static/scanner", NoCacheStaticFiles(directory=str(scanner_static)), name="scanner_static")
 
     return app
 

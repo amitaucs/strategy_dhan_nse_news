@@ -246,7 +246,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </style>
   <!-- Lucide Icons & Scanner Assets -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/scanner/style.css" />
+  <link rel="stylesheet" href="/static/scanner/style.css?v=2.4" />
 </head>
 <body class="bg-[#0b0f19] text-gray-200 font-sans antialiased min-h-screen flex flex-col custom-scrollbar">
 
@@ -855,6 +855,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         </p>
       </div>
 
+      <!-- Error State -->
+      <div id="results-error" class="hidden py-4"></div>
+
       <!-- Results Content (Metrics + 2-Column Layout) -->
       <div id="results-content" class="hidden space-y-6">
 
@@ -885,8 +888,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           <div class="bg-slate-900/80 p-3.5 rounded-2xl border border-slate-800 shadow-xl">
             
             <div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
-              <!-- Search Input + Signal Filter Dropdown + Volume Filter Dropdown -->
-              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+              <!-- Search Input + Level Filter + Signal Filter + Volume Filter -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-4xl">
                 <!-- Search Input -->
                 <div class="relative flex-1">
                   <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-2.5"></i>
@@ -898,14 +901,26 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                   />
                 </div>
 
+                <!-- Level Description Filter Dropdown -->
+                <div id="container-level-filter" class="relative flex items-center shrink-0">
+                  <select
+                    id="table-level-filter"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[210px] truncate"
+                    title="Filter by Key Level / Setup Description"
+                  >
+                    <option value="ALL">🎯 All Levels</option>
+                  </select>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
+                </div>
+
                 <!-- Signal Filter Dropdown -->
                 <div id="container-signal-filter" class="relative flex items-center shrink-0">
                   <select
                     id="table-signal-filter"
-                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[220px] truncate"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[200px] truncate"
                     title="Filter by Candle Signal"
                   >
-                    <option value="ALL">All Signals</option>
+                    <option value="ALL">⚡ All Signals</option>
                   </select>
                   <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
                 </div>
@@ -914,10 +929,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                 <div id="container-volume-filter" class="relative flex items-center shrink-0">
                   <select
                     id="table-volume-filter"
-                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[200px] truncate"
+                    class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[170px] truncate"
                     title="Filter by Volume"
                   >
-                    <option value="ALL">All Volumes</option>
+                    <option value="ALL">📊 All Volumes</option>
                   </select>
                   <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
                 </div>
@@ -976,7 +991,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
-                  <th class="py-3.5 px-4">Level Description</th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="support_desc">
+                    <div class="flex items-center space-x-1">
+                      <span>Level Description</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
                   <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="volume">
                     <div class="flex items-center space-x-1">
                       <span>Volume</span>
@@ -989,7 +1009,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
-                  <th class="py-3.5 px-4">Candle Signal</th>
+                  <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="candle_signal">
+                    <div class="flex items-center space-x-1">
+                      <span>Candle Signal</span>
+                      <span class="text-[10px] text-slate-500">↕</span>
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody id="results-tbody" class="divide-y divide-slate-800/60">
@@ -3517,7 +3542,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </script>
 
   <!-- Scanner Application Logic -->
-  <script src="/static/scanner/app.js"></script>
+  <script src="/static/scanner/app.js?v=2.4"></script>
 </body>
 </html>
 """
