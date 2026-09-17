@@ -89,9 +89,45 @@ class TestDhanExecutor(unittest.TestCase):
 
             # Verify place_order was invoked with security_id="383"
             mock_dhan.place_order.assert_called_once()
-            _, kwargs = mock_dhan.place_order.call_args
-            self.assertEqual(kwargs["security_id"], "383")
-            self.assertEqual(kwargs["transaction_type"], "BUY")
+            call_kwargs = mock_dhan.place_order.call_args[1]
+            self.assertEqual(call_kwargs["security_id"], "383")
+
+    def test_live_mode_resolves_alkem_security_id(self):
+        """Verify ALKEM specifically resolves SecID 11703 and places live order without rejection."""
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            super_order_enabled=False,
+        )
+        mock_dhan = MagicMock()
+        mock_dhan.BUY = "BUY"
+        mock_dhan.NSE = "NSE_EQ"
+        mock_dhan.CNC = "CNC"
+        mock_dhan.MARKET = "MARKET"
+        mock_dhan.place_order.return_value = {"orderId": "ALKEM_ORDER_12345"}
+        executor.dhan = mock_dhan
+        executor.dry_run = False
+
+        signal = TradeSignal(
+            symbol="ALKEM",
+            security_id="0",  # Specifically test resolution of ALKEM
+            action="BUY",
+            product_type="CNC",
+            confidence=95,
+            catalyst_type="FDA_APPROVAL",
+            summary="USFDA Approval received",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, ltp=5400.0)
+            self.assertTrue(res.success)
+            self.assertEqual(res.order_id, "ALKEM_ORDER_12345")
+
+            # Verify place_order was invoked with ALKEM security_id="11703"
+            mock_dhan.place_order.assert_called_once()
+            call_kwargs = mock_dhan.place_order.call_args[1]
+            self.assertEqual(call_kwargs["security_id"], "11703")
+            self.assertEqual(call_kwargs["transaction_type"], "BUY")
 
     def test_dry_run_super_order_formatting(self):
         """Dry-run mode with Super Order enabled should format bracket order details."""

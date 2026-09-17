@@ -73,6 +73,13 @@ class DashboardState:
         self.feed_items: List[Dict[str, Any]] = []
         self.subscribers: List[asyncio.Queue] = []
         self.auto_order = settings.auto_order
+
+        # Initialize and sync Dhan F&O universe and numeric security IDs
+        try:
+            sync_dhan_fno_symbols()
+            logger.info("Dhan F&O universe initialized with %d mapped SecIDs", len(get_security_id_map()))
+        except Exception as exc:
+            logger.warning("Could not sync Dhan F&O universe on state init: %s", exc)
         self._poller_task: Optional[asyncio.Task] = None
         self.poll_cycles_count: int = 0
         self.last_polled_at: Optional[datetime] = get_ist_now()

@@ -106,16 +106,32 @@ class TestDhanUniverseSync(unittest.TestCase):
 
     def test_resolve_security_id_fallback(self):
         """Verify known F&O tickers resolve from the fallback map."""
+        self.assertEqual(resolve_security_id("ALKEM"), "11703")
         self.assertEqual(resolve_security_id("RELIANCE"), "2885")
         self.assertEqual(resolve_security_id("BEL"), "383")
-        self.assertEqual(resolve_security_id("CGPOWER"), "730")
+        self.assertEqual(resolve_security_id("CGPOWER"), "760")
         self.assertEqual(resolve_security_id("TCS"), "11536")
         self.assertEqual(resolve_security_id("INFY"), "1594")
+        self.assertEqual(resolve_security_id("LTIM"), "17818")
+        self.assertEqual(resolve_security_id("GMRINFRA"), "13528")
+        self.assertEqual(resolve_security_id("GMRAIRPORT"), "13528")
         self.assertIsNone(resolve_security_id("NON_EXISTENT_STOCK_9999"))
         self.assertIsNone(resolve_security_id(""))
 
+    def test_all_fallback_fno_symbols_resolve(self):
+        """Verify that 100% of symbols in FALLBACK_FNO_SYMBOLS resolve to a valid SecID."""
+        unresolved = []
+        for sym in FALLBACK_FNO_SYMBOLS:
+            sec_id = resolve_security_id(sym)
+            if not sec_id or sec_id == "0":
+                unresolved.append(sym)
+        self.assertEqual(unresolved, [], f"Unresolved F&O symbols: {unresolved}")
+
     def test_resolve_security_id_case_and_suffix(self):
         """Verify normalization handles case, spaces, and series suffixes."""
+        self.assertEqual(resolve_security_id("alkem"), "11703")
+        self.assertEqual(resolve_security_id("  ALKEM  "), "11703")
+        self.assertEqual(resolve_security_id("ALKEM-EQ"), "11703")
         self.assertEqual(resolve_security_id("reliance"), "2885")
         self.assertEqual(resolve_security_id("  bel  "), "383")
         self.assertEqual(resolve_security_id("TATAMOTORS-EQ"), "3456")

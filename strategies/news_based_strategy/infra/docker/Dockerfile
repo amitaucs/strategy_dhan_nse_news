@@ -20,11 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY strategies/news_based_strategy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code and scanners package
+# Copy application source code, scanners package, and universe data
 COPY strategies/news_based_strategy/src/ ./src/
+COPY strategies/news_based_strategy/data/ ./data/
 COPY scanners/ ./scanners/
 
-# Create data directory for persistent SQLite database and runtime files
+# Ensure data directory exists for persistent SQLite database and runtime files
 RUN mkdir -p /app/data
 
 # Default expose port for web dashboard

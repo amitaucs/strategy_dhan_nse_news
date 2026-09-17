@@ -9,7 +9,7 @@ from news_based_strategy.core.models import Announcement, TradeSignal
 from news_based_strategy.execution.executor import DhanExecutor
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.monitor import NSEFilingMonitor
-from news_based_strategy.ingestion.universe import resolve_security_id
+from news_based_strategy.ingestion.universe import resolve_security_id, sync_dhan_fno_symbols
 from news_based_strategy.intelligence.analyzer import FilingAnalyzer
 from news_based_strategy.storage.repository import StrategyStorage
 
@@ -65,6 +65,12 @@ class StrategyEngine:
         self.fno_only = fno_only
         self.filter_noise = filter_noise
         self.extract_pdf = extract_pdf
+
+        if self.fno_only:
+            try:
+                sync_dhan_fno_symbols()
+            except Exception:
+                pass
 
     def process_announcement(self, item: Announcement, bypass_market_hours: bool = False) -> Optional[TradeSignal]:
         """Process a single announcement through deduplication, AI analysis, and execution."""
