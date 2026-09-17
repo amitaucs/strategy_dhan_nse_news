@@ -1,0 +1,243 @@
+"""Unit tests for ST-14 Bullish CE Strategy execution engine."""
+
+from __future__ import annotations
+
+from datetime import datetime
+import unittest
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
+
+from st14_bullish_ce.models import (
+    ExecutionMode,
+    OrderStatus,
+    ProductType,
+    St14OptionContract,
+    St14StrategyConfig,
+    St14TradeSignal,
+)
+from st14_bullish_ce.strategy import St14BullishCeStrategy
+
+
+class TestSt14Strategy(unittest.TestCase):
+    """Test suite for ST-14 Bullish CE Strategy orchestrator."""
+
+    def setUp(self):
+        self.config = St14StrategyConfig(
+            mode=ExecutionMode.VIRTUAL,
+            product_type=ProductType.INTRADAY,
+            capital_per_trade=30000.0,
+            target_profit_pct=40.0,
+            stop_loss_pct=20.0,
+            trailing_jump_pts=2.0,
+            trade_cutoff_time="14:00",
+            square_off_time="15:00",
+        )
+        self.strategy = St14BullishCeStrategy(config=self.config)
+
+    def test_entry_timing_window(self):
+        """Validates 10:15 AM start and 14:00 PM cutoff."""
+        ist = ZoneInfo("Asia/Kolkata")
+
+        # 09:45 AM -> Blocked (early)
+        dt_0945 = datetime(2026, 9, 17, 9, 45, tzinfo=ist)
+        is_valid_0945, _ = self.strategy.is_within_entry_window(dt_0945)
+        self.assertFalse(is_valid_0945)
+
+        # 11:30 AM -> Valid
+        dt_1130 = datetime(2026, 9, 17, 11, 30, tzinfo=ist)
+        is_valid_1130, _ = self.strategy.is_within_entry_window(dt_1130)
+        self.assertTrue(is_valid_1130)
+
+        # 14:15 PM -> Blocked (cutoff reached)
+        dt_1415 = datetime(2026, 9, 17, 14, 15, tzinfo=ist)
+        is_valid_1415, _ = self.strategy.is_within_entry_window(dt_1415)
+        self.assertFalse(is_valid_1415)
+
+    def test_square_off_time(self):
+        """Enforces 15:00 (3:00 PM IST) auto square-off for Intraday mode."""
+        ist = ZoneInfo("Asia/Kolkata")
+
+        # 14:45 PM -> Not square-off
+        dt_1445 = datetime(2026, 9, 17, 14, 45, tzinfo=ist)
+        self.assertFalse(self.strategy.is_square_off_time(dt_1445))
+
+        # 15:00 PM -> Trigger square-off
+        dt_1500 = datetime(2026, 9, 17, 15, 0, tzinfo=ist)
+        self.assertTrue(self.strategy.is_square_off_time(dt_1500))
+
+        # 15:10 PM -> Trigger square-off
+        dt_1510 = datetime(2026, 9, 17, 15, 10, tzinfo=ist)
+        self.assertTrue(self.strategy.is_square_off_time(dt_1510))
+
+    def test_super_order_level_calculations(self):
+        """Calculates correct Entry, Target (+40%), and SL (-20%) prices."""
+        levels = self.strategy.calculate_super_order_levels(option_ltp=100.0)
+        # Entry with 0.5% slippage = ₹100.50
+        self.assertEqual(levels.entry_price, 100.50)
+        # Target +40% on 100.50 = 100.50 * 1.4 = ₹140.70
+        self.assertEqual(levels.target_price, 140.70)
+        # SL -20% on 100.50 = 100.50 * 0.8 = ₹80.40
+        self.assertEqual(levels.stop_loss_price, 80.40)
+        self.assertEqual(levels.trailing_jump, 2.0)
+
+    def test_order_quantity_sizing(self):
+        """Calculates lot-aligned position sizing based on capital per trade."""
+        # Capital = 30,000, Option Entry = ₹50, Lot Size = 250 -> Cost/lot = 12,500
+        # 30,000 / 12,500 = 2 lots -> 500 shares
+        qty = self.strategy.calculate_order_quantity(option_entry_price=50.0, lot_size=250)
+        self.assertEqual(qty, 500)
+
+    def test_virtual_order_execution_and_square_off(self):
+        """Simulates placing a virtual Super Order and auto-closing at 3 PM."""
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="OPT_INFY_1900_CE",
+            lot_size=300,
+            ltp=45.0,
+            is_next_month=True,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=45.0)
+
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_001",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertTrue(success)
+        self.assertIsNotNone(pos)
+        self.assertIn("VIRTUAL SUPER ORDER", remarks)
+        self.assertEqual(len(self.strategy.active_positions), 1)
+
+        # Update live PnL: price moved up to ₹55.0 (+22%)
+        pos.update_pnl(live_ltp=55.0)
+        self.assertGreater(pos.unrealized_pnl, 0)
+
+        # Trigger 3:00 PM Square-off
+        ist = ZoneInfo("Asia/Kolkata")
+        dt_1500 = datetime(2026, 9, 17, 15, 0, tzinfo=ist)
+        closed = self.strategy.square_off_intraday_positions(dt_1500)
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(len(self.strategy.active_positions), 0)
+        self.assertEqual(len(self.strategy.closed_positions), 1)
+        self.assertEqual(closed[0].status, "CLOSED")
+
+        # Telemetry
+        telemetry = self.strategy.get_strategy_telemetry()
+        self.assertEqual(telemetry["active_positions_count"], 0)
+        self.assertEqual(len(telemetry["closed_positions"]), 1)
+
+    def test_dual_frequency_discovery_and_trigger_monitoring(self):
+        """Validates Tier 1 hourly discovery scan followed by Tier 2 5-min price breach trigger."""
+        from unittest.mock import patch
+        from scanner_dhan.scanner.st14_scanner import St14ScanResult, St14Status
+
+        ist = ZoneInfo("Asia/Kolkata")
+        dt_1100 = datetime(2026, 9, 17, 11, 0, tzinfo=ist)
+
+        mock_candidate = St14ScanResult(
+            symbol="TATAMOTORS",
+            security_id="3456",
+            ltp=980.0,
+            status=St14Status.QUALIFIED,
+            is_at_support=True,
+            daily_close=975.0,
+            daily_ema20=940.0,
+            five_day_high=970.0,
+            is_5d_breakout=True,
+            is_daily_bullish=True,
+            hourly_close=978.0,
+            hourly_ema20=965.0,
+            five_hour_high=985.0,
+            is_5h_breakout=False,
+            is_hourly_bullish=True,
+            vwap=975.0,
+            vwap_dist_pct=0.51,
+            vwap_angle_deg=48.0,
+            is_vwap_near=True,
+            is_vwap_rising=True,
+            timing_valid=True,
+            timing_message="OK",
+            dist_to_5d_high_pct=1.0,
+            dist_to_5h_high_pct=-0.5,
+            analysis_time_ist="11:00:00",
+        )
+
+        mock_report = MagicMock()
+        mock_report.results = [mock_candidate]
+        mock_report.total_scanned = 1
+
+        mock_opt = St14OptionContract(
+            symbol="TATAMOTORS 29OCT26 1000 CE",
+            underlying_symbol="TATAMOTORS",
+            strike_price=1000.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="OPT_TATA_1000_CE",
+            lot_size=500,
+            ltp=22.0,
+            is_next_month=True,
+        )
+
+        self.strategy.scanner = MagicMock()
+        self.strategy.scanner.run.return_value = mock_report
+
+        with patch("st14_bullish_ce.strategy.check_market_breadth") as mock_breadth, \
+             patch("st14_bullish_ce.strategy.resolve_1otm_ce_contract", return_value=mock_opt), \
+             patch("st14_bullish_ce.strategy.check_breakout_candle_cross") as mock_cross:
+
+            mock_breadth.return_value = (True, {"nifty50_green": True, "banknifty_green": True, "message": "OK"})
+
+            # 1. Tier 1 Hourly Discovery Scan -> Adds candidate to watchlist
+            hourly_res = self.strategy.run_hourly_discovery_scan(target_dt=dt_1100)
+            self.assertEqual(hourly_res["discovered_count"], 1)
+            self.assertEqual(len(hourly_res["candidates"]), 1)
+            self.assertIn("TATAMOTORS", self.strategy.breakout_watchlist)
+            watch_item = self.strategy.breakout_watchlist["TATAMOTORS"]
+            self.assertEqual(watch_item.breakout_candle_high, 985.0)
+            self.assertEqual(watch_item.status, OrderStatus.WAITING_TRIGGER)
+
+            # 2. Tier 2 5-Min Monitor Check - Price still at 982.0 (< 985.0) -> No order
+            mock_cross.return_value = (False, 982.0, "Monitoring below high")
+            check1 = self.strategy.run_5min_trigger_monitor(target_dt=dt_1100)
+            self.assertEqual(check1["triggered_count"], 0)
+            self.assertEqual(check1["orders_placed"], 0)
+            self.assertEqual(watch_item.status, OrderStatus.WAITING_TRIGGER)
+
+            # 3. Tier 2 5-Min Monitor Check - Price breaches high to 987.0 (> 985.0) -> Triggers Super Order!
+            mock_cross.return_value = (True, 987.0, "Breached high")
+            check2 = self.strategy.run_5min_trigger_monitor(target_dt=dt_1100)
+            self.assertEqual(check2["triggered_count"], 1)
+            self.assertEqual(check2["orders_placed"], 1)
+            self.assertEqual(watch_item.status, OrderStatus.ORDER_PLACED)
+            self.assertEqual(len(self.strategy.active_positions), 1)
+
+            # 4. Verify Telemetry
+            telemetry = self.strategy.get_strategy_telemetry()
+            self.assertEqual(telemetry["last_hourly_candidates_count"], 1)
+            self.assertEqual(telemetry["active_positions_count"], 1)
+            self.assertEqual(len(telemetry["breakout_watchlist"]), 1)
+            self.assertEqual(telemetry["breakout_watchlist"][0]["symbol"], "TATAMOTORS")
+
+
+if __name__ == "__main__":
+    unittest.main()
+

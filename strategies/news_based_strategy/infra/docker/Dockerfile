@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Prevent python from writing pyc files and buffering stdout/stderr; configure IST timezone
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src:/app/scanners/scanner_dhan/src \
+    PYTHONPATH=/app/src:/app/scanners/scanner_dhan/src:/app/strategies/st14_bullish_ce/src \
     TZ=Asia/Kolkata
 
 WORKDIR /app
@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY strategies/news_based_strategy/src/ ./src/
 COPY strategies/news_based_strategy/data/ ./data/
 COPY scanners/ ./scanners/
+COPY strategies/st14_bullish_ce/ ./strategies/st14_bullish_ce/
 
 # Ensure data directory exists for persistent SQLite database and runtime files
 RUN mkdir -p /app/data

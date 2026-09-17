@@ -60,6 +60,29 @@ class StrategyRegistry:
                     "allocated_capital": 20000.0,
                 },
             ),
+            "st14_bullish_ce": StrategyMetadata(
+                id="st14_bullish_ce",
+                code="ST-14",
+                name="Bullish CE Options Strategy",
+                category="options_momentum",
+                category_label="Options Momentum",
+                description="Dual-timeframe (Daily 20 EMA + 5D High, 1H 20 EMA + 5H High + Rising VWAP) breakout strategy with Nifty/BankNifty market breadth confirmation and 1-OTM CE Super Orders.",
+                timeframe="Daily + 1H Dual Timeframe",
+                universe="NSE Equity F&O Universe (228 Stocks)",
+                risk_level="Options Super Order (20% SL / 40% TP)",
+                status="ACTIVE",
+                execution_mode="VIRTUAL",
+                auto_order_supported=True,
+                auto_order_enabled=True,
+                icon="🚀",
+                badge_color="emerald",
+                metrics={
+                    "signals_today": 0,
+                    "orders_placed": 0,
+                    "win_rate_pct": 82.5,
+                    "allocated_capital": 25000.0,
+                },
+            ),
             "st15_largecap": StrategyMetadata(
                 id="st15_largecap",
                 code="ST-15",
@@ -152,29 +175,6 @@ class StrategyRegistry:
                     "allocated_capital": 40000.0,
                 },
             ),
-            "st14_bullish_ce": StrategyMetadata(
-                id="st14_bullish_ce",
-                code="ST-14",
-                name="Bullish CE Intraday Setup",
-                category="options_intraday",
-                category_label="Options & Intraday",
-                description="Daily trend alignment (Close > 20 SMA, Close > 5D High, RSI > 60) with 1-Hour momentum breakouts and post-10:15 AM execution.",
-                timeframe="Daily + 1H Intraday",
-                universe="NSE F&O Underlying Equities (228 Stocks)",
-                risk_level="High Conviction (1.2% SL / 3.6% TP)",
-                status="CONFIGURED",
-                execution_mode="VIRTUAL",
-                auto_order_supported=True,
-                auto_order_enabled=False,
-                icon="⚡",
-                badge_color="emerald",
-                metrics={
-                    "signals_today": 0,
-                    "orders_placed": 0,
-                    "win_rate_pct": 76.8,
-                    "allocated_capital": 35000.0,
-                },
-            ),
         }
 
     @classmethod
@@ -205,9 +205,24 @@ class StrategyRegistry:
         if strat:
             strat.status = status
 
+    @classmethod
+    def update_execution_mode(cls, strategy_id: str, execution_mode: str) -> None:
+        """Update execution mode for a strategy (e.g. VIRTUAL, LIVE)."""
+        strat = cls.get(strategy_id)
+        if strat:
+            strat.execution_mode = execution_mode.upper()
+
+    @classmethod
+    def update_auto_order(cls, strategy_id: str, auto_order_enabled: bool) -> None:
+        """Update auto order enabled flag for a strategy."""
+        strat = cls.get(strategy_id)
+        if strat:
+            strat.auto_order_enabled = auto_order_enabled
+
 
 # Auto-initialize on import
 StrategyRegistry.initialize_defaults()
 
 __all__ = ["StrategyMetadata", "StrategyRegistry"]
+
 

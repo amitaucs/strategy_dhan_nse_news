@@ -49,6 +49,34 @@ class ToggleStrategyStatusRequest(BaseModel):
     status: Optional[str] = None
 
 
+class ToggleStrategyModeRequest(BaseModel):
+    mode: Optional[str] = None
+
+
+class ToggleStrategyAutoOrderRequest(BaseModel):
+    auto_order: Optional[bool] = None
+
+
+class ToggleStrategyProductRequest(BaseModel):
+    product_type: Optional[str] = None
+
+
+class St14ExecuteSignalRequest(BaseModel):
+    signal_id: str
+
+
+class St14ConfigUpdateRequest(BaseModel):
+    mode: Optional[str] = None
+    product_type: Optional[str] = None
+    auto_order: Optional[bool] = None
+    capital_per_trade: Optional[float] = None
+    target_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
+    trailing_jump_pts: Optional[float] = None
+    trade_cutoff_time: Optional[str] = None
+    square_off_time: Optional[str] = None
+
+
 __all__ = [
     "AppLoginRequest",
     "PlaceOrderRequest",
@@ -58,5 +86,11 @@ __all__ = [
     "SaveApiKeysRequest",
     "LoadHistoryRequest",
     "ToggleStrategyStatusRequest",
+    "ToggleStrategyModeRequest",
+    "ToggleStrategyAutoOrderRequest",
+    "ToggleStrategyProductRequest",
+    "St14ExecuteSignalRequest",
+    "St14ConfigUpdateRequest",
 ]
+
 

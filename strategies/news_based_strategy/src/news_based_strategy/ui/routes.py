@@ -25,14 +25,20 @@ from news_based_strategy.ui.schemas import (
     LoadHistoryRequest,
     PlaceOrderRequest,
     SaveApiKeysRequest,
+    St14ConfigUpdateRequest,
+    St14ExecuteSignalRequest,
     ToggleAutoOrderRequest,
     ToggleDryRunRequest,
+    ToggleStrategyAutoOrderRequest,
+    ToggleStrategyModeRequest,
+    ToggleStrategyProductRequest,
     ToggleStrategyStatusRequest,
     UpdateTokenRequest,
 )
 from news_based_strategy.core.strategy_registry import StrategyRegistry
 from news_based_strategy.ui.state import DashboardState
 from news_based_strategy.ui.templates import get_dashboard_html, get_login_html
+
 
 logger = logging.getLogger(__name__)
 
@@ -823,11 +829,28 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
             "auto_order_enabled": state.executor.auto_order,
             "execution_mode": "VIRTUAL" if state.executor.dry_run else "LIVE",
         })
-        strat_obj = StrategyRegistry.get("st_news")
-        if strat_obj:
-            strat_obj.status = getattr(state, "strategy_status", "ACTIVE")
-            strat_obj.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
-            strat_obj.auto_order_enabled = state.executor.auto_order
+        strat_news = StrategyRegistry.get("st_news")
+        if strat_news:
+            strat_news.status = getattr(state, "strategy_status", "ACTIVE")
+            strat_news.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
+            strat_news.auto_order_enabled = state.executor.auto_order
+
+        # Update live telemetry metrics for ST-14 Bullish CE strategy
+        if hasattr(state, "st14_strategy") and state.st14_strategy:
+            st14_telem = state.st14_strategy.get_strategy_telemetry()
+            StrategyRegistry.update_metrics("st14_bullish_ce", {
+                "signals_today": len(st14_telem.get("recent_signals", [])),
+                "orders_placed": len(st14_telem.get("closed_positions", [])) + st14_telem.get("active_positions_count", 0),
+                "allocated_capital": st14_telem.get("capital_per_trade", 25000.0),
+                "auto_order_enabled": state.st14_strategy.config.auto_order,
+                "execution_mode": state.st14_strategy.config.mode.value,
+            })
+            strat_st14 = StrategyRegistry.get("st14_bullish_ce")
+            if strat_st14:
+                strat_st14.status = state.st14_strategy.config.status
+                strat_st14.execution_mode = state.st14_strategy.config.mode.value
+                strat_st14.auto_order_enabled = state.st14_strategy.config.auto_order
+
         return StrategyRegistry.list_all()
 
     @app.get("/api/strategies/{strategy_id}")
@@ -835,16 +858,32 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         strat = StrategyRegistry.get(strategy_id)
         if not strat:
             raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
+        
+        resp = strat.to_dict()
         if strategy_id == "st_news":
             strat.status = getattr(state, "strategy_status", "ACTIVE")
             strat.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
             strat.auto_order_enabled = state.executor.auto_order
-            strat.metrics.update({
+            resp["status"] = strat.status
+            resp["execution_mode"] = strat.execution_mode
+            resp["auto_order_enabled"] = strat.auto_order_enabled
+            resp["metrics"].update({
                 "signals_today": len(state.feed_items),
                 "orders_placed": state.executor.get_daily_order_count(),
                 "allocated_capital": state.executor.capital_per_trade,
             })
-        return strat.to_dict()
+        elif strategy_id == "st14_bullish_ce" and hasattr(state, "st14_strategy") and state.st14_strategy:
+            telem = state.st14_strategy.get_strategy_telemetry()
+            resp["status"] = state.st14_strategy.config.status
+            resp["execution_mode"] = state.st14_strategy.config.mode.value
+            resp["auto_order_enabled"] = state.st14_strategy.config.auto_order
+            resp["telemetry"] = telem
+            resp["metrics"].update({
+                "signals_today": len(telem.get("recent_signals", [])),
+                "orders_placed": len(telem.get("closed_positions", [])) + telem.get("active_positions_count", 0),
+                "allocated_capital": telem.get("capital_per_trade", 25000.0),
+            })
+        return resp
 
     @app.post("/api/strategies/{strategy_id}/toggle-status")
     async def toggle_strategy_status_endpoint(strategy_id: str, payload: Optional[ToggleStrategyStatusRequest] = None):
@@ -856,7 +895,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
             target_status = norm_status
 
         strat = StrategyRegistry.get(strategy_id)
-        if not strat and strategy_id != "st_news":
+        if not strat and strategy_id not in ("st_news", "st14_bullish_ce"):
             raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
 
         new_status = state.toggle_strategy_status(strategy_id=strategy_id, new_status=target_status)
@@ -873,5 +912,193 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
             "message": f"Strategy {strategy_id} status updated to {new_status}",
         }
 
+    @app.post("/api/strategies/{strategy_id}/toggle-mode")
+    async def toggle_strategy_mode_endpoint(strategy_id: str, payload: Optional[ToggleStrategyModeRequest] = None):
+        target_mode = payload.mode if payload else None
+        if target_mode is not None:
+            target_mode = target_mode.strip().upper()
+            if target_mode not in ("VIRTUAL", "LIVE"):
+                raise HTTPException(status_code=400, detail="Invalid mode. Allowed: VIRTUAL, LIVE")
+
+        new_mode = state.toggle_strategy_mode(strategy_id=strategy_id, mode=target_mode)
+        await state.broadcast_event("STRATEGY_MODE_TOGGLE", {
+            "strategy_id": strategy_id,
+            "mode": new_mode,
+        })
+        return {
+            "success": True,
+            "strategy_id": strategy_id,
+            "mode": new_mode,
+            "message": f"Strategy {strategy_id} execution mode set to {new_mode}",
+        }
+
+    @app.post("/api/strategies/{strategy_id}/toggle-auto-order")
+    async def toggle_strategy_auto_order_endpoint(strategy_id: str, payload: Optional[ToggleStrategyAutoOrderRequest] = None):
+        target_val = payload.auto_order if payload else None
+        new_val = state.toggle_strategy_auto_order(strategy_id=strategy_id, enabled=target_val)
+        await state.broadcast_event("STRATEGY_AUTO_ORDER_TOGGLE", {
+            "strategy_id": strategy_id,
+            "auto_order": new_val,
+        })
+        return {
+            "success": True,
+            "strategy_id": strategy_id,
+            "auto_order": new_val,
+            "message": f"Strategy {strategy_id} auto-order set to {new_val}",
+        }
+
+    @app.post("/api/strategies/{strategy_id}/toggle-product")
+    async def toggle_strategy_product_endpoint(strategy_id: str, payload: Optional[ToggleStrategyProductRequest] = None):
+        target_prod = payload.product_type if payload else None
+        new_prod = state.toggle_strategy_product_type(strategy_id=strategy_id, product_type=target_prod)
+        return {
+            "success": True,
+            "strategy_id": strategy_id,
+            "product_type": new_prod,
+            "message": f"Strategy {strategy_id} product type set to {new_prod}",
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/scan")
+    async def run_st14_scan_endpoint(bypass_timing: bool = False):
+        """Execute real-time ST-14 full iteration (hourly scan + trigger check)."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        res = await asyncio.to_thread(state.run_st14_scan, bypass_timing=bypass_timing)
+        await state.broadcast_event("ST14_UPDATE", {
+            "type": "FULL_SCAN_COMPLETED",
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        })
+        return {
+            "success": True,
+            "result": res,
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/scan-hourly")
+    async def run_st14_hourly_scan_endpoint(bypass_timing: bool = False):
+        """Execute Tier 1: 1-Hour Discovery Scanner on demand."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        res = await asyncio.to_thread(state.run_st14_hourly_scan, bypass_timing=bypass_timing)
+        await state.broadcast_event("ST14_UPDATE", {
+            "type": "HOURLY_DISCOVERY_SCAN",
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        })
+        return {
+            "success": True,
+            "result": res,
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/check-triggers")
+    async def run_st14_trigger_check_endpoint(bypass_timing: bool = False):
+        """Execute Tier 2: 5-Minute Breakout Trigger Poller on demand."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        res = await asyncio.to_thread(state.run_st14_5min_check, bypass_timing=bypass_timing)
+        await state.broadcast_event("ST14_UPDATE", {
+            "type": "5MIN_TRIGGER_MONITOR",
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        })
+        return {
+            "success": True,
+            "result": res,
+            "telemetry": state.st14_strategy.get_strategy_telemetry(),
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/execute")
+    async def execute_st14_signal_endpoint(req: St14ExecuteSignalRequest):
+        """Manually execute a confirmed ST-14 signal."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        target_signal = next((s for s in state.st14_strategy.signals_history if s.signal_id == req.signal_id or s.symbol == req.signal_id), None)
+        if not target_signal and req.signal_id in state.st14_strategy.breakout_watchlist:
+            watch_item = state.st14_strategy.breakout_watchlist[req.signal_id]
+            from st14_bullish_ce.models import St14TradeSignal
+            target_signal = St14TradeSignal(
+                signal_id=f"MANUAL_ST14_{watch_item.symbol}_{int(datetime.now().timestamp())}",
+                symbol=watch_item.symbol,
+                underlying_sec_id=watch_item.security_id,
+                underlying_ltp=watch_item.current_ltp,
+                breakout_candle_high=watch_item.breakout_candle_high,
+                daily_ema20=watch_item.daily_ema20,
+                hourly_ema20=watch_item.hourly_ema20,
+                vwap=watch_item.vwap,
+                vwap_dist_pct=watch_item.distance_pct,
+                vwap_angle_deg=45.0,
+                status=watch_item.status,
+                is_confirmed=True,
+                option_contract=watch_item.option_contract,
+                order_levels=watch_item.order_levels,
+            )
+            state.st14_strategy.signals_history.append(target_signal)
+            watch_item.status = target_signal.status
+
+        if not target_signal:
+            raise HTTPException(status_code=404, detail=f"Signal or Watchlist candidate '{req.signal_id}' not found")
+        
+        state.sync_dhan_credentials()
+        success, msg, pos = state.st14_strategy.execute_order(target_signal)
+        if success and target_signal.symbol in state.st14_strategy.breakout_watchlist:
+            state.st14_strategy.breakout_watchlist[target_signal.symbol].status = target_signal.status
+        return {
+            "success": success,
+            "message": msg,
+            "position": pos.to_dict() if pos else None,
+            "signal": target_signal.to_dict(),
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/square-off")
+    async def square_off_st14_positions_endpoint():
+        """Emergency square-off for all open ST-14 positions."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        closed = state.st14_strategy.emergency_square_off_all()
+        return {
+            "success": True,
+            "closed_count": len(closed),
+            "closed_positions": [p.to_dict() for p in closed],
+            "message": f"Successfully squared off {len(closed)} open ST-14 positions",
+        }
+
+    @app.post("/api/strategies/st14_bullish_ce/config")
+    async def update_st14_config_endpoint(req: St14ConfigUpdateRequest):
+        """Update ST-14 parameters and risk limits."""
+        if not hasattr(state, "st14_strategy") or not state.st14_strategy:
+            raise HTTPException(status_code=500, detail="ST-14 Strategy engine not initialized")
+        
+        cfg = state.st14_strategy.config
+        if req.capital_per_trade is not None and req.capital_per_trade > 0:
+            cfg.capital_per_trade = req.capital_per_trade
+            state.storage.set_setting("st14_capital", str(req.capital_per_trade))
+        if req.target_profit_pct is not None and req.target_profit_pct > 0:
+            cfg.target_profit_pct = req.target_profit_pct
+        if req.stop_loss_pct is not None and req.stop_loss_pct > 0:
+            cfg.stop_loss_pct = req.stop_loss_pct
+        if req.trailing_jump_pts is not None and req.trailing_jump_pts >= 0:
+            cfg.trailing_jump_pts = req.trailing_jump_pts
+        if req.trade_cutoff_time is not None:
+            cfg.trade_cutoff_time = req.trade_cutoff_time
+        if req.square_off_time is not None:
+            cfg.square_off_time = req.square_off_time
+        if req.mode is not None:
+            state.toggle_strategy_mode("st14_bullish_ce", req.mode)
+        if req.product_type is not None:
+            state.toggle_strategy_product_type("st14_bullish_ce", req.product_type)
+        if req.auto_order is not None:
+            state.toggle_strategy_auto_order("st14_bullish_ce", req.auto_order)
+
+        return {
+            "success": True,
+            "config": cfg.to_dict(),
+            "message": "ST-14 configuration updated successfully",
+        }
+
 
 __all__ = ["register_routes", "COOKIE_NAME"]
+

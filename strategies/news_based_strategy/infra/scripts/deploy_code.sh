@@ -123,7 +123,7 @@ tar \
   --exclude='*terraform*' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
-  -czf "$BUNDLE_TMP" scanners strategies/news_based_strategy
+  -czf "$BUNDLE_TMP" scanners strategies/news_based_strategy strategies/st14_bullish_ce
 
 BUNDLE_SIZE=$(du -h "$BUNDLE_TMP" | cut -f1)
 echo "✅ Archive created ($BUNDLE_SIZE)."

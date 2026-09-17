@@ -602,8 +602,208 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </main>
   </div> <!-- /workspace-st-news -->
 
-  <!-- WORKSPACE 2: MODULAR STRATEGY WORKSPACE (For ST-15, ST-08, ST-01, ST-OB) -->
+  <!-- WORKSPACE 2: ST-14 BULLISH CE OPTIONS STRATEGY WORKSPACE -->
+  <!-- WORKSPACE 2: ST-14 BULLISH CE OPTIONS STRATEGY WORKSPACE -->
+  <div id="workspace-st14" class="strategy-workspace-pane hidden max-w-[1600px] mx-auto px-4 py-3 w-full space-y-3 flex-1">
+    
+    <!-- Strategy Header & Status Banner (Ultra-Compact) -->
+    <div class="bg-[#111827] border border-gray-800 rounded-xl px-4 py-2.5 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2.5 flex-wrap min-w-0">
+        <span class="text-xl">🚀</span>
+        <span class="px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">ST-14</span>
+        <h2 class="text-sm font-bold text-white tracking-wide">Bullish CE Options Strategy</h2>
+        <span id="st14-status-pill" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+          <span id="st14-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="st14-status-txt">ACTIVE</span>
+        </span>
+        <span class="hidden xl:inline text-gray-700">|</span>
+        <p class="text-[11px] text-gray-400 truncate max-w-xl hidden lg:block">
+          Dual-frequency: 1-Hr Discovery (10:15–14:00) across 228 F&amp;O stocks + 5-Min Trigger Monitoring (LTP &gt; Breakout High) with 1-OTM CE Super Orders (+40% TP, -20% SL, 2.0 pts trail).
+        </p>
+      </div>
+
+      <!-- Strategy-Specific Controls Group -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button id="st14-btn-product" onclick="toggleSt14Product()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1 shadow bg-cyan-950/70 text-cyan-300 hover:bg-cyan-900 border border-cyan-500/40 active:scale-95 cursor-pointer" title="Toggle between INTRADAY (MIS with 3:00 PM square-off) and DELIVERY (MARGIN carry-forward)">
+          <span id="st14-btn-product-txt">⏰ INTRADAY</span>
+        </button>
+        <button id="st14-btn-trigger-check" onclick="runSt14TriggerCheckNow()" class="bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 font-bold text-xs px-2.5 py-1.5 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger immediate 5-minute check on all watchlisted breakout candidates">
+          <span id="st14-trigger-btn-spinner" class="hidden animate-spin">🔄</span>
+          <span>🎯 Check Triggers (5m)</span>
+        </button>
+        <button id="st14-btn-hourly-scan" onclick="runSt14HourlyScanNow()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger full 1-Hour Discovery Scanner across the 228 F&O universe">
+          <span id="st14-hourly-btn-spinner" class="hidden animate-spin">🔄</span>
+          <span>⚡ Run 1-Hr Scan</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Live Dual-Frequency Radar & Telemetry + Parameter Bar (Unified Compact) -->
+    <div class="bg-gradient-to-r from-[#0d1527] via-[#111827] to-[#0d1527] border border-gray-800 rounded-xl p-3 px-4 shadow-md space-y-2.5">
+      
+      <!-- Tier 1: Real-Time Monitoring Telemetry Strip -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center divide-y lg:divide-y-0 lg:divide-x divide-gray-800/80">
+        
+        <!-- Telemetry Item 1: Engine Radar Status -->
+        <div class="flex items-center gap-2.5 pr-2">
+          <div class="relative flex h-3 w-3 items-center justify-center flex-shrink-0">
+            <span id="st14-radar-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span id="st14-radar-dot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </div>
+          <div>
+            <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Dual-Frequency Radar</div>
+            <div id="st14-radar-status-text" class="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1.5 leading-none mt-0.5">
+              ACTIVE DUAL LOOP
+            </div>
+            <div id="st14-radar-subtext" class="text-[10px] text-gray-500 font-mono mt-0.5">1h Discovery + 5m Poller</div>
+          </div>
+        </div>
+
+        <!-- Telemetry Item 2: Tier 1 - 1-Hour Discovery Scanner -->
+        <div class="pt-2 sm:pt-0 lg:px-3 space-y-0.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">⚡ Tier 1: 1-Hr Scanner</span>
+            <span id="st14-hourly-count-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-800/60">0 Discovered</span>
+          </div>
+          <div class="flex items-center justify-between text-xs font-mono">
+            <span class="text-gray-400 text-[11px]">Last: <span id="st14-hourly-last-time" class="text-white font-semibold">-</span></span>
+            <span class="text-gray-400 text-[11px]">Next: <span id="st14-hourly-next-time" class="text-indigo-300 font-semibold">-</span></span>
+          </div>
+          <div class="text-[9px] text-gray-500 font-mono">10:15, 11:15, 12:15, 13:15, 14:00</div>
+        </div>
+
+        <!-- Telemetry Item 3: Tier 2 - 5-Min Trigger Poller -->
+        <div class="pt-2 sm:pt-0 lg:px-3 space-y-0.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">🎯 Tier 2: 5-Min Poller</span>
+            <span id="st14-watchlist-count-badge" class="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-800/60">0 Watching</span>
+          </div>
+          <div class="flex items-center justify-between text-xs font-mono">
+            <span class="text-gray-400 text-[11px]">Last: <span id="st14-5min-last-time" class="text-white font-semibold">-</span></span>
+            <span class="text-gray-400 text-[11px]">Next: <span id="st14-5min-next-timer" class="text-amber-300 font-semibold">~5m</span></span>
+          </div>
+          <div class="text-[9px] text-gray-500 font-mono">Trigger: LTP &gt; Breakout High</div>
+        </div>
+
+        <!-- Telemetry Item 4: Orders & Capacity -->
+        <div class="pt-2 sm:pt-0 lg:pl-3 space-y-0.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Super Orders</span>
+            <span id="st14-mode-badge" class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">VIRTUAL</span>
+          </div>
+          <div class="flex items-center justify-between text-xs font-mono">
+            <span class="text-gray-400 text-[11px]">Slots: <span id="st14-capacity-text" class="text-white font-semibold">0 / 5 Slots</span></span>
+            <span class="text-gray-400 text-[11px]">Auto: <span id="st14-auto-order-text" class="text-emerald-400 font-semibold">ON</span></span>
+          </div>
+          <div class="text-[9px] text-gray-500 font-mono">Cutoff: 14:00 | Squaring: 15:00</div>
+        </div>
+
+      </div>
+
+      <!-- Tier 2: Parameter & Breadth Micro-Pills Bar -->
+      <div class="pt-2 border-t border-gray-800/60 grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <!-- Breadth Micro Card -->
+        <div id="st14-card-breadth" class="bg-[#0b0f19]/60 border border-gray-800/70 px-2.5 py-1.5 rounded-lg">
+          <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Macro Breadth</div>
+          <div class="text-[11px] font-bold flex items-center gap-1 truncate mt-0.5">
+            <span id="st14-breadth-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0"></span>
+            <span id="st14-breadth-title" class="text-emerald-400 truncate">NIFTY &amp; BANKNIFTY GREEN</span>
+          </div>
+          <div id="st14-card-breadth-detail" class="text-[9px] text-gray-500 font-mono truncate">Both indices positive</div>
+        </div>
+
+        <!-- Option Selection Micro Card -->
+        <div class="bg-[#0b0f19]/60 border border-gray-800/70 px-2.5 py-1.5 rounded-lg">
+          <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Option Selection</div>
+          <div class="text-[11px] font-bold text-blue-400 font-mono truncate mt-0.5">1-OTM Call (CE)</div>
+          <div id="st14-card-expiry-rule" class="text-[9px] text-gray-400 font-mono truncate">Date &le; 15th = Curr Month</div>
+        </div>
+
+        <!-- Super Order Bracket Micro Card -->
+        <div class="bg-[#0b0f19]/60 border border-gray-800/70 px-2.5 py-1.5 rounded-lg">
+          <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Order Bracket</div>
+          <div class="text-[11px] font-bold text-emerald-400 font-mono truncate mt-0.5">+40% TP / -20% SL</div>
+          <div class="text-[9px] text-gray-400 font-mono truncate">Trailing: 2.0 Pts Jump</div>
+        </div>
+
+        <!-- Capital Allocation Micro Card -->
+        <div class="bg-[#0b0f19]/60 border border-gray-800/70 px-2.5 py-1.5 rounded-lg">
+          <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Capital Allocation</div>
+          <div id="st14-card-capital" class="text-[11px] font-bold text-emerald-400 font-mono truncate mt-0.5">₹25,000 / trade</div>
+          <div class="text-[9px] text-gray-400 font-mono truncate">Max 5 Open Positions</div>
+        </div>
+
+        <!-- Execution Timing Micro Card -->
+        <div class="bg-[#0b0f19]/60 border border-gray-800/70 px-2.5 py-1.5 rounded-lg">
+          <div class="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Timing &amp; Cutoff</div>
+          <div class="text-[11px] font-bold text-amber-400 font-mono truncate mt-0.5">10:15 - 14:00 IST</div>
+          <div class="text-[9px] text-gray-400 font-mono truncate">15:00 Square-Off</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Active Breakout Candidates Watchlist (Tier 2 Polling Queue / Search Results) -->
+    <div class="bg-[#111827] border border-gray-800 rounded-xl p-4 shadow-md space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-sm font-bold text-white">🎯 Active Breakout Watchlist (Tier 2 - 5-Min Trigger Poller Queue)</span>
+          <span id="st14-watchlist-table-badge" class="text-xs font-mono text-amber-300 bg-amber-950/60 border border-amber-800/50 px-2.5 py-0.5 rounded-full">0 Candidates</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="runSt14TriggerCheckNow()" class="text-xs font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/60 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow">
+            <span>🎯 Check Triggers Now</span>
+          </button>
+        </div>
+      </div>
+      <p class="text-[11px] text-gray-400 leading-normal">
+        Discovered by the 1-hour scanner. Monitored every 5 minutes during market hours. Automatically executes 1-OTM Call Option Super Order when live price crosses Breakout Candle High (LTP &gt; Breakout High).
+      </p>
+
+      <div id="st14-watchlist-container" class="overflow-x-auto">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Active Positions / Super Orders Section -->
+    <div class="bg-[#111827] border border-gray-800 rounded-xl p-4 shadow-md space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold text-white">📦 ST-14 Active Option Positions &amp; Super Orders</span>
+          <span id="st14-positions-count-badge" class="text-xs font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-2.5 py-0.5 rounded-full">0 Open Positions</span>
+        </div>
+        <div class="text-xs font-mono text-gray-400">
+          Unrealized P&amp;L: <span id="st14-total-pnl-val" class="font-bold text-emerald-400">₹0.00</span>
+        </div>
+      </div>
+
+      <div id="st14-positions-container" class="overflow-x-auto">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Historical Signals Section -->
+    <div class="bg-[#111827] border border-gray-800 rounded-xl p-4 shadow-md space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold text-white">⚡ ST-14 Historical Breakout Signals &amp; Candidates</span>
+          <span id="st14-signals-count-badge" class="text-xs font-mono text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2.5 py-0.5 rounded-full">0 Candidates</span>
+        </div>
+        <button onclick="runSt14HourlyScanNow()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
+          <span>🔄 Refresh Scan</span>
+        </button>
+      </div>
+
+      <div id="st14-signals-container" class="overflow-x-auto">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+  </div> <!-- /workspace-st14 -->
+
+  <!-- WORKSPACE 3: MODULAR STRATEGY WORKSPACE (For ST-15, ST-08, ST-01, ST-OB) -->
   <div id="workspace-st-modular" class="strategy-workspace-pane hidden max-w-[1600px] mx-auto px-6 py-6 w-full space-y-6 flex-1">
+
     
     <!-- Strategy Header & Status Banner -->
     <div class="bg-[#111827] border border-gray-800 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1692,16 +1892,28 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
       showToast('Initiating intraday square-off sequence...', '🛑');
       try {
-        const res = await fetch('/api/trades/square-off', { method: 'POST' });
-        if (res.ok) {
-          const data = await res.json();
-          const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
-          const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
-          showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
-          fetchFeed();
+        if (activeStrategyId === 'st14_bullish_ce') {
+          const res = await fetch('/api/strategies/st14_bullish_ce/square-off', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            showToast(`🛑 ${data.message || 'ST-14 positions squared off!'}`, '🛑');
+            loadSt14Data();
+          } else {
+            const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
+            showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+          }
         } else {
-          const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
-          showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+          const res = await fetch('/api/trades/square-off', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            const closedCount = (data.result && data.result.closed_positions) ? data.result.closed_positions.length : 0;
+            const cancelledCount = (data.result && data.result.cancelled_orders) ? data.result.cancelled_orders.length : 0;
+            showToast(`Square-off completed: ${cancelledCount} orders cancelled, ${closedCount} positions closed.`, '✅');
+            fetchFeed();
+          } else {
+            const err = await res.json().catch(() => ({ detail: 'Square-off failed' }));
+            showToast(`Square-off error: ${err.detail || 'Failed'}`, '❌');
+          }
         }
       } catch (err) {
         showToast('Failed to trigger square-off request', '❌');
@@ -2324,23 +2536,35 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
-    async function toggleStrategyEngine(strategyId = 'st_news', targetStatus = null) {
+    async function toggleStrategyEngine(strategyId = null, targetStatus = null) {
+      const stratId = strategyId || activeStrategyId || 'st_news';
       try {
-        const nextStatus = targetStatus || (isStrategyEngineActive ? 'PAUSED' : 'ACTIVE');
-        const res = await fetch(`/api/strategies/${strategyId}/toggle-status`, {
+        const currentActive = (stratId === 'st14_bullish_ce') ? isSt14EngineActive : isStrategyEngineActive;
+        const nextStatus = targetStatus || (currentActive ? 'PAUSED' : 'ACTIVE');
+        const res = await fetch(`/api/strategies/${stratId}/toggle-status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: nextStatus })
         });
         if (res.ok) {
           const data = await res.json();
-          isStrategyEngineActive = (data.status === 'ACTIVE');
-          updateStrategyEngineUI();
+          if (stratId === 'st_news') {
+            isStrategyEngineActive = (data.status === 'ACTIVE');
+            updateStrategyEngineUI();
+          } else if (stratId === 'st14_bullish_ce') {
+            isSt14EngineActive = (data.status === 'ACTIVE');
+            if (activeStrategyId === 'st14_bullish_ce') {
+              isStrategyEngineActive = isSt14EngineActive;
+              updateStrategyEngineUI();
+            }
+            loadSt14Data();
+          }
           loadStrategies();
-          if (isStrategyEngineActive) {
-            showToast('🟢 ST-NEWS Catalyst Engine Started! Background radar active.', '⚡');
+          const stratName = (stratId === 'st14_bullish_ce') ? 'ST-14 Bullish CE' : 'ST-NEWS Catalyst';
+          if (data.status === 'ACTIVE') {
+            showToast(`🟢 ${stratName} Engine Started! Active scanning.`, '⚡');
           } else {
-            showToast('⏸️ ST-NEWS Catalyst Engine Paused. Polling and AI grading suspended.', '⏸️');
+            showToast(`⏸️ ${stratName} Engine Paused. Execution suspended.`, '⏸️');
           }
         } else {
           showToast('Failed to toggle Strategy Status', '❌');
@@ -2358,8 +2582,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
       if (!btn || !label || !indicator) return;
 
-      if (isDryRun) {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+      const currentDryRun = (activeStrategyId === 'st14_bullish_ce') ? isSt14DryRun : isDryRun;
+      const currentActive = (activeStrategyId === 'st14_bullish_ce') ? isSt14EngineActive : isStrategyEngineActive;
+
+      if (currentDryRun) {
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'VIRTUAL';
         indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
         if (modeText) {
@@ -2367,7 +2594,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           modeText.className = 'text-amber-400 font-mono font-semibold';
         }
       } else {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'LIVE';
         indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
         if (modeText) {
@@ -2377,13 +2604,58 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
-    async function toggleExecutionMode() {
-      if (!isStrategyEngineActive) {
-        showToast('⚠️ Strategy Engine is PAUSED. Click [ENGINE: PAUSED] to start strategy first.', '⚠️');
+    async function toggleExecutionMode(strategyId = null) {
+      const stratId = strategyId || activeStrategyId || 'st_news';
+      const currentActive = (stratId === 'st14_bullish_ce') ? isSt14EngineActive : isStrategyEngineActive;
+      if (!currentActive) {
+        showToast('⚠️ Strategy Engine is PAUSED. Start strategy engine first.', '⚠️');
         return;
       }
-      const targetDryRun = !isDryRun;
 
+      if (stratId === 'st14_bullish_ce') {
+        const targetMode = isSt14DryRun ? 'LIVE' : 'VIRTUAL';
+        if (targetMode === 'LIVE') {
+          try {
+            const res = await fetch('/api/settings/token');
+            if (res.ok) {
+              const data = await res.json();
+              if (!data.is_configured || data.is_expired) {
+                showToast('⚠️ Cannot enable Live Trading: Dhan token is missing or expired!', '⚠️');
+                openTokenModal();
+                return;
+              }
+            }
+          } catch (e) {}
+        }
+        try {
+          const res = await fetch(`/api/strategies/${stratId}/toggle-mode`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: targetMode })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            isSt14DryRun = (data.mode === 'VIRTUAL');
+            if (activeStrategyId === 'st14_bullish_ce') {
+              isDryRun = isSt14DryRun;
+              updateExecutionModeUI();
+            }
+            loadSt14Data();
+            loadStrategies();
+            if (!isSt14DryRun) {
+              showToast('🚨 ST-14 LIVE TRADING ENABLED! Real Dhan Super Orders will be placed.', '⚡');
+            } else {
+              showToast('🛡️ ST-14 switched to VIRTUAL mode (Paper Trading).', 'ℹ️');
+            }
+          }
+        } catch (err) {
+          showToast('Failed to toggle Execution Mode', '❌');
+        }
+        return;
+      }
+
+      // ST-NEWS Mode toggle
+      const targetDryRun = !isDryRun;
       if (!targetDryRun) {
         try {
           const res = await fetch('/api/settings/token');
@@ -2408,6 +2680,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           const data = await res.json();
           isDryRun = data.dry_run;
           updateExecutionModeUI();
+          loadStrategies();
           if (!isDryRun) {
             showToast('🚨 LIVE TRADING ENABLED! Real Dhan market orders will be placed.', '⚡');
           } else {
@@ -2420,6 +2693,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         showToast('Failed to toggle Execution Mode', '❌');
       }
     }
+
 
     let lastPolledTimestamp = Date.now();
     let lastKnownMarketOpen = false;
@@ -2652,22 +2926,54 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       
       if (!btn || !label || !indicator) return;
 
-      if (isAutoOrder) {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+      const currentAuto = (activeStrategyId === 'st14_bullish_ce') ? isSt14AutoOrder : isAutoOrder;
+      const currentActive = (activeStrategyId === 'st14_bullish_ce') ? isSt14EngineActive : isStrategyEngineActive;
+
+      if (currentAuto) {
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'ENABLED (Auto-Place)';
         indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
       } else {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'MANUAL (Prompt Approval)';
         indicator.className = 'w-2 h-2 rounded-full bg-amber-200';
       }
     }
 
-    async function toggleAutoOrder() {
-      if (!isStrategyEngineActive) {
-        showToast('⚠️ Strategy Engine is PAUSED. Click [ENGINE: PAUSED] to start strategy first.', '⚠️');
+    async function toggleAutoOrder(strategyId = null) {
+      const stratId = strategyId || activeStrategyId || 'st_news';
+      const currentActive = (stratId === 'st14_bullish_ce') ? isSt14EngineActive : isStrategyEngineActive;
+      if (!currentActive) {
+        showToast('⚠️ Strategy Engine is PAUSED. Start strategy engine first.', '⚠️');
         return;
       }
+
+      if (stratId === 'st14_bullish_ce') {
+        const newStatus = !isSt14AutoOrder;
+        try {
+          const res = await fetch(`/api/strategies/${stratId}/toggle-auto-order`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_order: newStatus })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            isSt14AutoOrder = data.auto_order;
+            if (activeStrategyId === 'st14_bullish_ce') {
+              isAutoOrder = isSt14AutoOrder;
+              updateAutoOrderUI();
+            }
+            loadSt14Data();
+            loadStrategies();
+            showToast(`ST-14 Auto-Order set to: ${isSt14AutoOrder ? 'ENABLED (Auto Super Orders)' : 'MANUAL APPROVAL'}`, '⚙️');
+          }
+        } catch (err) {
+          showToast('Failed to toggle Auto-Order', '❌');
+        }
+        return;
+      }
+
+      // ST-NEWS Auto-Order toggle
       try {
         const newStatus = !isAutoOrder;
         const res = await fetch('/api/toggle-auto-order', {
@@ -2679,6 +2985,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           const data = await res.json();
           isAutoOrder = data.auto_order;
           updateAutoOrderUI();
+          loadStrategies();
           showToast(`Auto-Order set to: ${isAutoOrder ? 'ENABLED (Auto-Place)' : 'MANUAL APPROVAL'}`, '⚙️');
           fetchFeed();
         }
@@ -2686,6 +2993,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         showToast('Failed to toggle Auto-Order', '❌');
       }
     }
+
 
     function setFilter(filter) {
       currentFilter = filter || 'ALL';
@@ -3444,6 +3752,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               badge.classList.add('ring-2', ringColor);
               setTimeout(() => badge.classList.remove('ring-2', ringColor), 1200);
             }
+          } else if (payload.type === 'ST14_UPDATE') {
+            if (activeStrategyId === 'st14_bullish_ce') {
+              loadSt14Data();
+            }
+            if (payload.data && payload.data.orders_placed > 0) {
+              synth.playOrderChime();
+              showToast(`🎯 ST-14 Trigger! ${payload.data.orders_placed} Super Order(s) dispatched.`, '🚀');
+            }
           }
         } catch (e) {}
       };
@@ -3580,6 +3896,523 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }).join('');
     }
 
+    let isSt14EngineActive = true;
+    let isSt14DryRun = true;
+    let isSt14AutoOrder = true;
+    let st14ProductType = 'INTRADAY';
+    let st14Telemetry = null;
+
+    async function toggleSt14Product() {
+      const targetProd = (st14ProductType === 'INTRADAY') ? 'DELIVERY' : 'INTRADAY';
+      try {
+        const res = await fetch('/api/strategies/st14_bullish_ce/toggle-product', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_type: targetProd })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          st14ProductType = data.product_type;
+          loadSt14Data();
+          showToast(`ST-14 Product set to: ${st14ProductType}`, '📦');
+        }
+      } catch (e) {
+        showToast('Failed to update product type', '❌');
+      }
+    }
+
+    async function runSt14HourlyScanNow() {
+      const spinner = document.getElementById('st14-hourly-btn-spinner');
+      if (spinner) spinner.classList.remove('hidden');
+      try {
+        showToast('⚡ Running ST-14 1-Hour Discovery Scanner across 228 F&O universe...', '🔍');
+        const res = await fetch('/api/strategies/st14_bullish_ce/scan-hourly', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const qCount = data.result && data.result.signals ? data.result.signals.length : 0;
+          const ordCount = data.result && data.result.orders_placed ? data.result.orders_placed : 0;
+          showToast(`✅ ST-14 Discovery Scan completed: ${qCount} breakout candidates added to watchlist! (${ordCount} orders placed)`, '🎯');
+          loadSt14Data();
+        } else {
+          showToast('Failed to run ST-14 hourly scan', '❌');
+        }
+      } catch (e) {
+        showToast('Error during ST-14 hourly scan execution', '❌');
+      } finally {
+        if (spinner) spinner.classList.add('hidden');
+      }
+    }
+
+    async function runSt14TriggerCheckNow() {
+      const spinner = document.getElementById('st14-trigger-btn-spinner');
+      if (spinner) spinner.classList.remove('hidden');
+      try {
+        showToast('🎯 Polling ST-14 Breakout Watchlist (5-Minute Trigger Check)...', '🔍');
+        const res = await fetch('/api/strategies/st14_bullish_ce/check-triggers', { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          const trgCount = data.result && data.result.triggered !== undefined ? data.result.triggered : 0;
+          const ordCount = data.result && data.result.orders_placed ? data.result.orders_placed : 0;
+          showToast(`🎯 ST-14 Trigger Check completed: ${trgCount} breached, ${ordCount} orders placed!`, '⚡');
+          loadSt14Data();
+        } else {
+          showToast('Failed to run ST-14 trigger check', '❌');
+        }
+      } catch (e) {
+        showToast('Error during ST-14 trigger check execution', '❌');
+      } finally {
+        if (spinner) spinner.classList.add('hidden');
+      }
+    }
+
+    async function executeSt14Signal(signalId) {
+      if (!confirm(`Execute Super Order for candidate ${signalId}?`)) return;
+      try {
+        const res = await fetch('/api/strategies/st14_bullish_ce/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signal_id: signalId })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            showToast(`🚀 ${data.message}`, '⚡');
+          } else {
+            showToast(`❌ ${data.message}`, '❌');
+          }
+          loadSt14Data();
+        } else {
+          showToast('Failed to execute ST-14 signal', '❌');
+        }
+      } catch (e) {
+        showToast('Error executing ST-14 signal', '❌');
+      }
+    }
+
+    function getNextHourlyScanTime() {
+      try {
+        const now = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const istDate = new Date(utc + istOffset);
+        const currentMins = istDate.getHours() * 60 + istDate.getMinutes();
+        const schedules = [
+          { mins: 10 * 60 + 15, label: '10:15 IST' },
+          { mins: 11 * 60 + 15, label: '11:15 IST' },
+          { mins: 12 * 60 + 15, label: '12:15 IST' },
+          { mins: 13 * 60 + 15, label: '13:15 IST' },
+          { mins: 14 * 60 + 0,  label: '14:00 IST' },
+        ];
+        for (const s of schedules) {
+          if (currentMins < s.mins) return s.label;
+        }
+        return 'Tomorrow 10:15 IST';
+      } catch (e) {
+        return '10:15 IST';
+      }
+    }
+
+    function renderSt14RadarTelemetry(telemetry) {
+      const isMarketOpen = computeMarketStatusClient();
+      const radarStatusText = document.getElementById('st14-radar-status-text');
+      const radarSubtext = document.getElementById('st14-radar-subtext');
+      const radarPing = document.getElementById('st14-radar-ping');
+      const radarDot = document.getElementById('st14-radar-dot');
+
+      if (!isSt14EngineActive) {
+        if (radarStatusText) {
+          radarStatusText.textContent = 'ENGINE PAUSED';
+          radarStatusText.className = 'text-xs font-bold text-amber-400 font-mono';
+        }
+        if (radarSubtext) radarSubtext.textContent = 'Manual Resume Required';
+        if (radarPing) radarPing.className = 'hidden';
+        if (radarDot) radarDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
+      } else if (!isMarketOpen) {
+        if (radarStatusText) {
+          radarStatusText.textContent = 'STANDBY (OFF-MARKET)';
+          radarStatusText.className = 'text-xs font-bold text-amber-300 font-mono';
+        }
+        if (radarSubtext) radarSubtext.textContent = 'Auto-resumes 09:15 IST';
+        if (radarPing) radarPing.className = 'hidden';
+        if (radarDot) radarDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
+      } else {
+        if (radarStatusText) {
+          radarStatusText.textContent = 'ACTIVE DUAL LOOP';
+          radarStatusText.className = 'text-xs font-bold text-emerald-400 font-mono';
+        }
+        if (radarSubtext) radarSubtext.textContent = '1h Discovery + 5m Poller';
+        if (radarPing) radarPing.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75';
+        if (radarDot) radarDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500';
+      }
+
+      // Tier 1 - 1-Hour Scanner
+      const hourlyLastEl = document.getElementById('st14-hourly-last-time');
+      const hourlyNextEl = document.getElementById('st14-hourly-next-time');
+      const hourlyBadge = document.getElementById('st14-hourly-count-badge');
+      if (hourlyLastEl) hourlyLastEl.textContent = telemetry.last_hourly_scan_time || 'None today';
+      if (hourlyNextEl) hourlyNextEl.textContent = getNextHourlyScanTime();
+      if (hourlyBadge) hourlyBadge.textContent = `${telemetry.last_hourly_candidates_count || 0} Discovered`;
+
+      // Tier 2 - 5-Min Poller
+      const pollerLastEl = document.getElementById('st14-5min-last-time');
+      const pollerBadge = document.getElementById('st14-watchlist-count-badge');
+      const activeWatchCount = telemetry.active_watchlist_count !== undefined ? telemetry.active_watchlist_count : (telemetry.breakout_watchlist ? telemetry.breakout_watchlist.length : 0);
+      if (pollerLastEl) pollerLastEl.textContent = telemetry.last_5min_check_time || 'None yet';
+      if (pollerBadge) pollerBadge.textContent = `${activeWatchCount} Watching`;
+
+      // Capacity & Mode
+      const capEl = document.getElementById('st14-capacity-text');
+      const modeBadge = document.getElementById('st14-mode-badge');
+      const autoEl = document.getElementById('st14-auto-order-text');
+      const posCount = telemetry.active_positions_count || 0;
+      if (capEl) capEl.textContent = `${posCount} / 5 Slots`;
+      if (modeBadge) {
+        modeBadge.textContent = telemetry.mode || 'VIRTUAL';
+        modeBadge.className = (telemetry.mode === 'LIVE')
+          ? 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800 animate-pulse'
+          : 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800';
+      }
+      if (autoEl) {
+        autoEl.textContent = telemetry.auto_order ? 'ON' : 'OFF';
+        autoEl.className = telemetry.auto_order ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold';
+      }
+    }
+
+    async function loadSt14Data() {
+      try {
+        const res = await fetch('/api/strategies/st14_bullish_ce');
+        if (!res.ok) return;
+        const data = await res.json();
+        st14Telemetry = data.telemetry || {};
+
+        isSt14EngineActive = (data.status === 'ACTIVE');
+        isSt14DryRun = (data.execution_mode === 'VIRTUAL');
+        isSt14AutoOrder = !!data.auto_order_enabled;
+        st14ProductType = (st14Telemetry.product_type || 'INTRADAY').toUpperCase();
+
+        if (activeStrategyId === 'st14_bullish_ce') {
+          isStrategyEngineActive = isSt14EngineActive;
+          isDryRun = isSt14DryRun;
+          isAutoOrder = isSt14AutoOrder;
+          updateStrategyEngineUI();
+          updateExecutionModeUI();
+          updateAutoOrderUI();
+        }
+
+        // Update ST-14 Status Pill & Product Button
+        const statusPill = document.getElementById('st14-status-pill');
+        const statusTxt = document.getElementById('st14-status-txt');
+        const statusDot = document.getElementById('st14-status-dot');
+        if (isSt14EngineActive) {
+          if (statusPill) statusPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5';
+          if (statusTxt) statusTxt.textContent = 'ACTIVE';
+          if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+        } else {
+          if (statusPill) statusPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5';
+          if (statusTxt) statusTxt.textContent = 'PAUSED';
+          if (statusDot) statusDot.className = 'w-2 h-2 rounded-full bg-amber-400';
+        }
+
+        const btnProdTxt = document.getElementById('st14-btn-product-txt');
+        if (btnProdTxt) btnProdTxt.textContent = (st14ProductType === 'INTRADAY') ? '⏰ INTRADAY' : '📦 DELIVERY';
+
+        // Breadth detail
+        const breadth = st14Telemetry.market_breadth || {};
+        const isBreadthGreen = (breadth.nifty50_green && breadth.banknifty_green);
+        const breadthTitle = document.getElementById('st14-breadth-title');
+        const breadthDot = document.getElementById('st14-breadth-dot');
+        const breadthDetail = document.getElementById('st14-card-breadth-detail');
+        if (breadthTitle) {
+          breadthTitle.textContent = isBreadthGreen ? 'NIFTY & BANKNIFTY GREEN' : (breadth.message || 'INDICES NOT GREEN');
+          breadthTitle.className = isBreadthGreen ? 'text-emerald-400' : 'text-amber-400';
+        }
+        if (breadthDot) {
+          breadthDot.className = isBreadthGreen ? 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse' : 'w-2 h-2 rounded-full bg-amber-400';
+        }
+        if (breadthDetail) {
+          const nVal = (breadth.nifty50_change_pct !== undefined) ? `${breadth.nifty50_change_pct > 0 ? '+' : ''}${breadth.nifty50_change_pct}%` : 'N/A';
+          const bVal = (breadth.banknifty_change_pct !== undefined) ? `${breadth.banknifty_change_pct > 0 ? '+' : ''}${breadth.banknifty_change_pct}%` : 'N/A';
+          breadthDetail.textContent = `Nifty: ${nVal} | BankNifty: ${bVal}`;
+        }
+
+        // Capital
+        if (document.getElementById('st14-card-capital') && st14Telemetry.capital_per_trade) {
+          document.getElementById('st14-card-capital').textContent = `₹${st14Telemetry.capital_per_trade.toLocaleString('en-IN')} / trade`;
+        }
+
+        // Total PnL
+        if (document.getElementById('st14-total-pnl-val')) {
+          const pnl = st14Telemetry.total_pnl || 0.0;
+          const pnlEl = document.getElementById('st14-total-pnl-val');
+          pnlEl.textContent = `${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`;
+          pnlEl.className = pnl >= 0 ? 'font-bold text-emerald-400 font-mono' : 'font-bold text-rose-400 font-mono';
+        }
+
+        // Render Telemetry Strip
+        renderSt14RadarTelemetry(st14Telemetry);
+
+        // Render Watchlist Table
+        renderSt14Watchlist(st14Telemetry.breakout_watchlist || []);
+
+        // Render Positions
+        renderSt14Positions(st14Telemetry.active_positions || [], st14Telemetry.closed_positions || []);
+
+        // Render Signals
+        renderSt14Signals(st14Telemetry.recent_signals || []);
+      } catch (err) {
+        console.debug('Failed loading ST-14 data:', err);
+      }
+    }
+
+    function renderSt14Watchlist(watchlist) {
+      const container = document.getElementById('st14-watchlist-container');
+      const tableBadge = document.getElementById('st14-watchlist-table-badge');
+      const items = watchlist || [];
+      if (tableBadge) tableBadge.textContent = `${items.length} Candidates`;
+      if (!container) return;
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-8 border border-dashed border-gray-800 rounded-xl bg-[#0b0f19]/40 space-y-2">
+            <span class="text-2xl">🔭</span>
+            <div class="text-xs font-semibold text-gray-300">No candidates currently in the Breakout Watchlist</div>
+            <div class="text-[11px] text-gray-500 max-w-lg mx-auto leading-relaxed">
+              The 1-hour discovery scanner runs across all 228 F&amp;O stocks at 10:15, 11:15, 12:15, 13:15, and 14:00 IST. Qualified stocks with confirmed 5D &amp; 5H breakouts and rising VWAP are placed here for 5-minute trigger monitoring.
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-400 uppercase text-[10px] tracking-wider bg-[#0b0f19]/80">
+              <th class="py-2 px-3 font-semibold">Symbol</th>
+              <th class="py-2 px-3 font-semibold">Breakout High (H_breakout)</th>
+              <th class="py-2 px-3 font-semibold">Live Underlying LTP</th>
+              <th class="py-2 px-3 font-semibold">Distance to Breach</th>
+              <th class="py-2 px-3 font-semibold">Discovery &amp; Scan IST</th>
+              <th class="py-2 px-3 font-semibold">1-OTM Call Option</th>
+              <th class="py-2 px-3 font-semibold">Bracket Levels</th>
+              <th class="py-2 px-3 font-semibold">Trigger Status</th>
+              <th class="py-2 px-3 font-semibold text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800/60 font-mono">
+            ${items.map(item => {
+              const opt = item.option_contract || {};
+              const levels = item.order_levels || {};
+              const isBreached = (item.current_ltp >= item.breakout_candle_high);
+              const dist = item.distance_pct !== undefined ? item.distance_pct : 0.0;
+              const distColor = isBreached ? 'text-emerald-400 font-bold' : (dist <= 0.5 ? 'text-amber-300 font-semibold' : 'text-gray-300');
+              const distText = isBreached ? `🎯 BREACHED (+${Math.abs(dist).toFixed(2)}%)` : `${dist.toFixed(2)}% below high`;
+
+              let statusBadge = '';
+              if (item.status === 'ORDER_PLACED') {
+                statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">✅ ORDER PLACED</span>';
+              } else if (item.status === 'TRIGGERED' || isBreached) {
+                statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 animate-pulse">🎯 TRIGGERED</span>';
+              } else {
+                statusBadge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800/80">⏳ AWAITING BREACH</span>';
+              }
+
+              return `
+                <tr class="hover:bg-gray-800/40 transition">
+                  <td class="py-2.5 px-3">
+                    <div class="font-bold text-white font-sans text-sm">${item.symbol}</div>
+                    <div class="text-[10px] text-gray-400">Sec ID: ${item.security_id || '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3 font-bold text-emerald-300">
+                    ₹${item.breakout_candle_high ? item.breakout_candle_high.toFixed(2) : '-'}
+                  </td>
+                  <td class="py-2.5 px-3 font-bold text-white">
+                    ₹${item.current_ltp ? item.current_ltp.toFixed(2) : '-'}
+                  </td>
+                  <td class="py-2.5 px-3 ${distColor}">
+                    ${distText}
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-gray-300 text-[11px]">Found: ${item.discovered_at_ist || '-'}</div>
+                    <div class="text-gray-500 text-[10px]">Polled: ${item.last_checked_at_ist || '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="font-bold text-blue-300 font-sans">${opt.symbol || `${item.symbol} CE`}</div>
+                    <div class="text-[10px] text-gray-400">Prem: ₹${opt.ltp ? opt.ltp.toFixed(2) : '-'} | Lot: ${opt.lot_size || '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-emerald-400 text-[11px]">TP: ₹${levels.target_price ? levels.target_price.toFixed(2) : '-'} (+40%)</div>
+                    <div class="text-rose-400 text-[10px]">SL: ₹${levels.stop_loss_price ? levels.stop_loss_price.toFixed(2) : '-'} (-20%)</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    ${statusBadge}
+                  </td>
+                  <td class="py-2.5 px-3 text-right">
+                    ${item.status !== 'ORDER_PLACED' ? `
+                      <button onclick="executeSt14Signal('${item.symbol}')" class="px-2.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded text-[10px] font-bold text-white shadow active:scale-95 cursor-pointer">
+                        ⚡ Execute CE
+                      </button>
+                    ` : `
+                      <span class="text-emerald-400 text-[10px] font-bold">✓ Executed</span>
+                    `}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderSt14Positions(activePos, closedPos) {
+      const container = document.getElementById('st14-positions-container');
+      const countBadge = document.getElementById('st14-positions-count-badge');
+      if (countBadge) countBadge.textContent = `${activePos.length} Open Positions`;
+      if (!container) return;
+
+      if (activePos.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-8 border border-dashed border-gray-800 rounded-xl bg-[#0b0f19]/40 space-y-2">
+            <span class="text-2xl">📦</span>
+            <div class="text-xs text-gray-400">No active ST-14 Super Order positions currently open.</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-400 uppercase text-[10px] tracking-wider bg-[#0b0f19]/80">
+              <th class="py-2 px-3 font-semibold">Position / Option</th>
+              <th class="py-2 px-3 font-semibold">Strike & Expiry</th>
+              <th class="py-2 px-3 font-semibold">Qty</th>
+              <th class="py-2 px-3 font-semibold">Entry / LTP</th>
+              <th class="py-2 px-3 font-semibold">Target (+40%)</th>
+              <th class="py-2 px-3 font-semibold">Stop Loss (-20%)</th>
+              <th class="py-2 px-3 font-semibold">Unrealized P&L</th>
+              <th class="py-2 px-3 font-semibold">Product / Mode</th>
+              <th class="py-2 px-3 font-semibold text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800/60 font-mono">
+            ${activePos.map(p => {
+              const pnlColor = p.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+              return `
+                <tr class="hover:bg-gray-800/40 transition">
+                  <td class="py-2.5 px-3">
+                    <div class="font-bold text-white font-sans">${p.symbol}</div>
+                    <div class="text-[10px] text-gray-400 truncate max-w-[140px]">${p.option_symbol}</div>
+                  </td>
+                  <td class="py-2.5 px-3 text-blue-300 font-semibold">${p.option_symbol.split(' ').slice(1).join(' ')}</td>
+                  <td class="py-2.5 px-3 text-gray-200">${p.quantity}</td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-gray-300">₹${p.entry_price.toFixed(2)}</div>
+                    <div class="text-[10px] text-gray-400">LTP: ₹${p.current_ltp.toFixed(2)}</div>
+                  </td>
+                  <td class="py-2.5 px-3 text-emerald-400 font-semibold">₹${p.target_price.toFixed(2)}</td>
+                  <td class="py-2.5 px-3 text-rose-400 font-semibold">₹${p.stop_loss_price.toFixed(2)}</td>
+                  <td class="py-2.5 px-3 font-bold ${pnlColor}">
+                    ${p.unrealized_pnl >= 0 ? '+' : ''}₹${p.unrealized_pnl.toFixed(2)} (${p.pnl_pct}%)
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60">${p.product_type}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${p.mode === 'LIVE' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300 border border-amber-800'}">${p.mode}</span>
+                  </td>
+                  <td class="py-2.5 px-3 text-right">
+                    <button onclick="confirmSt14SquareOff()" class="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/60 rounded text-[10px] font-bold text-rose-300 active:scale-95 cursor-pointer">Square Off</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderSt14Signals(signals) {
+      const container = document.getElementById('st14-signals-container');
+      const countBadge = document.getElementById('st14-signals-count-badge');
+      const items = signals || [];
+      if (countBadge) countBadge.textContent = `${items.length} Signals`;
+      if (!container) return;
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-8 border border-dashed border-gray-800 rounded-xl bg-[#0b0f19]/40 space-y-2">
+            <span class="text-2xl">📡</span>
+            <div class="text-xs text-gray-400">No historical breakout signals recorded yet. Scanner runs hourly during market hours.</div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="border-b border-gray-800 text-gray-400 uppercase text-[10px] tracking-wider bg-[#0b0f19]/80">
+              <th class="py-2 px-3 font-semibold">Symbol & LTP</th>
+              <th class="py-2 px-3 font-semibold">5D / 5H Breakout</th>
+              <th class="py-2 px-3 font-semibold">20 EMA (Daily / 1H)</th>
+              <th class="py-2 px-3 font-semibold">VWAP & Angle</th>
+              <th class="py-2 px-3 font-semibold">1-OTM Call Option</th>
+              <th class="py-2 px-3 font-semibold">Bracket Levels</th>
+              <th class="py-2 px-3 font-semibold">Status</th>
+              <th class="py-2 px-3 font-semibold text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800/60 font-mono">
+            ${items.map(s => {
+              const opt = s.option_contract || {};
+              const levels = s.order_levels || {};
+              return `
+                <tr class="hover:bg-gray-800/40 transition">
+                  <td class="py-2.5 px-3">
+                    <div class="font-bold text-white font-sans text-sm">${s.symbol}</div>
+                    <div class="text-emerald-400 text-xs font-bold">₹${s.underlying_ltp ? s.underlying_ltp.toFixed(2) : '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-emerald-300">5H High: ₹${s.breakout_candle_high ? s.breakout_candle_high.toFixed(2) : '-'}</div>
+                    <div class="text-[10px] text-gray-400">Crossed: ${s.is_confirmed ? '✅ YES' : '⏳ Monitoring'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-gray-300">Daily: ₹${s.daily_ema20 ? s.daily_ema20.toFixed(2) : '-'}</div>
+                    <div class="text-gray-400 text-[10px]">1H: ₹${s.hourly_ema20 ? s.hourly_ema20.toFixed(2) : '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-indigo-300">₹${s.vwap ? s.vwap.toFixed(2) : '-'} (${s.vwap_dist_pct ? s.vwap_dist_pct.toFixed(2) : 0}%)</div>
+                    <div class="text-[10px] text-gray-400">Angle: ~${s.vwap_angle_deg ? Math.round(s.vwap_angle_deg) : 45}° ↗️</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="font-bold text-blue-300 font-sans">${opt.symbol || `${s.symbol} CE`}</div>
+                    <div class="text-[10px] text-gray-400">Prem: ₹${opt.ltp ? opt.ltp.toFixed(2) : '-'} | Lot: ${opt.lot_size || '-'}</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <div class="text-emerald-400">TP: ₹${levels.target_price ? levels.target_price.toFixed(2) : '-'} (+40%)</div>
+                    <div class="text-rose-400 text-[10px]">SL: ₹${levels.stop_loss_price ? levels.stop_loss_price.toFixed(2) : '-'} (-20%)</div>
+                  </td>
+                  <td class="py-2.5 px-3">
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'ORDER_PLACED' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-blue-950 text-blue-300 border border-blue-800'}">
+                      ${s.status}
+                    </span>
+                  </td>
+                  <td class="py-2.5 px-3 text-right">
+                    ${s.status !== 'ORDER_PLACED' ? `
+                      <button onclick="executeSt14Signal('${s.signal_id}')" class="px-2.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded text-[10px] font-bold text-white shadow active:scale-95 cursor-pointer">
+                        ⚡ Buy CE
+                      </button>
+                    ` : `
+                      <span class="text-emerald-400 text-[10px] font-bold">✓ Executed</span>
+                    `}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
     function selectStrategy(strategyId) {
       activeStrategyId = strategyId;
       renderStrategyCards();
@@ -3597,15 +4430,27 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
 
       const wsNews = document.getElementById('workspace-st-news');
+      const wsSt14 = document.getElementById('workspace-st14');
       const wsModular = document.getElementById('workspace-st-modular');
       const strategyControls = document.getElementById('strategy-controls-group');
 
       if (strategyId === 'st_news') {
         if (wsNews) wsNews.classList.remove('hidden');
+        if (wsSt14) wsSt14.classList.add('hidden');
         if (wsModular) wsModular.classList.add('hidden');
         if (strategyControls) strategyControls.classList.remove('hidden');
+        updateStrategyEngineUI();
+        updateExecutionModeUI();
+        updateAutoOrderUI();
+      } else if (strategyId === 'st14_bullish_ce') {
+        if (wsNews) wsNews.classList.add('hidden');
+        if (wsSt14) wsSt14.classList.remove('hidden');
+        if (wsModular) wsModular.classList.add('hidden');
+        if (strategyControls) strategyControls.classList.remove('hidden');
+        loadSt14Data();
       } else {
         if (wsNews) wsNews.classList.add('hidden');
+        if (wsSt14) wsSt14.classList.add('hidden');
         if (wsModular) wsModular.classList.remove('hidden');
         if (strategyControls) strategyControls.classList.add('hidden');
 
@@ -3663,7 +4508,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } else {
         if (scannerTab) scannerTab.classList.add('hidden');
         if (strategiesTab) strategiesTab.classList.remove('hidden');
-        if (activeStrategyId === 'st_news' && strategyControls) {
+        if ((activeStrategyId === 'st_news' || activeStrategyId === 'st14_bullish_ce') && strategyControls) {
           strategyControls.classList.remove('hidden');
         }
 
@@ -3697,14 +4542,19 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       loadStrategies();
       fetchFeed();
       connectSSE();
+      loadSt14Data();
       setInterval(fetchFeed, 4000);
       setInterval(loadStrategies, 10000);
+      setInterval(() => {
+        if (activeStrategyId === 'st14_bullish_ce') loadSt14Data();
+      }, 5000);
       setInterval(pollLivePrices, 30000);
       setInterval(fetchTokenStatus, 30000);
       setInterval(updatePollerTimer, 1000);
       setInterval(updateCountdowns, 1000);
       setInterval(() => renderMarketStatusUI(computeMarketStatusClient()), 10000);
     };
+
   </script>
 
   <!-- Scanner Application Logic -->

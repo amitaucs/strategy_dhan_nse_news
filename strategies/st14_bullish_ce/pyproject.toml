@@ -1,0 +1,21 @@
+[project]
+name = "st14_bullish_ce"
+version = "1.0.0"
+description = "ST-14 Bullish CE Options Trading Strategy using DhanHQ API"
+authors = [{ name = "Amit Datta" }]
+requires-python = ">=3.10"
+dependencies = [
+    "dhanhq>=2.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "pydantic>=2.0.0",
+    "tabulate>=0.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
