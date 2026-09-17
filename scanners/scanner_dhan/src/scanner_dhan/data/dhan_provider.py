@@ -511,6 +511,14 @@ class DhanDataProvider:
 
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
+    def fetch_1h_bars(
+        self,
+        security_id: str,
+        days: int = 25,
+    ) -> pd.DataFrame:
+        """Fetch 1-minute bars from Dhan and resample into 1-Hour (60-minute) OHLCV candles aligned to 09:15 IST."""
+        return self.fetch_resampled_bars(security_id=security_id, rule="60min", days=min(days, 30))
+
     def fetch_2h_bars(
         self,
         security_id: str,

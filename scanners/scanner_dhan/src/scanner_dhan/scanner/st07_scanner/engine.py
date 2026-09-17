@@ -183,13 +183,17 @@ def analyze_st07_stock(
     else:
         candle_signal = "Below 89 EMA"
 
-    # Calculate Monthly RSI (14)
+    # Calculate Monthly RSI (14) with fallbacks
     rsi_val = calculate_rsi(m_df["close"], period=14)
     if rsi_val is None and "ha_close" in df_calc.columns:
         rsi_val = calculate_rsi(df_calc["ha_close"], period=14)
+    if rsi_val is None and len(daily_df) >= 15:
+        rsi_val = calculate_rsi(daily_df["close"], period=14)
 
-    # Extract Volume
+    # Extract Volume (with Daily fallback)
     volume_val = int(curr["volume"]) if "volume" in curr and pd.notna(curr["volume"]) else 0
+    if volume_val <= 0 and "volume" in daily_df.columns and len(daily_df) > 0 and pd.notna(daily_df["volume"].iloc[-1]):
+        volume_val = int(daily_df["volume"].iloc[-1])
 
     return St07ScanResult(
         symbol=symbol,

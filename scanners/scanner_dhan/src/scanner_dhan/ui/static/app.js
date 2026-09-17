@@ -263,6 +263,30 @@ function renderStudioPanel(scannerId) {
   const sliderParams = (scanner.parameters || []).filter(
     (p) => p.type === "float" || p.type === "int"
   );
+  const boolParams = (scanner.parameters || []).filter(
+    (p) => p.type === "bool"
+  );
+
+  const renderBoolParam = (p) => `
+    <div class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition flex items-center justify-between">
+      <div>
+        <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5 cursor-pointer" for="input-${scanner.id}-${p.name}">
+          <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-sky-400"></i>
+          <span>${p.label}</span>
+        </label>
+        <p class="text-[10px] text-slate-400 mt-1 max-w-[280px]">${p.description || ""}</p>
+      </div>
+      <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-3">
+        <input
+          type="checkbox"
+          id="input-${scanner.id}-${p.name}"
+          ${p.default ? "checked" : ""}
+          class="sr-only peer"
+        />
+        <div class="w-10 h-5.5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+      </label>
+    </div>
+  `;
 
   const renderSelectParam = (p) => `
     <div class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition">
@@ -306,7 +330,7 @@ function renderStudioPanel(scannerId) {
           <span>${p.label}</span>
         </label>
         <span class="font-mono text-xs font-bold text-sky-400 bg-sky-950/70 border border-sky-800/40 px-2.5 py-0.5 rounded-full" id="val-${scanner.id}-${p.name}">
-          ${p.default}${p.name.includes("pct") ? "%" : ""}
+          ${p.default}${p.name.includes("pct") || p.name.includes("dist") ? "%" : ""}
         </span>
       </div>
       <input
@@ -317,11 +341,11 @@ function renderStudioPanel(scannerId) {
         step="${p.step || 1}"
         value="${p.default}"
         class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400 mt-2"
-        oninput="document.getElementById('val-${scanner.id}-${p.name}').innerText = this.value + '${p.name.includes("pct") ? "%" : ""}'"
+        oninput="document.getElementById('val-${scanner.id}-${p.name}').innerText = (this.value > 0 && '${p.name}'.includes('dist') ? '+' : '') + this.value + '${p.name.includes("pct") || p.name.includes("dist") ? "%" : ""}'"
       />
       <div class="flex justify-between text-[10px] text-slate-500 font-mono mt-1.5">
-        <span>Min: ${p.min}${p.name.includes("pct") ? "%" : ""}</span>
-        <span>Max: ${p.max}${p.name.includes("pct") ? "%" : ""}</span>
+        <span>Min: ${p.min}${p.name.includes("pct") || p.name.includes("dist") ? "%" : ""}</span>
+        <span>Max: ${p.max}${p.name.includes("pct") || p.name.includes("dist") ? "%" : ""}</span>
       </div>
     </div>
   `;
@@ -365,7 +389,13 @@ function renderStudioPanel(scannerId) {
         <div>
           <div class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Timeframe</div>
           <div class="text-xs font-semibold text-white">
-            ${scanner.id === "st07_monthly_ha_89ema" || scanner.id === "ath_st08_breakout" ? "Monthly Only (Dedicated)" : "1D, 2H, 1H, 15M Supported"}
+            ${
+              scanner.id === "st07_monthly_ha_89ema" || scanner.id === "ath_st08_breakout"
+                ? "Monthly Only (Dedicated)"
+                : scanner.id === "st14_bullish_ce" || scanner.id === "st14_scanner"
+                ? "Daily + 1H (Dual TF)"
+                : "1D, 2H, 1H, 15M Supported"
+            }
           </div>
         </div>
       </div>
@@ -397,8 +427,11 @@ function renderStudioPanel(scannerId) {
         <!-- Custom Dropdown Rules (e.g. Block Type, First Candle Only) -->
         ${filterParams.map(renderSelectParam).join("")}
 
-        <!-- Numeric Range Sliders (Impulse, Volume, Distance %, Lookback, RSI) -->
+        <!-- Numeric Range Sliders (Impulse, Volume, Distance %, Lookback, VWAP) -->
         ${sliderParams.map(renderSliderParam).join("")}
+
+        <!-- Boolean Toggles (Rising VWAP, 10:15 Cutoff) -->
+        ${boolParams.map(renderBoolParam).join("")}
       </div>
     </div>
 
@@ -434,6 +467,8 @@ async function runScanner(scannerId, overrideParams = null) {
         params[p.name] = parseInt(input.value, 10);
       } else if (p.type === "float") {
         params[p.name] = parseFloat(input.value);
+      } else if (p.type === "bool") {
+        params[p.name] = input.checked;
       } else {
         params[p.name] = input.value;
       }
@@ -472,6 +507,11 @@ async function runScanner(scannerId, overrideParams = null) {
       resultsTfSelect.disabled = true;
       resultsTfSelect.classList.add("opacity-75", "cursor-not-allowed");
       resultsTfSelect.title = "Monthly Strategy (Fixed Timeframe)";
+    } else if (scannerId === "st14_bullish_ce" || scannerId === "st14_scanner") {
+      resultsTfSelect.innerHTML = `<option value="Daily+1H" selected>Daily + 1H (Dual TF)</option>`;
+      resultsTfSelect.disabled = true;
+      resultsTfSelect.classList.add("opacity-75", "cursor-not-allowed");
+      resultsTfSelect.title = "ST-14 Dual Timeframe (Daily Trend + 1H Momentum Breakout & VWAP)";
     } else {
       resultsTfSelect.disabled = false;
       resultsTfSelect.classList.remove("opacity-75", "cursor-not-allowed");
@@ -662,6 +702,14 @@ window.showHomeView = showHomeView;
 
 function getItemLevelDesc(r, report) {
   if (!r) return "";
+
+  // Dedicated handling for ST-14 scanner (Only Bullish CE Trigger or Watchlist Setup)
+  if (report && (report.scanner_id === "st14_bullish_ce" || report.scanner_id === "st14_scanner")) {
+    if (r.status === "QUALIFIED" || r.is_at_support || r.matched) {
+      return "Bullish CE Trigger";
+    }
+    return "Watchlist Setup";
+  }
 
   // 1. Extract raw level description from whichever field is populated by the backend search
   let raw =
@@ -1041,6 +1089,12 @@ function applyFiltersAndRender() {
     if (filterState.sortColumn === "support_desc" || filterState.sortColumn === "level_desc") {
       valA = getItemLevelDesc(a, currentReport);
       valB = getItemLevelDesc(b, currentReport);
+    } else if (filterState.sortColumn === "rsi") {
+      valA = a.rsi ?? a.hourly_rsi ?? a.daily_rsi ?? (filterState.sortAsc ? 999999 : -999999);
+      valB = b.rsi ?? b.hourly_rsi ?? b.daily_rsi ?? (filterState.sortAsc ? 999999 : -999999);
+    } else if (filterState.sortColumn === "volume") {
+      valA = a.volume ?? a.hourly_volume ?? a.daily_volume ?? 0;
+      valB = b.volume ?? b.hourly_volume ?? b.daily_volume ?? 0;
     } else {
       valA = a[filterState.sortColumn];
       valB = b[filterState.sortColumn];
@@ -1059,17 +1113,19 @@ function applyFiltersAndRender() {
 }
 
 function formatVolume(val) {
-  if (!val || val <= 0) return "-";
-  if (val >= 10000000) {
-    return (val / 10000000).toFixed(2) + " Cr";
+  if (val === null || val === undefined) return "-";
+  const num = Number(val);
+  if (isNaN(num) || num <= 0) return "-";
+  if (num >= 10000000) {
+    return (num / 10000000).toFixed(2) + " Cr";
   }
-  if (val >= 1000000) {
-    return (val / 1000000).toFixed(2) + "M";
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(2) + "M";
   }
-  if (val >= 1000) {
-    return (val / 1000).toFixed(1) + "K";
+  if (num >= 1000) {
+    return (num / 1000).toFixed(1) + "K";
   }
-  return Number(val).toLocaleString("en-IN");
+  return num.toLocaleString("en-IN");
 }
 
 function renderTable(items) {
@@ -1077,6 +1133,17 @@ function renderTable(items) {
   document.getElementById("results-count-badge").innerText = `${items.length} of ${
     currentReport ? currentReport.total_scanned : 50
   } stocks`;
+
+  const isSt14Scanner = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
+  const thKeyLevel = document.getElementById("th-col-key-level-text");
+  const thDist = document.getElementById("th-col-distance-text");
+  const thDesc = document.getElementById("th-col-desc-text");
+  const thRsi = document.getElementById("th-col-rsi-text");
+
+  if (thKeyLevel) thKeyLevel.innerText = isSt14Scanner ? "5H Breakout (₹)" : "Key Level (₹)";
+  if (thDist) thDist.innerText = isSt14Scanner ? "5H Dist (%)" : "Distance (%)";
+  if (thDesc) thDesc.innerText = isSt14Scanner ? "Setup Status" : "Level Description";
+  if (thRsi) thRsi.innerText = isSt14Scanner ? "Intraday VWAP" : "RSI (14)";
 
   if (items.length === 0) {
     tbody.innerHTML = `
@@ -1104,13 +1171,23 @@ function renderTable(items) {
         : "text-slate-400";
 
       let rsiBadge = "-";
-      if (r.rsi !== null && r.rsi !== undefined) {
+      const rsiRaw =
+        r.rsi !== null && r.rsi !== undefined && !isNaN(r.rsi)
+          ? r.rsi
+          : r.hourly_rsi !== null && r.hourly_rsi !== undefined && !isNaN(r.hourly_rsi)
+          ? r.hourly_rsi
+          : r.daily_rsi;
+
+      if (rsiRaw !== null && rsiRaw !== undefined && !isNaN(rsiRaw) && Number(rsiRaw) > 0) {
+        const rsiVal = Number(rsiRaw);
         let rsiColor = "text-slate-300";
-        if (r.rsi <= 38)
+        if (rsiVal <= 38)
           rsiColor = "text-emerald-400 font-bold bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/40";
-        else if (r.rsi >= 65)
+        else if (rsiVal >= 60 && rsiVal < 70)
+          rsiColor = "text-emerald-300 font-semibold bg-emerald-950/30 px-2 py-0.5 rounded border border-emerald-800/30";
+        else if (rsiVal >= 70)
           rsiColor = "text-rose-400 font-bold bg-rose-950/50 px-2 py-0.5 rounded border border-rose-800/40";
-        rsiBadge = `<span class="${rsiColor}">${r.rsi.toFixed(1)}</span>`;
+        rsiBadge = `<span class="${rsiColor}">${rsiVal.toFixed(1)}</span>`;
       }
 
       const sigStr = r.candle_signal || "";
@@ -1118,14 +1195,20 @@ function renderTable(items) {
         sigStr.includes("Hammer") ||
         sigStr.includes("Reversal") ||
         sigStr.includes("Engulfing") ||
-        sigStr.includes("Green");
+        sigStr.includes("Green") ||
+        sigStr.includes("TRIGGER");
 
       const isFreshFirstGreen = r.is_first_green || sigStr.includes("1st Green");
       const isFreshCrossover = r.is_fresh_crossover || sigStr.includes("Fresh Crossover");
       const isAccumulation = r.is_accumulation_pullback || sigStr.includes("Accumulation Pullback");
+      const isBullishCeTrigger = sigStr.includes("BULLISH CE TRIGGER");
 
       let signalBadge;
-      if (isFreshCrossover) {
+      if (isBullishCeTrigger) {
+        signalBadge = `<span class="inline-flex items-center space-x-1 text-emerald-300 font-bold bg-emerald-950/80 border border-emerald-400/80 px-2.5 py-1 rounded-lg text-xs shadow-md shadow-emerald-950">
+             <span>${sigStr}</span>
+           </span>`;
+      } else if (isFreshCrossover) {
         signalBadge = `<span class="inline-flex items-center space-x-1 text-cyan-300 font-bold bg-cyan-950/70 border border-cyan-500/60 px-2.5 py-1 rounded-lg text-xs shadow-sm shadow-cyan-950">
              <span>${sigStr}</span>
            </span>`;
@@ -1134,7 +1217,7 @@ function renderTable(items) {
              <span>${sigStr}</span>
            </span>`;
       } else if (isFreshFirstGreen) {
-        signalBadge = `<span class="inline-flex items-center space-x-1 text-emerald-300 font-bold bg-emerald-900/60 border border-emerald-500/60 px-2.5 py-1 rounded-lg text-xs shadow-sm shadow-emerald-950">
+        signalBadge = `<span class="inline-flex items-center space-x-1 text-emerald-300 font-bold bg-emerald-950/70 border border-emerald-500/60 px-2.5 py-1 rounded-lg text-xs shadow-sm shadow-emerald-950">
              <span>${sigStr}</span>
            </span>`;
       } else if (isBullish) {
@@ -1148,12 +1231,15 @@ function renderTable(items) {
       const isSt07 = currentReport && currentReport.scanner_id === "st07_monthly_ha_89ema";
       const isAth08 = currentReport && currentReport.scanner_id === "ath_st08_breakout";
       const isHaSt01 = currentReport && currentReport.scanner_id === "ha_st01_rsi_reversal";
+      const isSt14 = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
       const keyLevelPrice = isAth08
         ? r.prior_ath_price
         : isHaSt01
         ? r.stop_loss
         : isSt07
         ? r.ema_89
+        : isSt14
+        ? (r.five_hour_high || r.support_price)
         : (r.support_price !== undefined ? r.support_price : (r.nearest_support ? r.nearest_support.price : null));
       const keyLevelDesc = getItemLevelDesc(r, currentReport);
       const hoverTitle = isAth08
@@ -1162,11 +1248,17 @@ function renderTable(items) {
         ? `Entry Trigger: ₹${r.entry_trigger_price} (+0.2%) | SL: ₹${r.stop_loss} | Risk: ₹${r.risk_per_share} | 1R Target: ₹${r.target_1r} | 2R Target: ₹${r.target_2r} | HA Close: ₹${r.ha_close}`
         : isSt07
         ? `Buy Trigger: ₹${r.buy_trigger_price} | SL: ₹${r.stop_loss} | 21 EMA: ₹${r.ema_21} | HA Close: ₹${r.ha_close}`
+        : isSt14
+        ? `5H Breakout High: ₹${r.five_hour_high} | 5D High: ₹${r.five_day_high} | VWAP: ₹${r.vwap} (${r.vwap_dist_pct > 0 ? '+' : ''}${r.vwap_dist_pct}%, ${r.vwap_angle_deg || 0}°) | 1H 20 EMA: ₹${r.hourly_ema20} | Daily 20 EMA: ₹${r.daily_ema20} | [${r.timing_message || ''}]`
         : (r.support_desc || "");
 
       let levelBadgeColor = "text-slate-300 bg-slate-800/80 border-slate-700";
       const desc = keyLevelDesc;
-      if (desc.includes("Divergence + Oversold")) {
+      if (desc.includes("Bullish CE Trigger") || desc.includes("BULLISH CE")) {
+        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
+      } else if (desc.includes("Watchlist")) {
+        levelBadgeColor = "text-amber-300 font-bold bg-amber-950/60 border-amber-500/50 shadow-sm shadow-amber-950";
+      } else if (desc.includes("Divergence + Oversold")) {
         levelBadgeColor = "text-purple-300 font-bold bg-purple-950/60 border-purple-500/50 shadow-sm shadow-purple-950";
       } else if (desc.includes("Bullish Divergence")) {
         levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
@@ -1206,6 +1298,14 @@ function renderTable(items) {
         levelBadgeColor = "text-purple-300 bg-purple-950/40 border-purple-800/40";
       }
 
+      const volRaw = (r.volume !== null && r.volume !== undefined && r.volume > 0)
+        ? r.volume
+        : (r.hourly_volume || r.daily_volume || 0);
+
+      const vwapBadge = isSt14
+        ? `<span class="px-2 py-0.5 rounded-lg bg-sky-950/60 border border-sky-500/40 text-sky-300 font-mono font-semibold" title="VWAP: ₹${r.vwap} | Dist: ${r.vwap_dist_pct}% | Angle: ${r.vwap_angle_deg}°">₹${Number(r.vwap || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})} <span class="text-[10px] text-sky-400 font-bold ml-1">${r.vwap_angle_deg || 0}° ${r.is_vwap_rising ? '↗' : '↘'}</span></span>`
+        : rsiBadge;
+
       return `
       <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 transition">
         <td class="py-3.5 px-4">
@@ -1244,10 +1344,10 @@ function renderTable(items) {
             ${keyLevelDesc}
           </span>
         </td>
-        <td class="py-3.5 px-4 font-mono text-xs text-slate-300 font-medium" title="${Number(r.volume || 0).toLocaleString('en-IN')} shares">
-          ${formatVolume(r.volume)}
+        <td class="py-3.5 px-4 font-mono text-xs text-slate-300 font-medium" title="${Number(volRaw || 0).toLocaleString('en-IN')} shares">
+          ${formatVolume(volRaw)}
         </td>
-        <td class="py-3.5 px-4 font-mono text-xs">${rsiBadge}</td>
+        <td class="py-3.5 px-4 font-mono text-xs">${vwapBadge}</td>
         <td class="py-3.5 px-4 text-xs">${signalBadge}</td>
       </tr>
     `;

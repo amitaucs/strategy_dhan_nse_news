@@ -196,9 +196,14 @@ def analyze_ath_stock(
         else 0.0
     )
 
-    # Monthly Volume & RSI
+    # Monthly Volume & RSI (with Daily fallback if monthly volume is 0 or RSI is None)
     volume_val = int(curr["volume"]) if "volume" in curr and pd.notna(curr["volume"]) else 0
+    if volume_val <= 0 and "volume" in daily_df.columns and len(daily_df) > 0 and pd.notna(daily_df["volume"].iloc[-1]):
+        volume_val = int(daily_df["volume"].iloc[-1])
+
     rsi_val = calculate_rsi(m_df["close"], period=14)
+    if rsi_val is None and len(daily_df) >= 15:
+        rsi_val = calculate_rsi(daily_df["close"], period=14)
 
     # Candle Signal badge
     if is_ath_breakout:

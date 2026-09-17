@@ -28,7 +28,7 @@
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2.8" />
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-sky-500 selection:text-white">
 
@@ -359,19 +359,19 @@
                   </th>
                   <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="support_price">
                     <div class="flex items-center space-x-1">
-                      <span>Key Level (₹)</span>
+                      <span id="th-col-key-level-text">Key Level (₹)</span>
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
                   <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="distance_pct">
                     <div class="flex items-center space-x-1">
-                      <span>Distance (%)</span>
+                      <span id="th-col-distance-text">Distance (%)</span>
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
                   <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="support_desc">
                     <div class="flex items-center space-x-1">
-                      <span>Level Description</span>
+                      <span id="th-col-desc-text">Level Description</span>
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
@@ -383,7 +383,7 @@
                   </th>
                   <th class="py-3.5 px-4 cursor-pointer hover:text-white transition" data-sort="rsi">
                     <div class="flex items-center space-x-1">
-                      <span>RSI (14)</span>
+                      <span id="th-col-rsi-text">RSI (14)</span>
                       <span class="text-[10px] text-slate-500">↕</span>
                     </div>
                   </th>
@@ -414,6 +414,6 @@
   </footer>
 
   <!-- Application Logic -->
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.8"></script>
 </body>
 </html>

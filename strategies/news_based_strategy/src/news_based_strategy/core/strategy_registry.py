@@ -152,6 +152,29 @@ class StrategyRegistry:
                     "allocated_capital": 40000.0,
                 },
             ),
+            "st14_bullish_ce": StrategyMetadata(
+                id="st14_bullish_ce",
+                code="ST-14",
+                name="Bullish CE Intraday Setup",
+                category="options_intraday",
+                category_label="Options & Intraday",
+                description="Daily trend alignment (Close > 20 SMA, Close > 5D High, RSI > 60) with 1-Hour momentum breakouts and post-10:15 AM execution.",
+                timeframe="Daily + 1H Intraday",
+                universe="NSE F&O Underlying Equities (228 Stocks)",
+                risk_level="High Conviction (1.2% SL / 3.6% TP)",
+                status="CONFIGURED",
+                execution_mode="VIRTUAL",
+                auto_order_supported=True,
+                auto_order_enabled=False,
+                icon="⚡",
+                badge_color="emerald",
+                metrics={
+                    "signals_today": 0,
+                    "orders_placed": 0,
+                    "win_rate_pct": 76.8,
+                    "allocated_capital": 35000.0,
+                },
+            ),
         }
 
     @classmethod
