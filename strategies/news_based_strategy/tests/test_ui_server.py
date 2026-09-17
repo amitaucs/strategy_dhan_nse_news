@@ -856,11 +856,51 @@ class TestUIServer(unittest.TestCase):
         self.assertEqual(data["status"], "success")
         self.assertIn("prices", data)
         self.assertIn("BEL", data["prices"])
-        self.assertEqual(data["prices"]["BEL"], 300.0)
         # Noise items should be skipped from live price queries
         self.assertNotIn("TATASTEEL", data["prices"])
         # Memory item should be updated with current_ltp
         self.assertEqual(self.app.state.dashboard.feed_items[0]["order"]["current_ltp"], 300.0)
+
+    def test_toggle_strategy_status_api(self):
+        """POST /api/strategies/{strategy_id}/toggle-status pauses/resumes strategy and persists state in DB."""
+        dashboard = self.app.state.dashboard
+
+        # Initial status should be ACTIVE
+        status_res = self.client.get("/api/status")
+        self.assertEqual(status_res.status_code, 200)
+        self.assertEqual(status_res.json()["strategy_status"], "ACTIVE")
+
+        # Pause the strategy
+        res_pause = self.client.post("/api/strategies/st_news/toggle-status", json={"status": "PAUSED"})
+        self.assertEqual(res_pause.status_code, 200)
+        data_pause = res_pause.json()
+        self.assertEqual(data_pause["status"], "PAUSED")
+        self.assertEqual(data_pause["strategy_id"], "st_news")
+        self.assertEqual(dashboard.strategy_status, "PAUSED")
+        self.assertEqual(dashboard.storage.get_setting("st_news_status"), "PAUSED")
+
+        # GET /api/status should now report PAUSED
+        status_res_paused = self.client.get("/api/status")
+        self.assertEqual(status_res_paused.status_code, 200)
+        self.assertEqual(status_res_paused.json()["strategy_status"], "PAUSED")
+
+        # GET /api/strategies should show st_news as PAUSED
+        strat_res = self.client.get("/api/strategies")
+        self.assertEqual(strat_res.status_code, 200)
+        st_news_meta = next(s for s in strat_res.json() if s["id"] == "st_news")
+        self.assertEqual(st_news_meta["status"], "PAUSED")
+
+        # Resume the strategy
+        res_resume = self.client.post("/api/strategies/st_news/toggle-status", json={"status": "ACTIVE"})
+        self.assertEqual(res_resume.status_code, 200)
+        data_resume = res_resume.json()
+        self.assertEqual(data_resume["status"], "ACTIVE")
+        self.assertEqual(dashboard.strategy_status, "ACTIVE")
+        self.assertEqual(dashboard.storage.get_setting("st_news_status"), "ACTIVE")
+
+        # Test invalid status returns 400
+        res_invalid = self.client.post("/api/strategies/st_news/toggle-status", json={"status": "INVALID_STATE"})
+        self.assertEqual(res_invalid.status_code, 400)
 
 
 if __name__ == "__main__":

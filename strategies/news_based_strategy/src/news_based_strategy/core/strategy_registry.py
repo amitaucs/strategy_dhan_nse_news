@@ -175,6 +175,13 @@ class StrategyRegistry:
         if strat:
             strat.metrics.update(updates)
 
+    @classmethod
+    def update_status(cls, strategy_id: str, status: str) -> None:
+        """Update operational status for a strategy (e.g. ACTIVE, PAUSED, READY)."""
+        strat = cls.get(strategy_id)
+        if strat:
+            strat.status = status
+
 
 # Auto-initialize on import
 StrategyRegistry.initialize_defaults()

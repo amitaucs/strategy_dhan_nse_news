@@ -27,6 +27,7 @@ from news_based_strategy.ui.schemas import (
     SaveApiKeysRequest,
     ToggleAutoOrderRequest,
     ToggleDryRunRequest,
+    ToggleStrategyStatusRequest,
     UpdateTokenRequest,
 )
 from news_based_strategy.core.strategy_registry import StrategyRegistry
@@ -176,6 +177,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         db_client_name = state.storage.get_setting("dhan_client_name") or state.storage.get_setting("client_name")
         client_name = db_client_name or (auth_user.capitalize() if (auth_user and not auth_user.isdigit()) else None)
         return {
+            "strategy_status": getattr(state, "strategy_status", "ACTIVE"),
             "dry_run": state.executor.dry_run,
             "auto_order": state.auto_order,
             "total_capital": settings.total_capital,
@@ -823,6 +825,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         })
         strat_obj = StrategyRegistry.get("st_news")
         if strat_obj:
+            strat_obj.status = getattr(state, "strategy_status", "ACTIVE")
             strat_obj.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
             strat_obj.auto_order_enabled = state.executor.auto_order
         return StrategyRegistry.list_all()
@@ -833,6 +836,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         if not strat:
             raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
         if strategy_id == "st_news":
+            strat.status = getattr(state, "strategy_status", "ACTIVE")
             strat.execution_mode = "VIRTUAL" if state.executor.dry_run else "LIVE"
             strat.auto_order_enabled = state.executor.auto_order
             strat.metrics.update({
@@ -841,6 +845,33 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
                 "allocated_capital": state.executor.capital_per_trade,
             })
         return strat.to_dict()
+
+    @app.post("/api/strategies/{strategy_id}/toggle-status")
+    async def toggle_strategy_status_endpoint(strategy_id: str, payload: Optional[ToggleStrategyStatusRequest] = None):
+        target_status = payload.status if payload else None
+        if target_status is not None:
+            norm_status = target_status.strip().upper()
+            if norm_status not in ("ACTIVE", "PAUSED", "READY", "DISABLED"):
+                raise HTTPException(status_code=400, detail=f"Invalid status '{target_status}'. Allowed statuses: ACTIVE, PAUSED, READY, DISABLED")
+            target_status = norm_status
+
+        strat = StrategyRegistry.get(strategy_id)
+        if not strat and strategy_id != "st_news":
+            raise HTTPException(status_code=404, detail=f"Strategy '{strategy_id}' not found")
+
+        new_status = state.toggle_strategy_status(strategy_id=strategy_id, new_status=target_status)
+        await state.broadcast_event("STRATEGY_STATUS_TOGGLE", {
+            "strategy_id": strategy_id,
+            "status": new_status,
+            "auto_order": state.auto_order,
+            "dry_run": state.executor.dry_run,
+        })
+        return {
+            "success": True,
+            "strategy_id": strategy_id,
+            "status": new_status,
+            "message": f"Strategy {strategy_id} status updated to {new_status}",
+        }
 
 
 __all__ = ["register_routes", "COOKIE_NAME"]

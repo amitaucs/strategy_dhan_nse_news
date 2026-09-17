@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
+from news_based_strategy.core.strategy_registry import StrategyRegistry
 from news_based_strategy.execution.executor import (
     DhanExecutor,
     check_token_expiry,
@@ -73,6 +74,11 @@ class DashboardState:
         self.feed_items: List[Dict[str, Any]] = []
         self.subscribers: List[asyncio.Queue] = []
         self.auto_order = settings.auto_order
+
+        # Strategy Master Status (ACTIVE / PAUSED) persisted in DB
+        db_status = self.storage.get_setting("st_news_status")
+        self.strategy_status = db_status.upper() if db_status in ("ACTIVE", "PAUSED") else "ACTIVE"
+        StrategyRegistry.update_status("st_news", self.strategy_status)
 
         # Initialize and sync Dhan F&O universe and numeric security IDs
         try:
@@ -207,6 +213,24 @@ class DashboardState:
                     close_str=settings.market_close_time,
                 )
 
+                # Check if strategy is master-paused by user
+                if self.strategy_status == "PAUSED":
+                    self.last_polled_at = get_ist_now()
+                    if self.poll_cycles_count % 15 == 0:
+                        print(f"[{now.strftime('%H:%M:%S IST')}] ⏸️ [STRATEGY PAUSED] ST-NEWS Catalyst Engine is paused. Polling and AI grading suspended.", flush=True)
+                    self.poll_cycles_count += 1
+                    await self.broadcast_event("POLL_CYCLE_COMPLETED", {
+                        "cycle": self.poll_cycles_count,
+                        "last_polled_time": self.last_polled_at.strftime("%H:%M:%S IST"),
+                        "last_polled_ts": int(self.last_polled_at.timestamp()),
+                        "suppressed_noise_count": self.suppressed_noise_count,
+                        "is_market_open": is_mkt_open,
+                        "strategy_status": "PAUSED",
+                        "radar_status": "PAUSED",
+                    })
+                    await asyncio.sleep(2)
+                    continue
+
                 if settings.poll_market_hours_only and not is_mkt_open:
                     self.last_polled_at = get_ist_now()
                     if self.poll_cycles_count % 10 == 0:
@@ -217,6 +241,7 @@ class DashboardState:
                         "last_polled_ts": int(self.last_polled_at.timestamp()),
                         "suppressed_noise_count": self.suppressed_noise_count,
                         "is_market_open": False,
+                        "strategy_status": "ACTIVE",
                         "radar_status": "STANDBY",
                     })
                 else:
@@ -278,11 +303,36 @@ class DashboardState:
                         "last_polled_ts": int(self.last_polled_at.timestamp()),
                         "suppressed_noise_count": self.suppressed_noise_count,
                         "is_market_open": True,
+                        "strategy_status": "ACTIVE",
                         "radar_status": "ACTIVE",
                     })
             except Exception as e:
                 logger.error("Error in GUI background poller: %s", e)
             await asyncio.sleep(settings.poll_interval_seconds)
+
+    def toggle_strategy_status(self, strategy_id: str = "st_news", new_status: Optional[str] = None) -> str:
+        """Toggle or set operational status for a strategy (e.g. ACTIVE or PAUSED)."""
+        if strategy_id == "st_news":
+            if new_status:
+                target = new_status.upper()
+            else:
+                target = "PAUSED" if self.strategy_status == "ACTIVE" else "ACTIVE"
+
+            if target not in ("ACTIVE", "PAUSED"):
+                target = "ACTIVE"
+
+            self.strategy_status = target
+            self.storage.set_setting("st_news_status", target)
+            StrategyRegistry.update_status("st_news", target)
+            logger.info("ST-NEWS operational status changed to: %s", target)
+            return target
+        else:
+            strat = StrategyRegistry.get(strategy_id)
+            if strat:
+                target = new_status.upper() if new_status else ("PAUSED" if strat.status == "ACTIVE" else "ACTIVE")
+                StrategyRegistry.update_status(strategy_id, target)
+                return target
+            return "UNKNOWN"
 
     def toggle_auto_order(self, enabled: bool) -> bool:
         self.auto_order = enabled

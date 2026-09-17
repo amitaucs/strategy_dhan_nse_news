@@ -246,7 +246,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </style>
   <!-- Lucide Icons & Scanner Assets -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/scanner/style.css?v=2.4" />
+  <link rel="stylesheet" href="/static/scanner/style.css?v=2.5" />
 </head>
 <body class="bg-[#0b0f19] text-gray-200 font-sans antialiased min-h-screen flex flex-col custom-scrollbar">
 
@@ -333,6 +333,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         
         <!-- Strategy Controls Group -->
         <div id="strategy-controls-group" class="flex items-center gap-2">
+          <!-- MASTER STRATEGY ENGINE POWER BUTTON (ACTIVE / PAUSED) -->
+          <button id="toggle-engine-btn" onclick="toggleStrategyEngine()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer" title="Master Power Switch: Start or Pause Strategy Engine (Stops background polling & AI grading)">
+            <span id="engine-status-indicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="engine-status-label">ENGINE: ACTIVE</span>
+          </button>
+
           <!-- EXECUTION MODE (VIRTUAL / LIVE) -->
           <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
             <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
@@ -1336,6 +1342,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
+    let isStrategyEngineActive = true;
     let isAutoOrder = true;
     let isDryRun = true;
     let feedItems = [];
@@ -2231,6 +2238,118 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
+    function updateStrategyEngineUI() {
+      const btn = document.getElementById('toggle-engine-btn');
+      const label = document.getElementById('engine-status-label');
+      const indicator = document.getElementById('engine-status-indicator');
+      const toggleModeBtn = document.getElementById('toggle-mode-btn');
+      const toggleAutoBtn = document.getElementById('toggle-auto-btn');
+      
+      const emptyHeading = document.getElementById('empty-state-heading');
+      const emptyDesc = document.getElementById('empty-state-desc');
+      const emptyRadarPing = document.getElementById('empty-radar-ping');
+      const emptyRadarPulse = document.getElementById('empty-radar-pulse');
+      const emptyRadarIcon = document.getElementById('empty-radar-icon');
+      const emptyStateDot = document.getElementById('empty-state-dot');
+      const emptyStatusText = document.getElementById('empty-state-status-text');
+      const radarPingDot = document.getElementById('radar-ping-dot');
+      const radarSolidDot = document.getElementById('radar-solid-dot');
+
+      if (isStrategyEngineActive) {
+        if (btn) {
+          btn.className = 'px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer';
+          btn.setAttribute('title', 'Master Power Switch: Strategy Engine is ACTIVE. Click to Pause (suspends background polling & AI grading).');
+        }
+        if (label) label.textContent = 'ENGINE: ACTIVE';
+        if (indicator) indicator.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+
+        // Re-enable dependent execution controls
+        if (toggleModeBtn) {
+          toggleModeBtn.disabled = false;
+          toggleModeBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+          toggleModeBtn.setAttribute('title', 'Click to toggle between VIRTUAL (Simulated) and LIVE TRADING');
+        }
+        if (toggleAutoBtn) {
+          toggleAutoBtn.disabled = false;
+          toggleAutoBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+          toggleAutoBtn.setAttribute('title', 'Toggle AI Automatic Order Placement');
+        }
+
+        if (radarPingDot) radarPingDot.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75';
+        if (radarSolidDot) radarSolidDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-500';
+
+        if (emptyHeading) emptyHeading.innerHTML = '<span>Live Radar Active — Scanning NSE Corporate Feed</span>';
+        if (emptyDesc) emptyDesc.textContent = 'Actively monitoring 228 F&O tickers on NSE. The AI filter automatically discards routine compliance noise and will alert here the moment an actionable market catalyst breaks.';
+        if (emptyRadarPing) emptyRadarPing.className = 'absolute w-16 h-16 rounded-full bg-emerald-500/10 animate-ping';
+        if (emptyRadarPulse) emptyRadarPulse.className = 'absolute w-12 h-12 rounded-full bg-emerald-500/20 animate-pulse';
+        if (emptyRadarIcon) emptyRadarIcon.textContent = '📡';
+        if (emptyStateDot) emptyStateDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+        if (emptyStatusText) {
+          emptyStatusText.textContent = 'Listening for catalysts...';
+          emptyStatusText.className = 'text-indigo-300 font-semibold';
+        }
+      } else {
+        if (btn) {
+          btn.className = 'px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/50 bg-amber-950/70 text-amber-300 hover:bg-amber-900 active:scale-95 cursor-pointer animate-pulse-subtle';
+          btn.setAttribute('title', 'Master Power Switch: Strategy Engine is PAUSED. Click to Start/Resume.');
+        }
+        if (label) label.textContent = 'ENGINE: PAUSED';
+        if (indicator) indicator.className = 'w-2 h-2 rounded-full bg-amber-400';
+
+        // Dim & lock dependent execution controls when strategy is paused
+        if (toggleModeBtn) {
+          toggleModeBtn.disabled = true;
+          toggleModeBtn.classList.add('opacity-40', 'cursor-not-allowed');
+          toggleModeBtn.setAttribute('title', 'Strategy engine is paused. Start strategy to change execution mode.');
+        }
+        if (toggleAutoBtn) {
+          toggleAutoBtn.disabled = true;
+          toggleAutoBtn.classList.add('opacity-40', 'cursor-not-allowed');
+          toggleAutoBtn.setAttribute('title', 'Strategy engine is paused. Start strategy to change auto-order settings.');
+        }
+
+        if (radarPingDot) radarPingDot.className = 'hidden';
+        if (radarSolidDot) radarSolidDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-amber-500';
+
+        if (emptyHeading) emptyHeading.innerHTML = '<span class="text-amber-300 flex items-center justify-center gap-2"><span>⏸️</span> <span>Strategy Engine Paused — Radar Standby</span></span>';
+        if (emptyDesc) emptyDesc.innerHTML = 'Background NSE announcement polling and Gemini AI grading are completely stopped. Click <button onclick="toggleStrategyEngine()" class="underline font-bold text-amber-400 hover:text-amber-300 cursor-pointer">Start Engine</button> above or below to resume active scanning.';
+        if (emptyRadarPing) emptyRadarPing.className = 'hidden';
+        if (emptyRadarPulse) emptyRadarPulse.className = 'hidden';
+        if (emptyRadarIcon) emptyRadarIcon.textContent = '⏸️';
+        if (emptyStateDot) emptyStateDot.className = 'w-2 h-2 rounded-full bg-amber-400';
+        if (emptyStatusText) {
+          emptyStatusText.textContent = 'Engine Paused (No API calls)';
+          emptyStatusText.className = 'text-amber-300 font-semibold';
+        }
+      }
+    }
+
+    async function toggleStrategyEngine(strategyId = 'st_news', targetStatus = null) {
+      try {
+        const nextStatus = targetStatus || (isStrategyEngineActive ? 'PAUSED' : 'ACTIVE');
+        const res = await fetch(`/api/strategies/${strategyId}/toggle-status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextStatus })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          isStrategyEngineActive = (data.status === 'ACTIVE');
+          updateStrategyEngineUI();
+          loadStrategies();
+          if (isStrategyEngineActive) {
+            showToast('🟢 ST-NEWS Catalyst Engine Started! Background radar active.', '⚡');
+          } else {
+            showToast('⏸️ ST-NEWS Catalyst Engine Paused. Polling and AI grading suspended.', '⏸️');
+          }
+        } else {
+          showToast('Failed to toggle Strategy Status', '❌');
+        }
+      } catch (err) {
+        showToast('Failed to toggle Strategy Status', '❌');
+      }
+    }
+
     function updateExecutionModeUI() {
       const btn = document.getElementById('toggle-mode-btn');
       const label = document.getElementById('mode-status-label');
@@ -2240,7 +2359,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (!btn || !label || !indicator) return;
 
       if (isDryRun) {
-        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40';
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'VIRTUAL';
         indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
         if (modeText) {
@@ -2248,7 +2367,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           modeText.className = 'text-amber-400 font-mono font-semibold';
         }
       } else {
-        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle';
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'LIVE';
         indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
         if (modeText) {
@@ -2259,6 +2378,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     async function toggleExecutionMode() {
+      if (!isStrategyEngineActive) {
+        showToast('⚠️ Strategy Engine is PAUSED. Click [ENGINE: PAUSED] to start strategy first.', '⚠️');
+        return;
+      }
       const targetDryRun = !isDryRun;
 
       if (!targetDryRun) {
@@ -2352,6 +2475,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const solidDot = document.getElementById('radar-solid-dot');
       if (!badge || !text) return;
 
+      if (!isStrategyEngineActive) {
+        badge.className = 'inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-3 py-1 rounded-full font-bold shadow-sm';
+        text.textContent = 'NSE RADAR PAUSED (Engine Stopped)';
+        if (pingDot) pingDot.className = 'hidden';
+        if (solidDot) solidDot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-400';
+        return;
+      }
+
       const isStandby = !isOpen && isMarketHoursOnly !== false;
       if (isStandby) {
         badge.className = 'inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-3 py-1 rounded-full font-bold shadow-sm';
@@ -2375,6 +2506,21 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const desc = document.getElementById('empty-state-desc');
       const dot = document.getElementById('empty-state-dot');
       const statusText = document.getElementById('empty-state-status-text');
+
+      if (!isStrategyEngineActive) {
+        if (ping) ping.className = 'hidden';
+        if (pulse) pulse.className = 'hidden';
+        if (box) box.className = 'w-10 h-10 rounded-full bg-[#162032] border border-amber-500/40 flex items-center justify-center text-xl shadow-lg';
+        if (icon) icon.textContent = '⏸️';
+        if (heading) heading.innerHTML = '<span class="text-amber-300 flex items-center justify-center gap-2"><span>⏸️</span> <span>Strategy Engine Paused — Radar Standby</span></span>';
+        if (desc) desc.innerHTML = 'Background NSE announcement polling and Gemini AI grading are completely stopped. Click <button onclick="toggleStrategyEngine()" class="underline font-bold text-amber-400 hover:text-amber-300 cursor-pointer">Start Engine</button> above to resume active scanning.';
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+        if (statusText) {
+          statusText.className = 'text-amber-300 font-semibold';
+          statusText.textContent = 'Engine Paused (No API calls)';
+        }
+        return;
+      }
 
       const isStandby = !isOpen && isMarketHoursOnly !== false;
       if (isStandby) {
@@ -2455,6 +2601,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         const res = await fetch('/api/status');
         if (res.ok) {
           const data = await res.json();
+          if (data.strategy_status !== undefined) {
+            isStrategyEngineActive = (data.strategy_status !== 'PAUSED');
+            updateStrategyEngineUI();
+          }
           isAutoOrder = data.auto_order;
           isDryRun = data.dry_run;
           updateAutoOrderUI();
@@ -2500,18 +2650,24 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const label = document.getElementById('auto-status-label');
       const indicator = document.getElementById('auto-status-indicator');
       
+      if (!btn || !label || !indicator) return;
+
       if (isAutoOrder) {
-        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5';
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'ENABLED (Auto-Place)';
         indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
       } else {
-        btn.className = 'px-2.5 py-1 text-xs font-bold rounded transition bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5';
+        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5 ${!isStrategyEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
         label.textContent = 'MANUAL (Prompt Approval)';
         indicator.className = 'w-2 h-2 rounded-full bg-amber-200';
       }
     }
 
     async function toggleAutoOrder() {
+      if (!isStrategyEngineActive) {
+        showToast('⚠️ Strategy Engine is PAUSED. Click [ENGINE: PAUSED] to start strategy first.', '⚠️');
+        return;
+      }
       try {
         const newStatus = !isAutoOrder;
         const res = await fetch('/api/toggle-auto-order', {
@@ -3238,6 +3394,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             fetchFeed();
             fetchTokenStatus();
             fetchStatus();
+          } else if (payload.type === 'STRATEGY_STATUS_TOGGLE') {
+            if (payload.data && payload.data.strategy_status) {
+              isStrategyEngineActive = (payload.data.strategy_status !== 'PAUSED');
+              updateStrategyEngineUI();
+              loadStrategies();
+            }
+            fetchFeed();
+            fetchStatus();
           } else if (payload.type === 'FEED_HISTORY_LOADED') {
             fetchFeed();
             fetchTokenStatus();
@@ -3389,6 +3553,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         const statusBg = strat.status === 'ACTIVE'
           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+          : strat.status === 'PAUSED'
+          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
           : strat.status === 'READY'
           ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
           : 'bg-gray-800 text-gray-400 border-gray-700';

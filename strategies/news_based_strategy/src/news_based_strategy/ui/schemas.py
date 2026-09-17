@@ -45,6 +45,10 @@ class LoadHistoryRequest(BaseModel):
     date_str: Optional[str] = None
 
 
+class ToggleStrategyStatusRequest(BaseModel):
+    status: Optional[str] = None
+
+
 __all__ = [
     "AppLoginRequest",
     "PlaceOrderRequest",
@@ -53,5 +57,6 @@ __all__ = [
     "UpdateTokenRequest",
     "SaveApiKeysRequest",
     "LoadHistoryRequest",
+    "ToggleStrategyStatusRequest",
 ]
 
