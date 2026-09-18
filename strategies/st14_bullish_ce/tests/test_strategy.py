@@ -237,7 +237,94 @@ class TestSt14Strategy(unittest.TestCase):
             self.assertEqual(len(telemetry["breakout_watchlist"]), 1)
             self.assertEqual(telemetry["breakout_watchlist"][0]["symbol"], "TATAMOTORS")
 
+    def test_live_mode_rejects_synthetic_option(self):
+        """Live mode must reject synthetic / unverified option contracts."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        self.strategy.provider.dhan = mock_dhan
+
+        opt_synthetic = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="OPT_INFY_1900_CE",
+            lot_size=300,
+            ltp=45.0,
+            is_synthetic=True,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=45.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_LIVE_01",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt_synthetic,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Option contract is synthetic", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
+    def test_live_mode_rejects_non_numeric_security_id(self):
+        """Live mode must reject contracts without valid numeric security IDs."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        self.strategy.provider.dhan = mock_dhan
+
+        opt_non_numeric = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="INVALID_NON_NUMERIC_ID",
+            lot_size=300,
+            ltp=45.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=45.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_LIVE_02",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt_non_numeric,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Invalid non-numeric security ID", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

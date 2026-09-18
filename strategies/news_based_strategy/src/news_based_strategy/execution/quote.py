@@ -1,5 +1,6 @@
 """Live Market Price (LTP) resolution module with multi-tier broker and exchange fallbacks."""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
@@ -16,7 +17,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Fallback reference prices for offline / isolated testing environments
+
+@dataclass
+class PriceQuote:
+    """Represents a market price quote with provenance and real-time validity."""
+    price: float
+    is_real_time: bool
+    source: str  # "dhan" | "market_feed" | "cache" | "fallback" | "manual"
+
+
+# Fallback reference prices strictly for offline / test environments
 DEFAULT_REFERENCE_LTPS: Dict[str, float] = {
     "BEL": 300.0,
     "BANKINDIA": 120.0,
@@ -37,26 +47,26 @@ DEFAULT_REFERENCE_LTPS: Dict[str, float] = {
     "ZOMATO": 250.0,
 }
 
-# In-memory TTL cache: symbol -> (price, expiry_epoch)
-_LTP_CACHE: Dict[str, Tuple[float, float]] = {}
+# In-memory TTL cache: symbol -> (PriceQuote, expiry_epoch)
+_LTP_CACHE: Dict[str, Tuple[PriceQuote, float]] = {}
 CACHE_TTL_SECONDS = 15.0
 
 
-def _get_cached_ltp(symbol: str) -> Optional[float]:
-    """Return cached LTP if not expired."""
+def _get_cached_quote(symbol: str) -> Optional[PriceQuote]:
+    """Return cached PriceQuote if not expired."""
     clean = symbol.strip().upper()
     if clean in _LTP_CACHE:
-        price, expiry = _LTP_CACHE[clean]
+        quote, expiry = _LTP_CACHE[clean]
         if time.time() < expiry:
-            return price
+            return quote
     return None
 
 
-def _set_cached_ltp(symbol: str, price: float) -> None:
-    """Store LTP in in-memory cache with TTL."""
-    if price > 0:
+def _set_cached_quote(symbol: str, quote: PriceQuote) -> None:
+    """Store PriceQuote in in-memory cache with TTL."""
+    if quote.price > 0:
         clean = symbol.strip().upper()
-        _LTP_CACHE[clean] = (round(price, 2), time.time() + CACHE_TTL_SECONDS)
+        _LTP_CACHE[clean] = (quote, time.time() + CACHE_TTL_SECONDS)
 
 
 def _fetch_from_dhan(symbol: str, security_id: Optional[str], dhan_client: Any) -> Optional[float]:
@@ -127,47 +137,63 @@ def _fetch_from_market_feed(symbol: str) -> Optional[float]:
     return None
 
 
-def get_live_market_ltp(
+def get_live_market_quote(
     symbol: str,
     security_id: Optional[str] = None,
     dhan_client: Any = None,
     default_price: float = 300.0,
-) -> float:
-    """Resolve the latest traded price (LTP) for an equity symbol using a 3-tier strategy.
+) -> PriceQuote:
+    """Resolve live market quote with provenance tracking (real-time vs fallback).
     
     1. Check in-memory 15-second TTL cache.
     2. Try DhanHQ Broker SDK (if client supplied and data API permitted).
     3. Query live exchange market feed endpoint.
-    4. Fallback to reference dictionary or provided default.
+    4. Fallback to reference dictionary or provided default (marked is_real_time=False).
     """
     if not symbol:
-        return default_price
+        return PriceQuote(price=default_price, is_real_time=False, source="fallback")
 
     clean = symbol.strip().upper()
 
     # 1. Cache hit
-    cached = _get_cached_ltp(clean)
+    cached = _get_cached_quote(clean)
     if cached is not None:
         return cached
 
     # 2. Dhan Broker API
     dhan_price = _fetch_from_dhan(clean, security_id, dhan_client)
     if dhan_price is not None and dhan_price > 0:
-        price = round(dhan_price, 2)
-        _set_cached_ltp(clean, price)
-        return price
+        quote = PriceQuote(price=round(dhan_price, 2), is_real_time=True, source="dhan")
+        _set_cached_quote(clean, quote)
+        return quote
 
     # 3. Live Exchange Market Feed
     feed_price = _fetch_from_market_feed(clean)
     if feed_price is not None and feed_price > 0:
-        price = round(feed_price, 2)
-        _set_cached_ltp(clean, price)
-        return price
+        quote = PriceQuote(price=round(feed_price, 2), is_real_time=True, source="market_feed")
+        _set_cached_quote(clean, quote)
+        return quote
 
-    # 4. Safe Reference Fallback
+    # 4. Safe Reference Fallback (Tagged as NOT real-time)
     ref_price = DEFAULT_REFERENCE_LTPS.get(clean, default_price)
-    _set_cached_ltp(clean, ref_price)
-    return ref_price
+    quote = PriceQuote(price=ref_price, is_real_time=False, source="fallback")
+    _set_cached_quote(clean, quote)
+    return quote
 
 
-__all__ = ["get_live_market_ltp", "DEFAULT_REFERENCE_LTPS"]
+def get_live_market_ltp(
+    symbol: str,
+    security_id: Optional[str] = None,
+    dhan_client: Any = None,
+    default_price: float = 300.0,
+) -> float:
+    """Resolve the latest traded price (LTP) float for backwards compatibility."""
+    return get_live_market_quote(
+        symbol=symbol,
+        security_id=security_id,
+        dhan_client=dhan_client,
+        default_price=default_price,
+    ).price
+
+
+__all__ = ["PriceQuote", "get_live_market_quote", "get_live_market_ltp", "DEFAULT_REFERENCE_LTPS"]

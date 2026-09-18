@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple
 from news_based_strategy.core.models import TradeResult, TradeSignal
-from news_based_strategy.execution.quote import get_live_market_ltp
+from news_based_strategy.execution.quote import PriceQuote, get_live_market_ltp, get_live_market_quote
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.ingestion.universe import resolve_security_id
 
@@ -441,23 +441,41 @@ class DhanExecutor:
         if not effective_sec_id or effective_sec_id == "0":
             effective_sec_id = resolve_security_id(signal.symbol) or "0"
 
-        # Resolve live market LTP if not explicitly provided
-        if ltp is None or ltp <= 0:
-            ltp = get_live_market_ltp(signal.symbol, security_id=effective_sec_id, dhan_client=self.dhan)
+        # Resolve live market quote if not explicitly provided
+        if ltp is not None and ltp > 0:
+            quote = PriceQuote(price=ltp, is_real_time=True, source="manual")
+        else:
+            quote = get_live_market_quote(signal.symbol, security_id=effective_sec_id, dhan_client=self.dhan)
+            ltp = quote.price
 
-        if not self.dry_run and (not effective_sec_id or effective_sec_id == "0"):
-            remarks = f"ORDER REJECTED: Could not resolve Dhan security ID for {signal.symbol}"
-            logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
-            return TradeResult(
-                success=False,
-                symbol=signal.symbol,
-                action=signal.action,
-                quantity=0,
-                product_type=safe_product,
-                order_id=None,
-                remarks=remarks,
-                dry_run=False,
-            )
+        if not self.dry_run:
+            if not effective_sec_id or effective_sec_id == "0" or not effective_sec_id.isdigit():
+                remarks = f"ORDER REJECTED: Could not resolve Dhan security ID (valid numeric required) for {signal.symbol}"
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
+
+            if not quote.is_real_time:
+                remarks = f"ORDER REJECTED: Live market quote unavailable for {signal.symbol} (source: {quote.source}). Real-time quote required for live execution."
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
 
         # 1. Staleness Circuit Breaker (Disarm if news broadcast is too old)
         if signal.exchange_time:

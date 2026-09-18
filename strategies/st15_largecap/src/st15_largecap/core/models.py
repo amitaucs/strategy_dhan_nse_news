@@ -30,6 +30,7 @@ class Candle:
     low: float
     close: float
     volume: float = 0.0
+    is_synthetic: bool = False
 
     @property
     def is_green(self) -> bool:

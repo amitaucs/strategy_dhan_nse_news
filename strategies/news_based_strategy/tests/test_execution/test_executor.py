@@ -129,6 +129,35 @@ class TestDhanExecutor(unittest.TestCase):
             self.assertEqual(call_kwargs["security_id"], "11703")
             self.assertEqual(call_kwargs["transaction_type"], "BUY")
 
+    def test_live_mode_rejects_fallback_price_quote(self):
+        """In live mode, if real-time price cannot be resolved (fallback used), order must be rejected."""
+        from news_based_strategy.execution.quote import PriceQuote
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            super_order_enabled=False,
+        )
+        mock_dhan = MagicMock()
+        executor.dhan = mock_dhan
+        executor.dry_run = False
+
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="CNC",
+            confidence=90,
+            catalyst_type="ORDER_WIN",
+            summary="Defense order",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")), \
+             patch("news_based_strategy.execution.executor.get_live_market_quote", return_value=PriceQuote(price=300.0, is_real_time=False, source="fallback")):
+            res = executor.execute_order(signal, ltp=None)
+            self.assertFalse(res.success)
+            self.assertIn("ORDER REJECTED: Live market quote unavailable", res.remarks)
+            self.assertFalse(mock_dhan.place_order.called)
+
     def test_dry_run_super_order_formatting(self):
         """Dry-run mode with Super Order enabled should format bracket order details."""
         executor = DhanExecutor(

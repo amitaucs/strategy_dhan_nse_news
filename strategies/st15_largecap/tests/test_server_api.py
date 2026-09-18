@@ -1,9 +1,15 @@
-"""Unit tests for FastAPI Web Dashboard & REST APIs."""
-
+import sys
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
+# Ensure tests fixture is accessible
+test_dir = Path(__file__).resolve().parent
+if str(test_dir) not in sys.path:
+    sys.path.insert(0, str(test_dir))
+
+from fixtures.mock_data import generate_mock_2h_candles
 from st15_largecap.ui.server import app, runner
 
 
@@ -184,7 +190,6 @@ class TestServerAPI(unittest.TestCase):
         self.assertTrue(any(s["symbol"] == "AARTIIND" for s in sig_data))
 
         # Verify manual execution endpoint with qualifying candles
-        from st15_largecap.ingestion.candles import generate_mock_2h_candles
         mock_candles = generate_mock_2h_candles(
             symbol="AARTIIND",
             base_price=640.0,
@@ -209,7 +214,6 @@ class TestServerAPI(unittest.TestCase):
             {"order_id": "ORD2", "symbol": "TCS", "status": "SIMULATED", "placed_at": "2026-09-06T11:00:00"},
             {"order_id": "ORD3", "symbol": "INFY", "status": "FILLED", "placed_at": "2026-09-06T12:00:00"},
         ]
-        from st15_largecap.ingestion.candles import generate_mock_2h_candles
         mock_candles = generate_mock_2h_candles(symbol="WIPRO", base_price=450.0, num_candles=80, bullish_trend=True, pullback_at_end=True)
 
         with patch.object(runner.repository, "get_today_orders", return_value=today_mock_orders), \
@@ -227,7 +231,6 @@ class TestServerAPI(unittest.TestCase):
         today_mock_orders = [
             {"order_id": "ORD1", "symbol": "ICICIBANK", "status": "PLACED", "placed_at": "2026-09-06T10:00:00"},
         ]
-        from st15_largecap.ingestion.candles import generate_mock_2h_candles
         mock_candles = generate_mock_2h_candles(symbol="ICICIBANK", base_price=1000.0, num_candles=80, bullish_trend=True, pullback_at_end=True)
 
         with patch.object(runner.repository, "get_today_orders", return_value=today_mock_orders), \
@@ -354,7 +357,9 @@ class TestServerAPI(unittest.TestCase):
         self.assertFalse(fallen_sig["is_active"])
 
         # Attempt to execute order for FALLENCO -> Must be blocked
-        with patch.object(runner.screener, "evaluate", return_value=scan_fallen), \
+        mock_candles = generate_mock_2h_candles(symbol="FALLENCO", base_price=640.0, num_candles=80)
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles), \
+             patch.object(runner.screener, "evaluate", return_value=scan_fallen), \
              patch.object(runner.repository, "get_today_orders", return_value=[]):
             exec_res = self.client.post("/api/execute/FALLENCO")
             self.assertEqual(exec_res.status_code, 200)
@@ -364,7 +369,6 @@ class TestServerAPI(unittest.TestCase):
             self.assertIn("Setup has fallen", exec_data["message"])
 
     def test_api_chart_endpoint(self):
-        from st15_largecap.ingestion.candles import generate_mock_2h_candles
         mock_candles = generate_mock_2h_candles(symbol="RELIANCE", base_price=2900.0, num_candles=80, bullish_trend=True)
         with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles):
             chart_res = self.client.get("/api/chart/RELIANCE")
@@ -388,7 +392,6 @@ class TestServerAPI(unittest.TestCase):
         self.assertIn("cleared", data["message"])
 
     def test_runner_parallel_scan(self):
-        from st15_largecap.ingestion.candles import generate_mock_2h_candles
         mock_candles = generate_mock_2h_candles(symbol="SBIN", base_price=800.0, num_candles=80, bullish_trend=True)
         test_symbols = ["SBIN", "TCS", "INFY", "RELIANCE"]
         with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles):

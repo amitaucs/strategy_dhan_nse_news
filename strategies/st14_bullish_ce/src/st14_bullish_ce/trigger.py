@@ -44,8 +44,7 @@ def check_breakout_candle_cross(
         ltp = current_ltp
 
     if ltp is None or ltp <= 0:
-        # If no live feed available, assume trigger matches breakout high for simulation
-        ltp = round(breakout_candle_high + 0.5, 2)
+        return False, 0.0, f"⏳ Pending Trigger: Live price unavailable for {symbol} (Breakout High: ₹{breakout_candle_high:,.2f})"
 
     is_crossed = ltp > breakout_candle_high
 

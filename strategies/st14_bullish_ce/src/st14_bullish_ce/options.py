@@ -148,6 +148,7 @@ def resolve_1otm_ce_contract(
     # Estimated option premium simulation (~1.5% - 2.5% of underlying for 1 OTM)
     simulated_ltp = round(underlying_ltp * 0.02, 2)
     sec_id = mock_sec_id or f"OPT_{symbol}_{int(otm1_strike)}_CE"
+    is_synthetic = True
 
     dhan_prov = provider or DhanDataProvider()
     if dhan_prov.dhan:
@@ -170,10 +171,11 @@ def resolve_1otm_ce_contract(
                     strike_key = f"{otm1_strike:.2f}"
                     if strike_key in oc_data:
                         ce_info = oc_data[strike_key].get("ce", {})
-                        if "security_id" in ce_info:
+                        if "security_id" in ce_info and str(ce_info["security_id"]).isdigit():
                             sec_id = str(ce_info["security_id"])
-                        if "last_price" in ce_info and float(ce_info["last_price"]) > 0:
-                            simulated_ltp = float(ce_info["last_price"])
+                            if "last_price" in ce_info and float(ce_info["last_price"]) > 0:
+                                simulated_ltp = float(ce_info["last_price"])
+                                is_synthetic = False
         except Exception as exc:
             logger.debug("Option chain lookup fallback for %s: %s", symbol, exc)
 
@@ -187,4 +189,5 @@ def resolve_1otm_ce_contract(
         lot_size=lot_size,
         ltp=simulated_ltp,
         is_next_month=is_next_month,
+        is_synthetic=is_synthetic,
     )

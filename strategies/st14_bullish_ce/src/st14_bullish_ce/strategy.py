@@ -407,6 +407,20 @@ class St14BullishCeStrategy:
 
         # 2. Live Execution Mode via DhanHQ Super Order API
         try:
+            if opt.is_synthetic:
+                remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Option contract is synthetic / unverified from live exchange option chain."
+                logger.error(remarks)
+                signal.status = OrderStatus.ORDER_REJECTED
+                signal.remarks = remarks
+                return False, remarks, None
+
+            if not opt.security_id or not opt.security_id.isdigit():
+                remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Invalid non-numeric security ID '{opt.security_id}' for live broker execution."
+                logger.error(remarks)
+                signal.status = OrderStatus.ORDER_REJECTED
+                signal.remarks = remarks
+                return False, remarks, None
+
             dhan = self.provider.dhan
             dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN
             order_resp = dhan.place_super_order(

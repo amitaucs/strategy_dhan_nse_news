@@ -1,11 +1,19 @@
 """Unit tests for ST15 Screener multi-gate verification and signal generation."""
 
 from datetime import datetime, timedelta
+import sys
+from pathlib import Path
 import unittest
+
+# Ensure tests fixture is accessible
+test_dir = Path(__file__).resolve().parent
+if str(test_dir) not in sys.path:
+    sys.path.insert(0, str(test_dir))
+
+from fixtures.mock_data import generate_mock_2h_candles
 
 from st15_largecap.core.models import Candle, SetupSignal, SignalStatus
 from st15_largecap.engine.screener import ST15Screener
-from st15_largecap.ingestion.candles import generate_mock_2h_candles
 
 
 class TestScreener(unittest.TestCase):

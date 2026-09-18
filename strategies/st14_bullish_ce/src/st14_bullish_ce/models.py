@@ -61,6 +61,7 @@ class St14OptionContract:
     lot_size: int = 1
     ltp: float = 0.0
     is_next_month: bool = False
+    is_synthetic: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

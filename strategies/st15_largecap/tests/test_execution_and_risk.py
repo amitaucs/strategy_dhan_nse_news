@@ -89,6 +89,35 @@ class TestExecutionAndRisk(unittest.TestCase):
         self.assertEqual(order.quantity, 10)
         self.assertEqual(order.entry_price, 1800.0)
 
+    def test_order_executor_live_rejects_non_numeric_security_id(self):
+        from unittest.mock import MagicMock
+        mock_dhan = MagicMock()
+        executor = OrderExecutor(dhan_client=mock_dhan, dry_run=False)
+        signal = SetupSignal(
+            symbol="UNKNOWN",
+            sec_id="MOCK_SEC_ID",
+            setup_time=datetime.now(),
+            trigger_price=100.0,
+            stop_loss_price=90.0,
+            target_profit_price=130.0,
+            risk_per_share=10.0,
+            risk_reward_ratio=3.0,
+            ema_20=98.0,
+            ema_50=95.0,
+            ema_200=90.0,
+            supertrend=92.0,
+            ha_close=99.0,
+            ha_open=97.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.3,
+            status=SignalStatus.TRIGGERED,
+        )
+        order = executor.execute_signal(signal, quantity=10)
+        self.assertFalse(order.dry_run)
+        self.assertEqual(order.status, "REJECTED_INVALID_SEC_ID")
+        self.assertIn("numeric Dhan Security ID required", order.remarks)
+        self.assertEqual(mock_dhan.place_order.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

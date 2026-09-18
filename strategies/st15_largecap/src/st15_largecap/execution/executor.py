@@ -92,6 +92,26 @@ class OrderExecutor:
                 remarks="Virtual simulation execution",
             )
 
+        # Strict Live Validation: Ensure valid numeric Security ID
+        if not signal.sec_id or not str(signal.sec_id).isdigit():
+            logger.error("⛔ [LIVE ORDER REJECTED] Real numeric Dhan Security ID required for %s (%s).", signal.symbol, signal.sec_id)
+            return TradeOrder(
+                order_id=f"REJ-{uuid.uuid4().hex[:8]}",
+                symbol=signal.symbol,
+                sec_id=str(signal.sec_id),
+                action="BUY",
+                quantity=qty,
+                entry_price=signal.trigger_price,
+                stop_loss=signal.stop_loss_price,
+                target_price=signal.target_profit_price,
+                product_type=product_type,
+                order_type=order_type_preference,
+                status="REJECTED_INVALID_SEC_ID",
+                dry_run=False,
+                placed_at=datetime.now(),
+                remarks="Real numeric Dhan Security ID required for live execution",
+            )
+
         # Live DhanHQ Order Placement
         try:
             logger.info(
@@ -99,6 +119,7 @@ class OrderExecutor:
                 signal.symbol, signal.sec_id, qty, signal.trigger_price,
                 signal.stop_loss_price, signal.target_profit_price,
             )
+
 
             # Strategy specifies positional holding (CNC/MTF) with server-side exit:
             # We place a Forever OCO or Super Order
