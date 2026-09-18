@@ -17,9 +17,14 @@ from scanner_dhan.scanner.st15_largecap import (
     HeikinAshiEmaPullbackScanner,
     HeikinAshiEmaScanResult,
 )
+from scanner_dhan.scanner.rsi_scanner import (
+    Nifty50RsiScanner,
+    RsiExtremesScanner,
+    RsiScanResult,
+    RsiZone,
+)
 from scanner_dhan.scanner.nifty50_support_resistance import (
     Nifty50ResistanceScanner,
-    Nifty50RsiScanner,
     Nifty50Scanner,
     Nifty50SupportScanner,
     StockSupportScan,
@@ -67,6 +72,9 @@ __all__ = [
     "Nifty50SupportScanner",
     "Nifty50ResistanceScanner",
     "Nifty50RsiScanner",
+    "RsiExtremesScanner",
+    "RsiScanResult",
+    "RsiZone",
     "HeikinAshiEmaPullbackScanner",
     "HeikinAshiEmaScanResult",
     "MonthlyHeikinAshi89EmaScanner",
