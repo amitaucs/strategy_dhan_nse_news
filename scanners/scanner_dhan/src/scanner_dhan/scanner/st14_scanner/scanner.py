@@ -149,6 +149,14 @@ class BullishCeIntradayScanner(BaseScanner):
             enforce_timing,
         )
 
+        # Fetch live real-time quotes batch across universe when connected to Dhan
+        live_quotes: dict[str, Any] = {}
+        if dhan_prov.dhan and sec_id_map:
+            try:
+                live_quotes = dhan_prov.fetch_quote_batch(list(sec_id_map.values()))
+            except Exception as exc:
+                logger.debug("Live quote batch fetch failed during scan, falling back to candle close: %s", exc)
+
         results: list[St14ScanResult] = []
 
         def _scan_stock(sym: str) -> St14ScanResult | None:
@@ -172,7 +180,16 @@ class BullishCeIntradayScanner(BaseScanner):
                 if df_hourly.empty or len(df_hourly) < 20:
                     return None
 
-                # 3. Technical & Momentum Evaluation
+                # 3. Resolve Real-Time Live LTP if available
+                live_ltp = None
+                if sec_id in live_quotes:
+                    tick = live_quotes[sec_id]
+                    if hasattr(tick, "last_price") and tick.last_price > 0:
+                        live_ltp = tick.last_price
+                    elif isinstance(tick, (int, float)) and tick > 0:
+                        live_ltp = float(tick)
+
+                # 4. Technical & Momentum Evaluation
                 res = analyze_st14_stock(
                     symbol=sym,
                     security_id=sec_id,
@@ -184,6 +201,7 @@ class BullishCeIntradayScanner(BaseScanner):
                     vwap_max_dist_pct=vwap_max_dist_pct,
                     require_rising_vwap=require_rising_vwap,
                     enforce_timing=enforce_timing,
+                    ltp_override=live_ltp,
                 )
                 return res
             except Exception as exc:

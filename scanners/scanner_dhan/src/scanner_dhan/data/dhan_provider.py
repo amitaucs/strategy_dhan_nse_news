@@ -13,16 +13,33 @@ from typing import Any
 import pandas as pd
 from dhanhq import DhanContext, dhanhq
 
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DhanDataProvider",
+    "MarketQuoteTick",
     "DhanDataAPIError",
     "DhanDataAPISubscriptionError",
     "DhanAuthError",
     "DhanRateLimitError",
     "load_dhan_credentials",
 ]
+
+
+@dataclass
+class MarketQuoteTick:
+    """Represents a structured market quote snapshot with provenance and timestamps."""
+    security_id: str
+    last_price: float
+    last_trade_time: Optional[datetime] = None
+    received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    volume: int = 0
+    oi: int = 0
+    exchange_segment: str = "NSE_EQ"
+    is_real_time: bool = True
 
 
 class DhanDataAPIError(Exception):
@@ -427,6 +444,87 @@ class DhanDataProvider:
                 break
 
         return ltp_map
+
+    def fetch_quote_batch(
+        self,
+        security_ids: list[str],
+        exchange_segment: str = "NSE_EQ",
+    ) -> dict[str, MarketQuoteTick]:
+        """Fetch full quote packet (LTP, exchange last_trade_time, volume, OI) from Dhan /marketfeed/quote."""
+        if not security_ids or self.dhan is None:
+            return {}
+
+        int_ids: list[int] = []
+        for sid in security_ids:
+            try:
+                int_ids.append(int(sid))
+            except ValueError:
+                continue
+
+        if not int_ids:
+            return {}
+
+        quote_map: dict[str, MarketQuoteTick] = {}
+        recv_time = datetime.now(timezone.utc)
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                if hasattr(self.dhan, "quote_data"):
+                    response = self.dhan.quote_data({exchange_segment: int_ids})
+                else:
+                    response = self.dhan.ticker_data({exchange_segment: int_ids})
+
+                if self._is_data_api_unsubscribed(response):
+                    raise DhanDataAPISubscriptionError()
+                if self._is_auth_error(response):
+                    raise DhanAuthError()
+                if self._is_rate_limit_response(response):
+                    if attempt < self.max_retries:
+                        time.sleep(1.0)
+                        continue
+
+                if isinstance(response, dict) and response.get("status") == "success" and "data" in response:
+                    seg_data = response["data"].get(exchange_segment, {})
+                    for sid_str, tick_info in seg_data.items():
+                        if isinstance(tick_info, dict):
+                            l_price = float(tick_info.get("last_price") or tick_info.get("lastPrice") or 0.0)
+                            if l_price <= 0:
+                                ohlc = tick_info.get("ohlc", {})
+                                l_price = float(ohlc.get("close") or ohlc.get("last_price") or 0.0)
+
+                            if l_price > 0:
+                                ltt = None
+                                ltt_raw = tick_info.get("last_trade_time") or tick_info.get("lastTradeTime")
+                                if ltt_raw:
+                                    try:
+                                        if isinstance(ltt_raw, (int, float)):
+                                            ltt = datetime.fromtimestamp(ltt_raw, tz=timezone.utc)
+                                        elif isinstance(ltt_raw, str):
+                                            ltt = datetime.fromisoformat(ltt_raw)
+                                    except Exception:
+                                        pass
+
+                                quote_map[sid_str] = MarketQuoteTick(
+                                    security_id=sid_str,
+                                    last_price=l_price,
+                                    last_trade_time=ltt,
+                                    received_at=recv_time,
+                                    volume=int(tick_info.get("volume", 0)),
+                                    oi=int(tick_info.get("oi", 0)),
+                                    exchange_segment=exchange_segment,
+                                    is_real_time=True,
+                                )
+                    return quote_map
+            except (DhanDataAPISubscriptionError, DhanAuthError):
+                raise
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(0.5)
+                    continue
+                logger.error("Error fetching quote batch: %s", exc)
+                break
+
+        return quote_map
 
     def fetch_expiry_list(
         self,

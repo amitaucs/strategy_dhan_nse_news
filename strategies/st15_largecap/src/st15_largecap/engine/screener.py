@@ -40,6 +40,7 @@ class ST15Screener:
         symbol: str,
         sec_id: str,
         candles: List[Candle],
+        live_ltp: Optional[float] = None,
     ) -> ScanResult:
         """Scan a symbol's 2H candles and determine if an entry setup has triggered.
         
@@ -50,7 +51,7 @@ class ST15Screener:
           4. SuperTrend: SuperTrend is Green (Bullish) on current candle
         """
         if not candles or len(candles) < 20:
-            ltp = candles[-1].close if candles else 0.0
+            ltp = live_ltp if (live_ltp is not None and live_ltp > 0) else (candles[-1].close if candles else 0.0)
             return ScanResult(
                 symbol=symbol,
                 sec_id=sec_id,
@@ -237,10 +238,11 @@ class ST15Screener:
                 invalidation_reason="",
             )
 
+        effective_ltp = live_ltp if (live_ltp is not None and live_ltp > 0) else curr_candle.close
         return ScanResult(
             symbol=symbol,
             sec_id=sec_id,
-            ltp=curr_candle.close,
+            ltp=round(effective_ltp, 2),
             ema_20=ema_20,
             ema_50=ema_50,
             ema_200=ema_200,
