@@ -64,3 +64,4 @@ class RsiScanResult:
             "distance_pct": 0.0,
             "all_supports": [],
         }
+

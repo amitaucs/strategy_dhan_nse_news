@@ -34,6 +34,7 @@ def test_rsi_scan_parameters() -> None:
     assert "oversold_threshold" in param_names
     assert "overbought_threshold" in param_names
     assert "rsi_period" in param_names
+    assert "scan_mode" in param_names
 
 
 def test_rsi_scan_result_model() -> None:
@@ -62,3 +63,4 @@ def test_rsi_scan_result_model() -> None:
     assert d["rsi_zone"] == "OVERSOLD"
     assert d["is_matched"] is True
     assert d["is_at_support"] is True
+

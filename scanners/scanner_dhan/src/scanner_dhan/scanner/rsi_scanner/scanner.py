@@ -94,6 +94,19 @@ class RsiExtremesScanner(BaseScanner):
             step=1,
             description="Lookback period for Wilder's RSI calculation (Standard: 14).",
         ),
+        ScannerParameter(
+            name="scan_mode",
+            label="Filter Mode",
+            param_type="select",
+            default="EXTREMES_ONLY",
+            description="Choose whether to show only Oversold/Overbought extremes or a specific side.",
+            options=[
+                {"value": "EXTREMES_ONLY", "label": "Extremes Only (Oversold + Overbought) ⭐"},
+                {"value": "OVERSOLD_ONLY", "label": "Oversold Stocks Only (Dip Reversals)"},
+                {"value": "OVERBOUGHT_ONLY", "label": "Overbought Stocks Only (Overextended)"},
+                {"value": "ALL_STOCKS", "label": "All Stocks (Include Neutral)"},
+            ],
+        ),
     ]
 
     def run(
@@ -105,6 +118,7 @@ class RsiExtremesScanner(BaseScanner):
         oversold = float(p.get("oversold_threshold", 38.0))
         overbought = float(p.get("overbought_threshold", 68.0))
         rsi_period = int(p.get("rsi_period", 14))
+        scan_mode = str(p.get("scan_mode", "EXTREMES_ONLY")).upper().strip()
         universe_choice = str(p.get("universe", "NIFTY_50"))
         timeframe = str(p.get("timeframe", "1D")).upper()
         prov = provider or DhanDataProvider()
@@ -177,6 +191,16 @@ class RsiExtremesScanner(BaseScanner):
                 )
             )
 
+        # Filter output based on user's scan_mode choice (Default: EXTREMES_ONLY)
+        if scan_mode == "OVERSOLD_ONLY":
+            filtered_results = [r for r in scan_results if r.rsi_zone == RsiZone.OVERSOLD]
+        elif scan_mode == "OVERBOUGHT_ONLY":
+            filtered_results = [r for r in scan_results if r.rsi_zone == RsiZone.OVERBOUGHT]
+        elif scan_mode == "ALL_STOCKS":
+            filtered_results = scan_results
+        else:  # EXTREMES_ONLY
+            filtered_results = [r for r in scan_results if r.is_matched]
+
         # Sort matches first, oversold (lowest RSI) first, then overbought (highest RSI)
         def _sort_key(r: RsiScanResult) -> tuple[int, float]:
             if not r.is_matched or r.rsi is None:
@@ -185,7 +209,7 @@ class RsiExtremesScanner(BaseScanner):
                 return (0, r.rsi)  # Lower RSI first
             return (1, -r.rsi)  # Higher overbought RSI first
 
-        scan_results.sort(key=_sort_key)
+        filtered_results.sort(key=_sort_key)
         matched_count = sum(1 for r in scan_results if r.is_matched)
 
         return ScanReport(
@@ -194,9 +218,10 @@ class RsiExtremesScanner(BaseScanner):
             scanner_name=f"{self.name} ({universe_name} | {timeframe})",
             total_scanned=len(scan_results),
             matched_count=matched_count,
-            results=scan_results,
+            results=filtered_results,
         )
 
 
 # Backward compatibility alias
 Nifty50RsiScanner = RsiExtremesScanner
+
