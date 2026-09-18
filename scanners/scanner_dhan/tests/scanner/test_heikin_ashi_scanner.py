@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scanner_dhan.scanner.heikin_ashi_ema.scanner import HeikinAshiEmaPullbackScanner
+from scanner_dhan.scanner.st15_largecap.scanner import HeikinAshiEmaPullbackScanner
 from scanner_dhan.universe.nifty100 import NIFTY_100_SYMBOLS, resolve_nifty100_securities
 
 
@@ -32,7 +32,7 @@ def test_heikin_ashi_scanner_registration() -> None:
 
 def test_heikin_ashi_scan_result_model() -> None:
     """Verify HeikinAshiEmaScanResult preserves all fields in to_dict."""
-    from scanner_dhan.scanner.heikin_ashi_ema.models import HeikinAshiEmaScanResult
+    from scanner_dhan.scanner.st15_largecap.models import HeikinAshiEmaScanResult
 
     res = HeikinAshiEmaScanResult(
         symbol="KOTAKBANK",

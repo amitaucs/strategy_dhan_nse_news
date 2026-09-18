@@ -15,7 +15,7 @@ from scanner_dhan.indicators import (
     calculate_supertrend,
 )
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
-from scanner_dhan.scanner.heikin_ashi_ema.models import HeikinAshiEmaScanResult
+from scanner_dhan.scanner.st15_largecap.models import HeikinAshiEmaScanResult
 from scanner_dhan.scanner.registry import register_scanner
 from scanner_dhan.universe import get_active_universe
 

@@ -13,7 +13,7 @@ from scanner_dhan.scanner.ha_st01_scanner import (
     HaSt01SetupType,
     analyze_ha_st01_stock,
 )
-from scanner_dhan.scanner.heikin_ashi_ema import (
+from scanner_dhan.scanner.st15_largecap import (
     HeikinAshiEmaPullbackScanner,
     HeikinAshiEmaScanResult,
 )
