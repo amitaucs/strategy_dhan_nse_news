@@ -105,11 +105,15 @@ class St14BullishCeStrategy:
         )
 
     def calculate_order_quantity(self, option_entry_price: float, lot_size: int = 250) -> int:
-        """Calculate position sizing bounded by allocated capital per trade."""
+        """Calculate position sizing strictly bounded by allocated capital per trade.
+        
+        Returns 0 if the cost of a single lot exceeds the allocated capital per trade,
+        preventing oversized positions from being placed.
+        """
         cost_per_lot = option_entry_price * lot_size
         if cost_per_lot <= 0:
-            return lot_size
-        num_lots = max(1, int(self.config.capital_per_trade / cost_per_lot))
+            return 0
+        num_lots = int(self.config.capital_per_trade / cost_per_lot)
         return num_lots * lot_size
 
     def run_hourly_discovery_scan(
@@ -394,6 +398,17 @@ class St14BullishCeStrategy:
             lot_size=opt.lot_size,
         )
 
+        if qty <= 0:
+            cost_1lot = levels.entry_price * opt.lot_size
+            remarks = (
+                f"❌ [ORDER REJECTED] {opt.symbol}: Cost of 1 lot (₹{cost_1lot:,.2f}) "
+                f"exceeds allocated capital per trade (₹{self.config.capital_per_trade:,.2f})."
+            )
+            logger.warning(remarks)
+            signal.status = OrderStatus.ORDER_REJECTED
+            signal.remarks = remarks
+            return False, remarks, None
+
         now_ist_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
 
         # 1. Virtual Paper Trading Mode
@@ -441,6 +456,34 @@ class St14BullishCeStrategy:
                 signal.status = OrderStatus.ORDER_REJECTED
                 signal.remarks = remarks
                 return False, remarks, None
+
+            # Broker margin check immediately before live placement
+            try:
+                fund_resp = (
+                    self.provider.fetch_fund_limits()
+                    if hasattr(self.provider, "fetch_fund_limits")
+                    else (self.provider.dhan.get_fund_limits() if hasattr(self.provider.dhan, "get_fund_limits") else None)
+                )
+                if isinstance(fund_resp, dict) and fund_resp.get("status") == "success":
+                    fund_data = fund_resp.get("data", {})
+                    avail_bal = float(
+                        fund_data.get("availabelBalance")
+                        or fund_data.get("availableBalance")
+                        or fund_data.get("sodLimit")
+                        or 0.0
+                    )
+                    required_margin = levels.entry_price * qty
+                    if avail_bal > 0 and avail_bal < required_margin:
+                        remarks = (
+                            f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Insufficient broker margin. "
+                            f"Required ₹{required_margin:,.2f}, Available: ₹{avail_bal:,.2f}."
+                        )
+                        logger.error(remarks)
+                        signal.status = OrderStatus.ORDER_REJECTED
+                        signal.remarks = remarks
+                        return False, remarks, None
+            except Exception as margin_exc:
+                logger.warning("Broker fund limit pre-check skipped due to error: %s", margin_exc)
 
             dhan = self.provider.dhan
             dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN

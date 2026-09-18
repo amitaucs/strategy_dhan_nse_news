@@ -392,9 +392,103 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertIsNone(pos3)
         self.assertIn("active position already open", remarks3.lower())
 
+    def test_capital_limit_rejects_oversized_option_lot(self):
+        """When 1 lot cost exceeds allocated capital, calculate_order_quantity must return 0 and execute_order must reject."""
+        # Capital = ₹30,000. Option Entry = ₹200, Lot Size = 250 -> 1 lot cost = ₹50,000 (> ₹30,000)
+        qty = self.strategy.calculate_order_quantity(option_entry_price=200.0, lot_size=250)
+        self.assertEqual(qty, 0)
+
+        opt_expensive = St14OptionContract(
+            symbol="BAJFINANCE 29OCT26 7500 CE",
+            underlying_symbol="BAJFINANCE",
+            strike_price=7500.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="OPT_BAJ_7500_CE",
+            lot_size=250,
+            ltp=200.0,
+            is_next_month=True,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=200.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_BAJ_001",
+            symbol="BAJFINANCE",
+            underlying_sec_id="317",
+            underlying_ltp=7400.0,
+            breakout_candle_high=7380.0,
+            daily_ema20=7200.0,
+            hourly_ema20=7300.0,
+            vwap=7350.0,
+            vwap_dist_pct=0.5,
+            vwap_angle_deg=45.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt_expensive,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertEqual(signal.status, OrderStatus.ORDER_REJECTED)
+        self.assertIn("exceeds allocated capital", remarks)
+
+    def test_live_mode_checks_broker_margin(self):
+        """Live mode must query broker fund limits and reject if available margin is insufficient."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.get_fund_limits.return_value = {
+            "status": "success",
+            "data": {
+                "availabelBalance": 5000.0,  # Available ₹5,000 only
+                "sodLimit": 5000.0,
+            },
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="12345",  # Valid numeric ID
+            lot_size=300,
+            ltp=50.0,  # 1 lot = 300 * 50.25 ≈ ₹15,075 (exceeds ₹5,000 available balance)
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=50.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_MARGIN_01",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Insufficient broker margin", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

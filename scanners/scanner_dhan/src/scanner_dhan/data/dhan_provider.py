@@ -596,6 +596,27 @@ class DhanDataProvider:
                 break
         return {}
 
+    def fetch_fund_limits(self) -> dict[str, Any]:
+        """Fetch real-time available fund limits from Dhan account."""
+        if self.dhan is None:
+            return {"status": "failure", "remarks": "Dhan client not initialized"}
+
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                if hasattr(self.dhan, "get_fund_limits"):
+                    response = self.dhan.get_fund_limits()
+                    if isinstance(response, dict):
+                        return response
+                    return {"status": "failure", "remarks": str(response)}
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(0.5)
+                    continue
+                logger.error("Dhan get_fund_limits error: %s", exc)
+                return {"status": "failure", "remarks": str(exc)}
+        return {"status": "failure", "remarks": "Failed to retrieve fund limits"}
+
     def fetch_intraday_minute_bars(
         self,
         security_id: str,
