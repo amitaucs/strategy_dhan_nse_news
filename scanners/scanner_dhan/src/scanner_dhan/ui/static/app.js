@@ -91,6 +91,8 @@ const categoryBadgeColors = {
   "Breakout": "bg-amber-950/60 text-amber-300 border-amber-800/50",
   "Breakout / Momentum": "bg-amber-950/60 text-amber-300 border-amber-800/50",
   "Smart Money Concepts": "bg-purple-950/60 text-purple-300 border-purple-800/50",
+  "Chart Patterns": "bg-rose-950/60 text-rose-300 border-rose-800/50",
+  "Classic Chart Patterns": "bg-rose-950/60 text-rose-300 border-rose-800/50",
 };
 
 const categoryIconGradients = {
@@ -103,6 +105,8 @@ const categoryIconGradients = {
   "Breakout": "from-amber-500 to-yellow-600 shadow-amber-500/20",
   "Breakout / Momentum": "from-amber-500 to-yellow-600 shadow-amber-500/20",
   "Smart Money Concepts": "from-purple-500 to-indigo-600 shadow-purple-500/20",
+  "Chart Patterns": "from-rose-500 to-pink-600 shadow-rose-500/20",
+  "Classic Chart Patterns": "from-rose-500 to-pink-600 shadow-rose-500/20",
 };
 
 async function loadScanners() {

@@ -873,3 +873,13 @@ class DhanDataProvider:
             return self.fetch_2h_bars(security_id, days=min(days or 25, 30))
         else:
             return self.fetch_daily_bars(security_id, days=days or 150)
+
+    def fetch_daily_ohlcv(
+        self,
+        security_id: str,
+        days: int | None = None,
+        symbol: str | None = None,
+    ) -> pd.DataFrame:
+        """Alias for fetch_daily_bars."""
+        return self.fetch_daily_bars(security_id=security_id, days=days or 150)
+
