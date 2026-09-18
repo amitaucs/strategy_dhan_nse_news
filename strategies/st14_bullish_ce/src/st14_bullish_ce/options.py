@@ -1,4 +1,4 @@
-"""1-OTM Call Option Contract Selection and Monthly Expiry Resolver."""
+"""1-OTM Call Option Contract Selection and Active Expiry Resolver using DhanHQ APIs."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "get_monthly_expiry_date",
+    "resolve_target_expiry_from_list",
     "resolve_target_expiry",
     "calculate_strike_interval",
     "resolve_otm1_strike",
@@ -23,38 +24,69 @@ __all__ = [
 
 
 def get_monthly_expiry_date(year: int, month: int) -> dt.date:
-    """Calculate the last Thursday of a given month and year (standard NSE F&O monthly expiry)."""
+    """Calculate the last Tuesday of a given month and year (NSE stock derivatives standard since September 2025)."""
     last_day = calendar.monthrange(year, month)[1]
     last_date = dt.date(year, month, last_day)
-    # Thursday is weekday 3 (Monday is 0)
-    offset = (last_date.weekday() - 3) % 7
+    # Tuesday is weekday 1 (Monday is 0, Tuesday is 1)
+    offset = (last_date.weekday() - 1) % 7
     expiry = last_date - dt.timedelta(days=offset)
     return expiry
 
 
-def resolve_target_expiry(current_date: Optional[dt.date] = None) -> Tuple[dt.date, bool]:
-    """Resolve target monthly expiry date based on the 15th-day rule.
+def resolve_target_expiry_from_list(
+    expiry_dates: List[str],
+    current_date: Optional[dt.date] = None,
+) -> Tuple[dt.date, bool]:
+    """Select the target monthly expiry from active dates returned by DhanHQ expiry_list().
 
     Rule:
-      - If current date <= 15th of the month: Select Current Month Monthly Expiry.
-      - If current date > 15th of the month: Select Next Month Monthly Expiry (Theta Shield).
+      - If current date <= 15th of the month: Select 1st Upcoming Monthly Expiry (Current Month).
+      - If current date > 15th of the month: Select 2nd Upcoming Monthly Expiry (Next Month - Theta Shield).
+    """
+    today = current_date or dt.date.today()
+    parsed_dates: List[dt.date] = []
 
-    Returns:
-        Tuple[dt.date, bool]: (target_expiry_date, is_next_month)
+    for d_str in expiry_dates:
+        try:
+            d_clean = str(d_str).strip()
+            parsed_d = dt.datetime.strptime(d_clean, "%Y-%m-%d").date()
+            if parsed_d >= today:
+                parsed_dates.append(parsed_d)
+        except Exception:
+            continue
+
+    parsed_dates = sorted(set(parsed_dates))
+
+    if not parsed_dates:
+        return resolve_target_expiry(today)
+
+    if today.day <= 15:
+        # Current Month Expiry (1st upcoming)
+        return parsed_dates[0], False
+    else:
+        # Next Month Expiry (2nd upcoming, or 1st if only 1 exists)
+        if len(parsed_dates) >= 2:
+            return parsed_dates[1], True
+        return parsed_dates[0], True
+
+
+def resolve_target_expiry(current_date: Optional[dt.date] = None) -> Tuple[dt.date, bool]:
+    """Resolve fallback monthly expiry date using last Tuesday when offline or unconfigured.
+
+    Rule:
+      - If current date <= 15th of the month: Select Current Month Monthly Expiry (Last Tuesday).
+      - If current date > 15th of the month: Select Next Month Monthly Expiry (Theta Shield).
     """
     today = current_date or dt.date.today()
 
     if today.day <= 15:
-        # Current Month Expiry
         expiry = get_monthly_expiry_date(today.year, today.month)
-        # If current month's last Thursday has already passed (rare edge case on day 15), roll to next
         if expiry < today:
             next_month = 1 if today.month == 12 else today.month + 1
             next_year = today.year + 1 if today.month == 12 else today.year
             return get_monthly_expiry_date(next_year, next_month), True
         return expiry, False
     else:
-        # Next Month Expiry
         next_month = 1 if today.month == 12 else today.month + 1
         next_year = today.year + 1 if today.month == 12 else today.year
         return get_monthly_expiry_date(next_year, next_month), True
@@ -91,7 +123,7 @@ def resolve_otm1_strike(
         Tuple[float, float]: (atm_strike, otm1_strike)
     """
     if available_strikes and len(available_strikes) >= 2:
-        sorted_strikes = sorted(available_strikes)
+        sorted_strikes = sorted(set(available_strikes))
         # Find ATM: closest strike to LTP
         atm = min(sorted_strikes, key=lambda s: abs(s - underlying_ltp))
         atm_idx = sorted_strikes.index(atm)
@@ -102,7 +134,7 @@ def resolve_otm1_strike(
         else:
             interval = calculate_strike_interval(underlying_ltp)
             otm1 = atm + interval
-        return atm, otm1
+        return float(atm), float(otm1)
 
     # Standard formulaic fallback
     interval = calculate_strike_interval(underlying_ltp)
@@ -120,7 +152,7 @@ def resolve_1otm_ce_contract(
     mock_sec_id: Optional[str] = None,
     mock_lot_size: Optional[int] = None,
 ) -> Optional[St14OptionContract]:
-    """Resolve full 1-OTM CE option contract for the underlying stock with date-based expiry.
+    """Resolve full 1-OTM CE option contract for the underlying stock with live Dhan expiry list & option chain.
 
     Returns:
         Optional[St14OptionContract]: Option contract details or None if symbol is not in active F&O.
@@ -131,13 +163,62 @@ def resolve_1otm_ce_contract(
         return None
 
     today = current_date or dt.date.today()
-    expiry_dt, is_next_month = resolve_target_expiry(today)
+    dhan_prov = provider or DhanDataProvider()
+
+    under_sec_id: Optional[str] = None
+    if dhan_prov:
+        mgr = get_universe_manager()
+        under_sec_id = mgr._equity_sec_ids.get(symbol.upper())
+        if not under_sec_id and dhan_prov.dhan:
+            under_sec_id = str(dhan_prov.resolve_security_id(symbol))
+
+    # 2. Resolve Active Expiry Date via DhanHQ expiry_list() API
+    expiry_dt: dt.date
+    is_next_month: bool
+    live_expiries: List[str] = []
+
+    if dhan_prov and dhan_prov.dhan and under_sec_id and str(under_sec_id) not in ("0", ""):
+        try:
+            live_expiries = dhan_prov.fetch_expiry_list(under_security_id=under_sec_id)
+        except Exception as exc:
+            logger.debug("Error calling expiry_list for %s: %s", symbol, exc)
+
+    if live_expiries:
+        expiry_dt, is_next_month = resolve_target_expiry_from_list(live_expiries, today)
+    else:
+        expiry_dt, is_next_month = resolve_target_expiry(today)
+
     expiry_str = expiry_dt.strftime("%Y-%m-%d")
     expiry_label = expiry_dt.strftime("%d%b%y").upper()
 
+    # 3. Query Real-Time Option Chain from DhanHQ
+    chain_data: Dict[str, Any] = {}
+    if dhan_prov and dhan_prov.dhan and under_sec_id and str(under_sec_id) not in ("0", ""):
+        try:
+            chain_data = dhan_prov.fetch_option_chain(
+                under_security_id=under_sec_id,
+                expiry=expiry_str,
+            )
+        except Exception as exc:
+            logger.debug("Option chain lookup failed for %s: %s", symbol, exc)
+
+    oc_entries = chain_data.get("oc", {}) if isinstance(chain_data, dict) else {}
+
+    # Extract all real strikes from option chain if available
+    chain_strikes: Optional[List[float]] = available_strikes
+    if oc_entries:
+        parsed_strikes: List[float] = []
+        for k in oc_entries.keys():
+            try:
+                parsed_strikes.append(float(k))
+            except (ValueError, TypeError):
+                continue
+        if parsed_strikes:
+            chain_strikes = sorted(parsed_strikes)
+
     atm_strike, otm1_strike = resolve_otm1_strike(
         underlying_ltp=underlying_ltp,
-        available_strikes=available_strikes,
+        available_strikes=chain_strikes,
     )
 
     option_symbol = f"{symbol} {expiry_label} {int(otm1_strike) if otm1_strike.is_integer() else otm1_strike} CE"
@@ -145,39 +226,32 @@ def resolve_1otm_ce_contract(
     # Fetch exact exchange lot size from universe manager
     lot_size = mock_lot_size or get_fno_lot_size(symbol, default=250)
 
-    # Estimated option premium simulation (~1.5% - 2.5% of underlying for 1 OTM)
+    # Resolve Security ID and Real-Time Premium
     simulated_ltp = round(underlying_ltp * 0.02, 2)
     sec_id = mock_sec_id or f"OPT_{symbol}_{int(otm1_strike)}_CE"
     is_synthetic = True
 
-    dhan_prov = provider or DhanDataProvider()
-    if dhan_prov.dhan:
-        try:
-            # Resolve underlying security ID on NSE_EQ
-            mgr = get_universe_manager()
-            under_sec_id = mgr._equity_sec_ids.get(symbol.upper())
-            if not under_sec_id:
-                under_sec_id = str(dhan_prov.resolve_security_id(symbol))
+    if oc_entries:
+        # Match strike in option chain data
+        matched_strike_data = None
+        for k, v in oc_entries.items():
+            try:
+                if abs(float(k) - otm1_strike) < 0.001:
+                    matched_strike_data = v
+                    break
+            except (ValueError, TypeError):
+                continue
 
-            if under_sec_id and str(under_sec_id) not in ("0", ""):
-                # Query Dhan option chain
-                resp = dhan_prov.dhan.option_chain(
-                    under_security_id=int(under_sec_id),
-                    under_exchange_segment="NSE_EQ",
-                    expiry=expiry_str,
-                )
-                if isinstance(resp, dict) and resp.get("status") == "success" and "data" in resp:
-                    oc_data = resp["data"].get("oc", {})
-                    strike_key = f"{otm1_strike:.2f}"
-                    if strike_key in oc_data:
-                        ce_info = oc_data[strike_key].get("ce", {})
-                        if "security_id" in ce_info and str(ce_info["security_id"]).isdigit():
-                            sec_id = str(ce_info["security_id"])
-                            if "last_price" in ce_info and float(ce_info["last_price"]) > 0:
-                                simulated_ltp = float(ce_info["last_price"])
-                                is_synthetic = False
-        except Exception as exc:
-            logger.debug("Option chain lookup fallback for %s: %s", symbol, exc)
+        if isinstance(matched_strike_data, dict):
+            ce_info = matched_strike_data.get("ce", {})
+            if isinstance(ce_info, dict):
+                cand_sec_id = str(ce_info.get("security_id", "")).strip()
+                cand_price = ce_info.get("last_price")
+                if cand_sec_id and cand_sec_id.isdigit():
+                    sec_id = cand_sec_id
+                    if cand_price is not None and float(cand_price) > 0:
+                        simulated_ltp = float(cand_price)
+                        is_synthetic = False
 
     return St14OptionContract(
         symbol=option_symbol,

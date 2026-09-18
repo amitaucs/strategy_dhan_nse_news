@@ -428,6 +428,76 @@ class DhanDataProvider:
 
         return ltp_map
 
+    def fetch_expiry_list(
+        self,
+        under_security_id: str | int,
+        under_exchange_segment: str = "NSE_EQ",
+    ) -> list[str]:
+        """Fetch real-time active derivative expiry dates from DhanHQ API (/optionchain/expirylist)."""
+        if self.dhan is None or not under_security_id:
+            return []
+
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                sec_int = int(under_security_id)
+                response = self.dhan.expiry_list(
+                    under_security_id=sec_int,
+                    under_exchange_segment=under_exchange_segment,
+                )
+                if isinstance(response, dict) and response.get("status") == "success":
+                    data = response.get("data")
+                    if isinstance(data, list):
+                        return [str(d).strip() for d in data if d]
+                    elif isinstance(data, dict):
+                        for k in ("expiry_dates", "list", "expiries"):
+                            if k in data and isinstance(data[k], list):
+                                return [str(d).strip() for d in data[k] if d]
+                elif self._is_rate_limit_response(response):
+                    if attempt < self.max_retries:
+                        time.sleep(1.0)
+                        continue
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(1.0)
+                    continue
+                logger.debug("Dhan expiry_list error for %s: %s", under_security_id, exc)
+                break
+        return []
+
+    def fetch_option_chain(
+        self,
+        under_security_id: str | int,
+        expiry: str,
+        under_exchange_segment: str = "NSE_EQ",
+    ) -> dict[str, Any]:
+        """Fetch real-time option chain for an underlying instrument and expiry date from DhanHQ."""
+        if self.dhan is None or not under_security_id or not expiry:
+            return {}
+
+        for attempt in range(1, self.max_retries + 1):
+            self._pace_request()
+            try:
+                sec_int = int(under_security_id)
+                response = self.dhan.option_chain(
+                    under_security_id=sec_int,
+                    under_exchange_segment=under_exchange_segment,
+                    expiry=str(expiry).strip(),
+                )
+                if isinstance(response, dict) and response.get("status") == "success":
+                    return response.get("data", {})
+                elif self._is_rate_limit_response(response):
+                    if attempt < self.max_retries:
+                        time.sleep(1.0)
+                        continue
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    time.sleep(1.0)
+                    continue
+                logger.debug("Dhan option_chain error for %s (expiry %s): %s", under_security_id, expiry, exc)
+                break
+        return {}
+
     def fetch_intraday_minute_bars(
         self,
         security_id: str,
