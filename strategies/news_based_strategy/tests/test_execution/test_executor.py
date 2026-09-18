@@ -486,6 +486,43 @@ class TestDhanExecutor(unittest.TestCase):
             self.assertEqual(res.quantity, 0)
             self.assertIn("ORDER REJECTED: Trade cutoff reached", res.remarks)
 
+    def test_trade_cutoff_evaluates_wall_clock_time_not_announcement_time(self):
+        """Execution cutoff check must evaluate current wall-clock time, not the morning announcement timestamp."""
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            trade_cutoff_time="14:45",
+        )
+        # Signal with early morning announcement timestamp (10:30 AM)
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="INTRADAY",
+            confidence=95,
+            catalyst_type="ORDER_WIN",
+            summary="Major order win",
+            exchange_time="04-Sep-2026 10:30:00",
+        )
+        valid_quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
+        # Wall clock is at 15:05 PM (after cutoff)
+        wall_clock_after_cutoff = datetime(2026, 9, 4, 15, 5, 0)
+
+        with patch("news_based_strategy.execution.risk.RiskManager.get_ist_now", return_value=wall_clock_after_cutoff), \
+             patch("news_based_strategy.execution.risk.RiskManager.is_news_fresh", return_value=(True, 30.0)):
+            res = executor.execute_order(signal, quote=valid_quote)
+            self.assertFalse(res.success)
+            self.assertEqual(res.quantity, 0)
+            self.assertIn("Trade cutoff reached", res.remarks)
+
     def test_square_off_all_positions_dry_run(self):
         """In dry-run mode, square_off_all_positions should return simulated square-off summary."""
         executor = DhanExecutor(dry_run=True)

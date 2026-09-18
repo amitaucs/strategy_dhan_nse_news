@@ -231,6 +231,7 @@ class RiskManager:
         an_dt_str: str,
         max_age_seconds: int = 180,
         reference_time: Optional[datetime] = None,
+        clock_skew_tolerance_seconds: float = 15.0,
     ) -> tuple[bool, float]:
         """Check if an exchange broadcast timestamp is fresh enough for alpha execution.
 
@@ -238,6 +239,7 @@ class RiskManager:
             an_dt_str: Exchange broadcast timestamp string (e.g. '04-Sep-2026 15:18:43').
             max_age_seconds: Max acceptable age in seconds before news is deemed stale (0 disables check).
             reference_time: Evaluation time (defaults to current IST time).
+            clock_skew_tolerance_seconds: Maximum tolerable future clock skew in seconds (default: 15.0s).
 
         Returns:
             tuple of (is_fresh: bool, age_seconds: float)
@@ -253,7 +255,19 @@ class RiskManager:
         ref = reference_time or cls.get_ist_now()
         age = (ref - exchange_time).total_seconds()
 
-        # Handle negative delta due to minor clock skew between exchange and local machine
+        # Check for future-dated announcement timestamp beyond permitted clock skew
+        if age < -clock_skew_tolerance_seconds:
+            logger.warning(
+                "❌ [NEWS STALENESS GATE] Future announcement timestamp '%s' rejected "
+                "(%.1fs ahead of reference %s, exceeding skew tolerance of %.1fs). Failing closed.",
+                an_dt_str,
+                -age,
+                ref.strftime("%Y-%m-%d %H:%M:%S"),
+                clock_skew_tolerance_seconds,
+            )
+            return False, float("inf")
+
+        # Handle minor negative delta due to small clock skew between exchange and local machine
         if age < 0:
             age = 0.0
 

@@ -98,11 +98,23 @@ class TestRiskManager(unittest.TestCase):
         self.assertFalse(is_fresh2)
         self.assertAlmostEqual(age2, 250.0, places=1)
 
-        # Clock skew resilience: Exchange clock slightly ahead of local machine
-        skew_time_str = "04-Sep-2026 15:20:10"  # 10s into the future
-        is_fresh3, age3 = RiskManager.is_news_fresh(skew_time_str, max_age_seconds=180, reference_time=ref_time)
+        # Clock skew resilience: Exchange clock slightly ahead of local machine (within tolerance)
+        skew_time_str = "04-Sep-2026 15:20:10"  # 10s into the future (<= 15s tolerance)
+        is_fresh3, age3 = RiskManager.is_news_fresh(skew_time_str, max_age_seconds=180, reference_time=ref_time, clock_skew_tolerance_seconds=15.0)
         self.assertTrue(is_fresh3)
         self.assertEqual(age3, 0.0)
+
+        # Future timestamp rejection: Exchange timestamp significantly in the future (> tolerance)
+        future_time_str = "04-Sep-2026 15:20:30"  # 30s into the future (> 15s tolerance)
+        is_fresh_fut, age_fut = RiskManager.is_news_fresh(future_time_str, max_age_seconds=180, reference_time=ref_time, clock_skew_tolerance_seconds=15.0)
+        self.assertFalse(is_fresh_fut)
+        self.assertEqual(age_fut, float("inf"))
+
+        # Far-future timestamp rejection (e.g. 5 hours ahead)
+        far_future_str = "04-Sep-2026 20:20:00"
+        is_fresh_far, age_far = RiskManager.is_news_fresh(far_future_str, max_age_seconds=180, reference_time=ref_time, clock_skew_tolerance_seconds=15.0)
+        self.assertFalse(is_fresh_far)
+        self.assertEqual(age_far, float("inf"))
 
         # Disabled check (max_age_seconds <= 0)
         is_fresh4, _ = RiskManager.is_news_fresh(stale_time_str, max_age_seconds=0, reference_time=ref_time)

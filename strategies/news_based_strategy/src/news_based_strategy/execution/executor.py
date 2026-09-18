@@ -599,8 +599,8 @@ class DhanExecutor:
 
         # 2. Intraday Trade Cutoff Window (No new trades permitted after 02:45 PM IST)
         if not self.dry_run:
-            ref_dt = RiskManager.parse_exchange_timestamp(signal.exchange_time) if signal.exchange_time else RiskManager.get_ist_now()
-            is_allowed, cutoff_reason = RiskManager.is_trade_allowed(ref_dt, cutoff_str=self.trade_cutoff_time)
+            current_ist = RiskManager.get_ist_now()
+            is_allowed, cutoff_reason = RiskManager.is_trade_allowed(current_ist, cutoff_str=self.trade_cutoff_time)
             if not is_allowed:
                 remarks = f"ORDER REJECTED: {cutoff_reason}"
                 logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
