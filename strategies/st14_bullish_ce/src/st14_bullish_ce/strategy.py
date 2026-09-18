@@ -674,49 +674,153 @@ class St14BullishCeStrategy:
         self.config.product_type = target
         return target.value
 
+    def _execute_broker_square_off(
+        self,
+        pos: St14Position,
+        reason: str,
+        now_str: str,
+    ) -> Tuple[bool, str]:
+        """Execute broker-level Super Order cancellation, position reconciliation, and market exit."""
+        if pos.mode != ExecutionMode.LIVE or not self.provider or not self.provider.dhan:
+            pos.status = "CLOSED"
+            pos.close_reason = reason
+            pos.exit_price = pos.current_ltp
+            pos.exit_time_ist = now_str
+            return True, "Virtual square-off completed"
+
+        dhan = self.provider.dhan
+        order_id = pos.position_id
+
+        # 1. Inspect Super Order status from broker
+        order_status = None
+        if order_id and not order_id.startswith("SIM_"):
+            try:
+                order_info = dhan.get_order_by_id(order_id)
+                if isinstance(order_info, dict) and order_info.get("status") == "success":
+                    data = order_info.get("data", {})
+                    if isinstance(data, dict):
+                        order_status = data.get("orderStatus")
+            except Exception as e:
+                logger.warning("Could not query order %s status from Dhan: %s", order_id, e)
+
+        # 2. Cancel order legs based on entry leg state
+        if order_id and not order_id.startswith("SIM_"):
+            if order_status in ("PENDING", "TRANSIT"):
+                # Entry is still pending -> cancel ENTRY_LEG to cancel entire Super Order
+                try:
+                    c_resp = dhan.cancel_super_order(order_id, "ENTRY_LEG")
+                    logger.info("🛑 Cancelled pending ENTRY_LEG for %s (%s): %s", pos.symbol, order_id, c_resp)
+                except Exception as e:
+                    logger.warning("Failed to cancel ENTRY_LEG for %s (%s): %s", pos.symbol, order_id, e)
+            else:
+                # Traded or unknown -> Cancel child exit legs (TARGET and STOP_LOSS)
+                for leg in ("TARGET_LEG", "STOP_LOSS_LEG"):
+                    try:
+                        c_resp = dhan.cancel_super_order(order_id, leg)
+                        logger.debug("Cancelled %s for %s (%s): %s", leg, pos.symbol, order_id, c_resp)
+                    except Exception as e:
+                        logger.debug("Could not cancel %s for %s (%s): %s", leg, pos.symbol, order_id, e)
+
+                # Fallback cancel regular order if not a super order
+                try:
+                    dhan.cancel_order(order_id)
+                except Exception:
+                    pass
+
+        # 3. Query broker-confirmed open positions
+        net_qty = 0
+        try:
+            pos_resp = dhan.get_positions()
+            positions_list = []
+            if isinstance(pos_resp, dict) and pos_resp.get("status") == "success":
+                positions_list = pos_resp.get("data", [])
+            elif isinstance(pos_resp, list):
+                positions_list = pos_resp
+            elif isinstance(pos_resp, dict) and pos_resp.get("status") == "failure":
+                err_msg = f"Dhan get_positions returned failure: {pos_resp.get('remarks', pos_resp)}"
+                logger.error("❌ %s", err_msg)
+                pos.status = "EXIT_FAILED"
+                pos.close_reason = err_msg
+                return False, err_msg
+
+            for p in positions_list:
+                if not isinstance(p, dict):
+                    continue
+                # Match by securityId or tradingSymbol
+                p_sec = str(p.get("securityId", "")).strip()
+                p_sym = str(p.get("tradingSymbol", "")).strip()
+                if (pos.security_id and p_sec == str(pos.security_id)) or (pos.option_symbol and p_sym == pos.option_symbol):
+                    net_qty = int(p.get("netQty", 0))
+                    if net_qty == 0 and "buyQty" in p and "sellQty" in p:
+                        net_qty = int(p.get("buyQty", 0)) - int(p.get("sellQty", 0))
+                    break
+        except Exception as p_err:
+            err_msg = f"Failed to fetch broker position book for {pos.symbol}: {p_err}"
+            logger.error("❌ %s", err_msg)
+            pos.status = "EXIT_FAILED"
+            pos.close_reason = err_msg
+            return False, err_msg
+
+        # 4. If broker reports netQty > 0, dispatch market SELL order with price=0.0
+        if net_qty > 0:
+            try:
+                dhan_prod = dhan.INTRA if pos.product_type == ProductType.INTRADAY else dhan.MARGIN
+                exit_resp = dhan.place_order(
+                    security_id=str(pos.security_id),
+                    exchange_segment=dhan.NSE_FNO,
+                    transaction_type=dhan.SELL,
+                    quantity=net_qty,
+                    order_type=dhan.MARKET,
+                    product_type=dhan_prod,
+                    price=0.0,
+                    tag="st14_sqoff",
+                )
+                if isinstance(exit_resp, dict) and exit_resp.get("status") == "success":
+                    exit_order_id = str(exit_resp.get("data", {}).get("orderId", "EXIT_ORDER"))
+                    logger.info("📤 Dispatched Live Square-Off Exit Order for %s: %s (Qty: %d)", pos.symbol, exit_order_id, net_qty)
+                    pos.status = "CLOSED"
+                    pos.close_reason = f"{reason} (Exit Order: {exit_order_id})"
+                    pos.exit_price = pos.current_ltp
+                    pos.exit_time_ist = now_str
+                    return True, f"Exit order {exit_order_id} placed"
+                else:
+                    err_msg = f"Broker exit order rejected for {pos.symbol}: {exit_resp}"
+                    logger.error("❌ %s", err_msg)
+                    pos.status = "EXIT_FAILED"
+                    pos.close_reason = err_msg
+                    return False, err_msg
+            except Exception as e_err:
+                err_msg = f"Exception placing broker exit order for {pos.symbol}: {e_err}"
+                logger.error("❌ %s", err_msg)
+                pos.status = "EXIT_FAILED"
+                pos.close_reason = err_msg
+                return False, err_msg
+        else:
+            # Already flat at broker (e.g. entry canceled or already filled/exited)
+            logger.info("ℹ️ Position %s already flat at broker (netQty: %d). Marking closed.", pos.symbol, net_qty)
+            pos.status = "CLOSED"
+            pos.close_reason = f"{reason} (Broker netQty: 0)"
+            pos.exit_price = pos.current_ltp
+            pos.exit_time_ist = now_str
+            return True, "Position already flat at broker"
+
     def emergency_square_off_all(self) -> List[St14Position]:
         """Close all active positions immediately, canceling pending orders and placing market exits on Dhan."""
         with self._lock:
             closed: List[St14Position] = []
             now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
             for pos_id, pos in list(self.active_positions.items()):
-                # Broker-level exit if LIVE mode
-                if pos.mode == ExecutionMode.LIVE and self.provider and self.provider.dhan:
-                    try:
-                        dhan = self.provider.dhan
-                        if hasattr(dhan, "cancel_super_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
-                            try:
-                                dhan.cancel_super_order(order_id=pos.position_id)
-                            except Exception as c_err:
-                                logger.debug("Could not cancel super order %s: %s", pos.position_id, c_err)
-                        elif hasattr(dhan, "cancel_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
-                            try:
-                                dhan.cancel_order(order_id=pos.position_id)
-                            except Exception as c_err:
-                                logger.debug("Could not cancel regular order %s: %s", pos.position_id, c_err)
-
-                        if pos.security_id and pos.quantity > 0:
-                            dhan_prod = dhan.INTRA if pos.product_type == ProductType.INTRADAY else dhan.MARGIN
-                            exit_resp = dhan.place_order(
-                                security_id=pos.security_id,
-                                exchange_segment=dhan.NSE_FNO,
-                                transaction_type=dhan.SELL,
-                                quantity=pos.quantity,
-                                order_type=dhan.MARKET,
-                                product_type=dhan_prod,
-                                tag="st14_sqoff",
-                            )
-                            logger.info("📤 Dispatched Live Emergency Square-Off for %s: %s", pos.symbol, exit_resp)
-                    except Exception as sq_err:
-                        logger.error("❌ Exception dispatching Live Emergency Square-Off for %s: %s", pos.symbol, sq_err)
-
-                pos.status = "CLOSED"
-                pos.close_reason = "Emergency Square-Off Requested"
-                pos.exit_price = pos.current_ltp
-                pos.exit_time_ist = now_str
-                closed.append(pos)
-                self.closed_positions.append(pos)
-                del self.active_positions[pos_id]
+                success, _ = self._execute_broker_square_off(
+                    pos=pos,
+                    reason="Emergency Square-Off Requested",
+                    now_str=now_str,
+                )
+                if success:
+                    closed.append(pos)
+                    self.closed_positions.append(pos)
+                    del self.active_positions[pos_id]
+                else:
+                    logger.error("⚠️ Failed to square off position %s (%s). Retaining in active positions.", pos.symbol, pos_id)
             return closed
 
     def square_off_intraday_positions(self, target_dt: Optional[datetime] = None) -> List[St14Position]:
@@ -727,44 +831,18 @@ class St14BullishCeStrategy:
 
             for pos_id, pos in list(self.active_positions.items()):
                 if pos.product_type == ProductType.INTRADAY:
-                    # Broker-level exit if LIVE mode
-                    if pos.mode == ExecutionMode.LIVE and self.provider and self.provider.dhan:
-                        try:
-                            dhan = self.provider.dhan
-                            if hasattr(dhan, "cancel_super_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
-                                try:
-                                    dhan.cancel_super_order(order_id=pos.position_id)
-                                except Exception as c_err:
-                                    logger.debug("Could not cancel super order %s: %s", pos.position_id, c_err)
-                            elif hasattr(dhan, "cancel_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
-                                try:
-                                    dhan.cancel_order(order_id=pos.position_id)
-                                except Exception as c_err:
-                                    logger.debug("Could not cancel regular order %s: %s", pos.position_id, c_err)
-
-                            if pos.security_id and pos.quantity > 0:
-                                dhan_prod = dhan.INTRA
-                                exit_resp = dhan.place_order(
-                                    security_id=pos.security_id,
-                                    exchange_segment=dhan.NSE_FNO,
-                                    transaction_type=dhan.SELL,
-                                    quantity=pos.quantity,
-                                    order_type=dhan.MARKET,
-                                    product_type=dhan_prod,
-                                    tag="st14_sqoff",
-                                )
-                                logger.info("📤 Dispatched Live 15:00 Square-Off for %s: %s", pos.symbol, exit_resp)
-                        except Exception as sq_err:
-                            logger.error("❌ Exception dispatching Live 15:00 Square-Off for %s: %s", pos.symbol, sq_err)
-
-                    pos.status = "CLOSED"
-                    pos.close_reason = "3:00 PM Intraday Auto Square-Off"
-                    pos.exit_price = pos.current_ltp
-                    pos.exit_time_ist = now_str
-                    closed.append(pos)
-                    self.closed_positions.append(pos)
-                    del self.active_positions[pos_id]
-                    logger.info("⏰ Closed Intraday Position for %s: %s (P&L: ₹%s)", pos.symbol, pos.close_reason, pos.unrealized_pnl)
+                    success, _ = self._execute_broker_square_off(
+                        pos=pos,
+                        reason="3:00 PM Intraday Auto Square-Off",
+                        now_str=now_str,
+                    )
+                    if success:
+                        closed.append(pos)
+                        self.closed_positions.append(pos)
+                        del self.active_positions[pos_id]
+                        logger.info("⏰ Closed Intraday Position for %s: %s (P&L: ₹%s)", pos.symbol, pos.close_reason, pos.unrealized_pnl)
+                    else:
+                        logger.error("⚠️ Failed auto square-off for intraday position %s (%s). Retaining in active positions.", pos.symbol, pos_id)
 
             return closed
 

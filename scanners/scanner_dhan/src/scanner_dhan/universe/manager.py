@@ -173,7 +173,7 @@ class DhanUniverseManager:
                 if inst in ("OPTSTK", "FUTSTK"):
                     # Extract root underlying symbol
                     root_sym = custom_sym.split()[0] if custom_sym else trading_sym.split("-")[0]
-                    if root_sym:
+                    if root_sym and "NSETEST" not in root_sym.upper() and not root_sym.startswith("0"):
                         lot_val = row.get("SEM_LOT_UNITS", 0)
                         try:
                             lot = int(float(lot_val)) if lot_val else 250
@@ -189,6 +189,14 @@ class DhanUniverseManager:
             for sym in sorted_fno_symbols:
                 if sym in equity_sec_ids:
                     fno_sec_ids[sym] = equity_sec_ids[sym]
+
+            # Support legacy alias for TATAMOTORS -> TMPV
+            if "TMPV" in fno_sec_ids and "TATAMOTORS" not in fno_sec_ids:
+                fno_sec_ids["TATAMOTORS"] = fno_sec_ids["TMPV"]
+                fno_symbols_dict["TATAMOTORS"] = fno_symbols_dict.get("TMPV", 250)
+                if "TATAMOTORS" not in sorted_fno_symbols:
+                    sorted_fno_symbols.append("TATAMOTORS")
+                    sorted_fno_symbols.sort()
 
             self._fno_symbols_set = set(sorted_fno_symbols)
             self._fno_lot_sizes = fno_symbols_dict

@@ -22,6 +22,13 @@ class TestSt14UIRoutes(unittest.TestCase):
         self.storage_patcher.start()
         self.app = create_app()
         self.client = TestClient(self.app, cookies={"app_session_token": self.session_token})
+        state = self.app.state.dashboard
+        if hasattr(state, "st14_strategy") and state.st14_strategy is not None:
+            state.st14_strategy._executed_order_keys.clear()
+            state.st14_strategy._executed_signal_ids.clear()
+            state.st14_strategy.active_positions.clear()
+            state.st14_strategy.closed_positions.clear()
+            state.st14_strategy.signals_history.clear()
 
     def tearDown(self):
         self.storage_patcher.stop()

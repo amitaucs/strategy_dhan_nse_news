@@ -538,13 +538,26 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertEqual(mock_dhan.place_super_order.call_count, 0)
 
     def test_live_square_off_dispatches_broker_exit_orders(self):
-        """Square-off in Live mode cancels pending orders and places market exit orders."""
+        """Square-off in Live mode cancels target/SL legs, checks broker netQty, and places MARKET exit with price=0.0."""
         self.strategy.config.mode = ExecutionMode.LIVE
         mock_dhan = MagicMock()
         mock_dhan.NSE_FNO = "NSE_FNO"
         mock_dhan.SELL = "SELL"
         mock_dhan.MARKET = "MARKET"
         mock_dhan.INTRA = "INTRA"
+        mock_dhan.get_order_by_id.return_value = {
+            "status": "success",
+            "data": {"orderStatus": "TRADED"},
+        }
+        mock_dhan.cancel_super_order.return_value = {"status": "success"}
+        mock_dhan.get_positions.return_value = {
+            "status": "success",
+            "data": [{"securityId": "12345", "netQty": 300}],
+        }
+        mock_dhan.place_order.return_value = {
+            "status": "success",
+            "data": {"orderId": "EXIT_ORD_777"},
+        }
         self.strategy.provider.dhan = mock_dhan
 
         pos = St14Position(
@@ -567,8 +580,11 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertEqual(len(closed), 1)
         self.assertEqual(len(self.strategy.active_positions), 0)
 
-        # Verified that cancel_super_order and place_order were invoked
-        mock_dhan.cancel_super_order.assert_called_once_with(order_id="DHAN_ORD_999")
+        # Verified that TARGET_LEG and STOP_LOSS_LEG cancellations were called
+        mock_dhan.cancel_super_order.assert_any_call("DHAN_ORD_999", "TARGET_LEG")
+        mock_dhan.cancel_super_order.assert_any_call("DHAN_ORD_999", "STOP_LOSS_LEG")
+
+        # Verified that place_order was invoked with required positional price=0.0
         mock_dhan.place_order.assert_called_once_with(
             security_id="12345",
             exchange_segment="NSE_FNO",
@@ -576,8 +592,148 @@ class TestSt14Strategy(unittest.TestCase):
             quantity=300,
             order_type="MARKET",
             product_type="INTRA",
+            price=0.0,
             tag="st14_sqoff",
         )
+
+    def test_live_square_off_pending_entry_cancels_without_selling(self):
+        """When entry leg is pending, square-off cancels ENTRY_LEG and does NOT place market sell order."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.get_order_by_id.return_value = {
+            "status": "success",
+            "data": {"orderStatus": "PENDING"},
+        }
+        mock_dhan.cancel_super_order.return_value = {"status": "success"}
+        mock_dhan.get_positions.return_value = {
+            "status": "success",
+            "data": [{"securityId": "12345", "netQty": 0}],
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        pos = St14Position(
+            position_id="DHAN_PENDING_01",
+            symbol="INFY",
+            option_symbol="INFY 29OCT26 1900 CE",
+            security_id="12345",
+            quantity=300,
+            entry_price=50.0,
+            current_ltp=50.0,
+            target_price=70.0,
+            stop_loss_price=40.0,
+            product_type=ProductType.INTRADAY,
+            mode=ExecutionMode.LIVE,
+            entry_time_ist="2026-09-17 11:30:00",
+        )
+        self.strategy.active_positions["DHAN_PENDING_01"] = pos
+
+        closed = self.strategy.emergency_square_off_all()
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(len(self.strategy.active_positions), 0)
+
+        # Verified ENTRY_LEG cancellation
+        mock_dhan.cancel_super_order.assert_called_once_with("DHAN_PENDING_01", "ENTRY_LEG")
+        # Verified NO sell order was placed since netQty is 0
+        self.assertEqual(mock_dhan.place_order.call_count, 0)
+
+    def test_live_square_off_partial_fill_sells_only_net_qty(self):
+        """When position was partially filled (e.g. 100 out of 300), exit only confirmed netQty."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.SELL = "SELL"
+        mock_dhan.MARKET = "MARKET"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.get_order_by_id.return_value = {
+            "status": "success",
+            "data": {"orderStatus": "TRADED"},
+        }
+        mock_dhan.cancel_super_order.return_value = {"status": "success"}
+        mock_dhan.get_positions.return_value = {
+            "status": "success",
+            "data": [{"securityId": "12345", "netQty": 100}],  # Only 100 filled
+        }
+        mock_dhan.place_order.return_value = {
+            "status": "success",
+            "data": {"orderId": "EXIT_PARTIAL_100"},
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        pos = St14Position(
+            position_id="DHAN_PARTIAL_01",
+            symbol="INFY",
+            option_symbol="INFY 29OCT26 1900 CE",
+            security_id="12345",
+            quantity=300,
+            entry_price=50.0,
+            current_ltp=52.0,
+            target_price=70.0,
+            stop_loss_price=40.0,
+            product_type=ProductType.INTRADAY,
+            mode=ExecutionMode.LIVE,
+            entry_time_ist="2026-09-17 11:30:00",
+        )
+        self.strategy.active_positions["DHAN_PARTIAL_01"] = pos
+
+        closed = self.strategy.emergency_square_off_all()
+        self.assertEqual(len(closed), 1)
+
+        # Verified place_order quantity was 100 (not 300)
+        mock_dhan.place_order.assert_called_once_with(
+            security_id="12345",
+            exchange_segment="NSE_FNO",
+            transaction_type="SELL",
+            quantity=100,
+            order_type="MARKET",
+            product_type="INTRA",
+            price=0.0,
+            tag="st14_sqoff",
+        )
+
+    def test_live_square_off_failure_retains_position_with_exit_failed(self):
+        """When broker exit order fails, position must NOT be removed from active positions and marked EXIT_FAILED."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.SELL = "SELL"
+        mock_dhan.MARKET = "MARKET"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.get_order_by_id.return_value = {
+            "status": "success",
+            "data": {"orderStatus": "TRADED"},
+        }
+        mock_dhan.cancel_super_order.return_value = {"status": "success"}
+        mock_dhan.get_positions.return_value = {
+            "status": "success",
+            "data": [{"securityId": "12345", "netQty": 300}],
+        }
+        mock_dhan.place_order.return_value = {
+            "status": "failure",
+            "remarks": "RMS: Margin/Order blocked",
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        pos = St14Position(
+            position_id="DHAN_FAIL_01",
+            symbol="INFY",
+            option_symbol="INFY 29OCT26 1900 CE",
+            security_id="12345",
+            quantity=300,
+            entry_price=50.0,
+            current_ltp=45.0,
+            target_price=70.0,
+            stop_loss_price=40.0,
+            product_type=ProductType.INTRADAY,
+            mode=ExecutionMode.LIVE,
+            entry_time_ist="2026-09-17 11:30:00",
+        )
+        self.strategy.active_positions["DHAN_FAIL_01"] = pos
+
+        closed = self.strategy.emergency_square_off_all()
+        self.assertEqual(len(closed), 0)
+        self.assertEqual(len(self.strategy.active_positions), 1)
+        self.assertEqual(self.strategy.active_positions["DHAN_FAIL_01"].status, "EXIT_FAILED")
+        self.assertIn("RMS: Margin/Order blocked", self.strategy.active_positions["DHAN_FAIL_01"].close_reason)
 
     def test_journal_persistence_and_reload(self):
         """Executed orders are saved to disk journal and reloaded upon restart."""
