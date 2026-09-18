@@ -56,7 +56,23 @@ class TestMarketBreadth(unittest.TestCase):
         self.assertGreater(info["nifty_50"]["change_pct"], 0)
         self.assertGreater(info["bank_nifty"]["change_pct"], 0)
 
+    def test_data_unavailable_fails_closed(self):
+        """When Dhan and Yahoo feeds fail, breadth must fail closed with DATA_UNAVAILABLE and block trades."""
+        from unittest.mock import patch
+
+        mock_provider = MagicMock()
+        mock_provider.dhan = None
+
+        with patch("st14_bullish_ce.breadth._fetch_index_quote_market_feed", return_value=None):
+            is_both, info = check_market_breadth(provider=mock_provider)
+            self.assertFalse(is_both)
+            self.assertEqual(info["status"], "DATA_UNAVAILABLE")
+            self.assertFalse(info["is_data_available"])
+            self.assertFalse(info["is_both_green"])
+            self.assertIn("DATA_UNAVAILABLE", info["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

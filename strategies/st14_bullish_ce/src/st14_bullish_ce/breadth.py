@@ -116,20 +116,50 @@ def check_market_breadth(
     nifty_quote = _fetch_index_quote_dhan(dhan_client, NIFTY_50_SEC_ID)
     if nifty_quote is None:
         nifty_quote = _fetch_index_quote_market_feed("%5ENSEI")
-    if nifty_quote is None:
-        n_ltp, n_change_pct, n_green = 23350.0, 0.25, True
-    else:
-        n_ltp, n_change_pct, n_green = nifty_quote
 
     # 2. Resolve BANK NIFTY
     bank_quote = _fetch_index_quote_dhan(dhan_client, BANK_NIFTY_SEC_ID)
     if bank_quote is None:
         bank_quote = _fetch_index_quote_market_feed("%5ENSEBANK")
-    if bank_quote is None:
-        b_ltp, b_change_pct, b_green = 56400.0, 0.20, True
-    else:
-        b_ltp, b_change_pct, b_green = bank_quote
 
+    # 3. Fail CLOSED if either quote is unavailable
+    if nifty_quote is None or bank_quote is None:
+        missing = []
+        if nifty_quote is None:
+            missing.append("Nifty 50")
+        if bank_quote is None:
+            missing.append("Bank Nifty")
+        missing_str = " & ".join(missing)
+        status_msg = f"❌ [DATA_UNAVAILABLE] Market breadth feeds failed for {missing_str}. Blocking new trades."
+        logger.warning(status_msg)
+
+        breadth_data = {
+            "status": "DATA_UNAVAILABLE",
+            "is_data_available": False,
+            "nifty_50": {
+                "ltp": nifty_quote[0] if nifty_quote else 0.0,
+                "change_pct": nifty_quote[1] if nifty_quote else 0.0,
+                "is_green": nifty_quote[2] if nifty_quote else False,
+            },
+            "bank_nifty": {
+                "ltp": bank_quote[0] if bank_quote else 0.0,
+                "change_pct": bank_quote[1] if bank_quote else 0.0,
+                "is_green": bank_quote[2] if bank_quote else False,
+            },
+            "nifty50_green": nifty_quote[2] if nifty_quote else False,
+            "banknifty_green": bank_quote[2] if bank_quote else False,
+            "nifty50_change_pct": nifty_quote[1] if nifty_quote else 0.0,
+            "banknifty_change_pct": bank_quote[1] if bank_quote else 0.0,
+            "nifty50_ltp": nifty_quote[0] if nifty_quote else 0.0,
+            "banknifty_ltp": bank_quote[0] if bank_quote else 0.0,
+            "is_both_green": False,
+            "message": status_msg,
+            "updated_at": datetime.now().strftime("%H:%M:%S IST"),
+        }
+        return False, breadth_data
+
+    n_ltp, n_change_pct, n_green = nifty_quote
+    b_ltp, b_change_pct, b_green = bank_quote
     is_both_green = bool(n_green and b_green)
     status_msg = (
         f"Nifty 50: {n_change_pct:+.2f}% ({'🟢' if n_green else '🔴'}) | "
@@ -138,6 +168,8 @@ def check_market_breadth(
     )
 
     breadth_data = {
+        "status": "OK",
+        "is_data_available": True,
         "nifty_50": {"ltp": n_ltp, "change_pct": n_change_pct, "is_green": n_green},
         "bank_nifty": {"ltp": b_ltp, "change_pct": b_change_pct, "is_green": b_green},
         "nifty50_green": n_green,

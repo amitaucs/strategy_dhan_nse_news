@@ -307,7 +307,17 @@ class St14BullishCeStrategy:
 
                 levels = self.calculate_super_order_levels(option_ltp=opt_contract.ltp)
                 item.option_contract = opt_contract
-                item.order_levels = levels
+                # Real-time Market Breadth re-validation before trigger order
+                is_breadth_green, breadth_info = check_market_breadth(provider=self.provider)
+                self._last_breadth_status = breadth_info
+                nifty_green = bool(breadth_info.get("nifty50_green", False))
+                banknifty_green = bool(breadth_info.get("banknifty_green", False))
+
+                if not is_breadth_green:
+                    breadth_msg = breadth_info.get("message", "Market breadth not green")
+                    logger.warning("⛔ [ST-14 Trigger] %s breached but breadth gate failed: %s", symbol, breadth_msg)
+                    item.remarks = f"Trigger hit but breadth blocked: {breadth_msg}"
+                    continue
 
                 signal = St14TradeSignal(
                     signal_id=f"ST14_{symbol}_{int(now_dt.timestamp())}",
@@ -321,8 +331,8 @@ class St14BullishCeStrategy:
                     vwap_dist_pct=0.0,
                     vwap_angle_deg=45.0,
                     status=OrderStatus.TRIGGERED,
-                    nifty_green=True,
-                    banknifty_green=True,
+                    nifty_green=nifty_green,
+                    banknifty_green=banknifty_green,
                     is_confirmed=True,
                     option_contract=opt_contract,
                     order_levels=levels,
