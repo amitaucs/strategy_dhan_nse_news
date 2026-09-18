@@ -1,15 +1,17 @@
 """Candle ingestion and 2-Hour (120-min) time-bucket aggregation engine."""
 
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
 import logging
 import threading
 import time as time_lib
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 import pandas as pd
 
 from st15_largecap.core.models import Candle
 
 logger = logging.getLogger(__name__)
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def bucket_indian_market_2h(dt: datetime) -> Optional[datetime]:
@@ -20,6 +22,9 @@ def bucket_indian_market_2h(dt: datetime) -> Optional[datetime]:
       - Slot 2: 11:15 to 13:15 -> Bucket timestamp = 11:15
       - Slot 3: 13:15 to 15:30 -> Bucket timestamp = 13:15
     """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(IST).replace(tzinfo=None)
+
     t = dt.time()
     t_min = t.hour * 60 + t.minute
 
@@ -54,6 +59,9 @@ def aggregate_to_2h_candles(minute_candles: List[Dict[str, Any]]) -> List[Candle
 
     if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    if getattr(df["timestamp"].dt, "tz", None) is not None:
+        df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
 
     # Map each timestamp to its 2H bucket
     df["bucket"] = df["timestamp"].apply(bucket_indian_market_2h)
@@ -215,9 +223,13 @@ class CandleFetcher:
                         for i in range(len(timestamps)):
                             ts_val = timestamps[i]
                             if isinstance(ts_val, (int, float)):
-                                dt = datetime.fromtimestamp(ts_val)
+                                dt = datetime.fromtimestamp(ts_val, tz=timezone.utc).astimezone(IST).replace(tzinfo=None)
                             else:
                                 dt = pd.to_datetime(ts_val)
+                                if getattr(dt, "tzinfo", None) is not None:
+                                    dt = dt.astimezone(IST).replace(tzinfo=None)
+                                elif hasattr(dt, "to_pydatetime"):
+                                    dt = dt.to_pydatetime()
 
                             all_records.append({
                                 "timestamp": dt,

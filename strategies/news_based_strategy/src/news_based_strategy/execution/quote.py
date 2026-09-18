@@ -91,6 +91,53 @@ def _set_cached_quote(symbol: str, quote: PriceQuote, security_id: Optional[str]
         _LTP_CACHE[symbol.strip().upper()] = (quote, expiry)
 
 
+def parse_trade_timestamp(val: Any) -> Optional[datetime]:
+    """Robustly parse trade timestamps from Dhan and exchange feeds into timezone-aware UTC datetime."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo is not None else val.replace(tzinfo=timezone.utc)
+    if isinstance(val, (int, float)):
+        try:
+            # Handle millisecond epoch (> 1e11) vs second epoch
+            ts = val / 1000.0 if val > 1e11 else float(val)
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(val, str):
+        v = val.strip()
+        if not v:
+            return None
+        # Try numeric string
+        try:
+            num = float(v)
+            ts = num / 1000.0 if num > 1e11 else num
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except ValueError:
+            pass
+        # Try ISO format
+        try:
+            dt = datetime.fromisoformat(v)
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+        # Try standard trading date formats
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%d-%m-%Y %H:%M:%S",
+            "%Y/%m/%d %H:%M:%S",
+            "%d/%m/%Y %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S%z",
+            "%d-%b-%Y %H:%M:%S",
+        ):
+            try:
+                dt = datetime.strptime(v, fmt)
+                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+    return None
+
+
 def _fetch_from_dhan(
     symbol: str,
     security_id: Optional[str],
@@ -111,16 +158,8 @@ def _fetch_from_dhan(
                     ohlc = data.get("ohlc", {})
                     last_price = ohlc.get("close") or ohlc.get("last_price")
                 if last_price and float(last_price) > 0:
-                    ltt = None
                     ltt_raw = data.get("last_trade_time") or data.get("lastTradeTime")
-                    if ltt_raw:
-                        try:
-                            if isinstance(ltt_raw, (int, float)):
-                                ltt = datetime.fromtimestamp(ltt_raw, tz=timezone.utc)
-                            elif isinstance(ltt_raw, str):
-                                ltt = datetime.fromisoformat(ltt_raw)
-                        except Exception:
-                            pass
+                    ltt = parse_trade_timestamp(ltt_raw)
                     return float(last_price), ltt
 
         if hasattr(dhan_client, "ticker_data"):
@@ -129,7 +168,8 @@ def _fetch_from_dhan(
                 data = res.get("data", {}).get(exchange_segment, {}).get(str(sec_int), {})
                 last_price = data.get("last_price")
                 if last_price and float(last_price) > 0:
-                    return float(last_price), None
+                    ltt_raw = data.get("last_trade_time") or data.get("lastTradeTime")
+                    return float(last_price), parse_trade_timestamp(ltt_raw)
 
         if hasattr(dhan_client, "ohlc_data"):
             res_ohlc = dhan_client.ohlc_data({exchange_segment: [sec_int]})
@@ -143,8 +183,8 @@ def _fetch_from_dhan(
     return None
 
 
-def _fetch_from_market_feed(symbol: str) -> Optional[float]:
-    """Fetch live real-time price from exchange market feed endpoint."""
+def _fetch_from_market_feed(symbol: str) -> Optional[Tuple[float, Optional[datetime]]]:
+    """Fetch live real-time price from exchange market feed endpoint (rejecting chartPreviousClose)."""
     clean = symbol.strip().upper()
     ticker_sym = f"{clean}.NS"
     endpoints = [
@@ -162,9 +202,11 @@ def _fetch_from_market_feed(symbol: str) -> Optional[float]:
                     result = data.get("chart", {}).get("result")
                     if result and len(result) > 0:
                         meta = result[0].get("meta", {})
-                        price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
+                        # Strictly accept only live regularMarketPrice, never previous close reference
+                        price = meta.get("regularMarketPrice")
                         if price and float(price) > 0:
-                            return float(price)
+                            m_time = parse_trade_timestamp(meta.get("regularMarketTime"))
+                            return float(price), m_time
             except Exception:
                 pass
 
@@ -177,9 +219,10 @@ def _fetch_from_market_feed(symbol: str) -> Optional[float]:
                     result = data.get("chart", {}).get("result")
                     if result and len(result) > 0:
                         meta = result[0].get("meta", {})
-                        price = meta.get("regularMarketPrice") or meta.get("chartPreviousClose")
+                        price = meta.get("regularMarketPrice")
                         if price and float(price) > 0:
-                            return float(price)
+                            m_time = parse_trade_timestamp(meta.get("regularMarketTime"))
+                            return float(price), m_time
         except Exception:
             pass
 
@@ -236,18 +279,24 @@ def get_live_market_quote(
             return quote
 
     # 3. Live Exchange Market Feed
-    feed_price = _fetch_from_market_feed(clean)
-    if feed_price is not None and feed_price > 0:
-        quote = PriceQuote(
-            price=round(feed_price, 2),
-            is_real_time=True,
-            source="market_feed",
-            received_at=recv_time,
-            security_id=security_id,
-            exchange_segment=exchange_segment,
-        )
-        _set_cached_quote(clean, quote, security_id=security_id, exchange_segment=exchange_segment)
-        return quote
+    feed_res = _fetch_from_market_feed(clean)
+    if feed_res is not None:
+        if isinstance(feed_res, tuple):
+            feed_price, m_time = feed_res
+        else:
+            feed_price, m_time = float(feed_res), None
+        if feed_price > 0:
+            quote = PriceQuote(
+                price=round(feed_price, 2),
+                is_real_time=True,
+                source="market_feed",
+                last_trade_time=m_time,
+                received_at=recv_time,
+                security_id=security_id,
+                exchange_segment=exchange_segment,
+            )
+            _set_cached_quote(clean, quote, security_id=security_id, exchange_segment=exchange_segment)
+            return quote
 
     # 4. Safe Reference Fallback (Tagged as NOT real-time)
     ref_price = DEFAULT_REFERENCE_LTPS.get(clean, default_price)

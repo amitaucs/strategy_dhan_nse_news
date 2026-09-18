@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from st14_bullish_ce.models import (
     OrderStatus,
     ProductType,
     St14OptionContract,
+    St14Position,
     St14StrategyConfig,
     St14TradeSignal,
 )
@@ -22,6 +24,7 @@ class TestSt14Strategy(unittest.TestCase):
     """Test suite for ST-14 Bullish CE Strategy orchestrator."""
 
     def setUp(self):
+        self._tmp_dir = tempfile.TemporaryDirectory()
         self.config = St14StrategyConfig(
             mode=ExecutionMode.VIRTUAL,
             product_type=ProductType.INTRADAY,
@@ -32,7 +35,11 @@ class TestSt14Strategy(unittest.TestCase):
             trade_cutoff_time="14:00",
             square_off_time="15:00",
         )
+        setattr(self.config, "data_dir", self._tmp_dir.name)
         self.strategy = St14BullishCeStrategy(config=self.config)
+
+    def tearDown(self):
+        self._tmp_dir.cleanup()
 
     def test_entry_timing_window(self):
         """Validates 10:15 AM start and 14:00 PM cutoff."""
@@ -484,6 +491,162 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertIsNone(pos)
         self.assertIn("Insufficient broker margin", remarks)
         self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
+    def test_live_margin_check_fails_closed_on_exception(self):
+        """If broker fund check raises exception in LIVE mode, fail-closed and reject order."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.get_fund_limits.side_effect = ConnectionError("Broker timeout")
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="12345",
+            lot_size=300,
+            ltp=50.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=50.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_EXC_01",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertEqual(signal.status, OrderStatus.ORDER_REJECTED)
+        self.assertIn("Broker fund limit check", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
+    def test_live_square_off_dispatches_broker_exit_orders(self):
+        """Square-off in Live mode cancels pending orders and places market exit orders."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.SELL = "SELL"
+        mock_dhan.MARKET = "MARKET"
+        mock_dhan.INTRA = "INTRA"
+        self.strategy.provider.dhan = mock_dhan
+
+        pos = St14Position(
+            position_id="DHAN_ORD_999",
+            symbol="INFY",
+            option_symbol="INFY 29OCT26 1900 CE",
+            security_id="12345",
+            quantity=300,
+            entry_price=50.0,
+            current_ltp=55.0,
+            target_price=70.0,
+            stop_loss_price=40.0,
+            product_type=ProductType.INTRADAY,
+            mode=ExecutionMode.LIVE,
+            entry_time_ist="2026-09-17 11:30:00",
+        )
+        self.strategy.active_positions["DHAN_ORD_999"] = pos
+
+        closed = self.strategy.emergency_square_off_all()
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(len(self.strategy.active_positions), 0)
+
+        # Verified that cancel_super_order and place_order were invoked
+        mock_dhan.cancel_super_order.assert_called_once_with(order_id="DHAN_ORD_999")
+        mock_dhan.place_order.assert_called_once_with(
+            security_id="12345",
+            exchange_segment="NSE_FNO",
+            transaction_type="SELL",
+            quantity=300,
+            order_type="MARKET",
+            product_type="INTRA",
+            tag="st14_sqoff",
+        )
+
+    def test_journal_persistence_and_reload(self):
+        """Executed orders are saved to disk journal and reloaded upon restart."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = St14StrategyConfig(mode=ExecutionMode.VIRTUAL)
+            setattr(cfg, "data_dir", tmp_dir)
+            strat = St14BullishCeStrategy(config=cfg)
+
+            opt = St14OptionContract(
+                symbol="INFY 29OCT26 1900 CE",
+                underlying_symbol="INFY",
+                strike_price=1900.0,
+                option_type="CE",
+                expiry_date="2026-10-29",
+                security_id="12345",
+                lot_size=300,
+                ltp=50.0,
+                is_synthetic=False,
+            )
+            levels = strat.calculate_super_order_levels(option_ltp=50.0)
+            signal = St14TradeSignal(
+                signal_id="SIG_JOURNAL_01",
+                symbol="INFY",
+                underlying_sec_id="1594",
+                underlying_ltp=1880.0,
+                breakout_candle_high=1875.0,
+                daily_ema20=1820.0,
+                hourly_ema20=1860.0,
+                vwap=1870.0,
+                vwap_dist_pct=0.53,
+                vwap_angle_deg=44.0,
+                status=OrderStatus.TRIGGERED,
+                nifty_green=True,
+                banknifty_green=True,
+                is_confirmed=True,
+                option_contract=opt,
+                order_levels=levels,
+            )
+
+            success, remarks, pos = strat.execute_order(signal)
+            self.assertTrue(success)
+
+            # Re-instantiate strategy pointing to same journal directory
+            strat2 = St14BullishCeStrategy(config=cfg)
+            self.assertIn("SIG_JOURNAL_01", strat2._executed_signal_ids)
+
+            # Attempt duplicate execution with fresh signal object having same signal_id
+            signal2 = St14TradeSignal(
+                signal_id="SIG_JOURNAL_01",
+                symbol="INFY",
+                underlying_sec_id="1594",
+                underlying_ltp=1880.0,
+                breakout_candle_high=1875.0,
+                daily_ema20=1820.0,
+                hourly_ema20=1860.0,
+                vwap=1870.0,
+                vwap_dist_pct=0.53,
+                vwap_angle_deg=44.0,
+                status=OrderStatus.TRIGGERED,
+                nifty_green=True,
+                banknifty_green=True,
+                is_confirmed=True,
+                option_contract=opt,
+                order_levels=levels,
+            )
+            success2, remarks2, _ = strat2.execute_order(signal2)
+            self.assertFalse(success2)
+            self.assertIn("already been executed", remarks2)
 
 
 if __name__ == "__main__":

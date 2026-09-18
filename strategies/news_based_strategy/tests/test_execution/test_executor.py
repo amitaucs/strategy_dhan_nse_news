@@ -1,9 +1,11 @@
 """Unit tests for DhanExecutor order execution and Security ID resolution."""
 
+from datetime import datetime, timezone, timedelta
 import unittest
 from unittest.mock import MagicMock, patch
 from news_based_strategy.core.models import TradeSignal
 from news_based_strategy.execution.executor import DhanExecutor
+from news_based_strategy.execution.quote import PriceQuote
 
 
 class TestDhanExecutor(unittest.TestCase):
@@ -58,6 +60,8 @@ class TestDhanExecutor(unittest.TestCase):
 
     def test_live_mode_places_order_with_resolved_security_id(self):
         """In live mode, valid symbol resolves SecID and passes it to Dhan API."""
+        from datetime import timezone
+        from news_based_strategy.execution.quote import PriceQuote
         executor = DhanExecutor(
             client_id="dummy_client",
             access_token="dummy_token",
@@ -82,8 +86,17 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Defense order",
         )
-        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
-            res = executor.execute_order(signal, ltp=300.0)
+        valid_quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")), \
+             patch("news_based_strategy.execution.executor.get_live_market_quote", return_value=valid_quote):
+            res = executor.execute_order(signal, quote=valid_quote)
             self.assertTrue(res.success)
             self.assertEqual(res.order_id, "DHAN_ORDER_9999")
 
@@ -94,6 +107,8 @@ class TestDhanExecutor(unittest.TestCase):
 
     def test_live_mode_resolves_alkem_security_id(self):
         """Verify ALKEM specifically resolves SecID 11703 and places live order without rejection."""
+        from datetime import timezone
+        from news_based_strategy.execution.quote import PriceQuote
         executor = DhanExecutor(
             client_id="dummy_client",
             access_token="dummy_token",
@@ -118,8 +133,17 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="FDA_APPROVAL",
             summary="USFDA Approval received",
         )
-        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
-            res = executor.execute_order(signal, ltp=5400.0)
+        valid_quote = PriceQuote(
+            price=5400.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="11703",
+            exchange_segment="NSE_EQ",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")), \
+             patch("news_based_strategy.execution.executor.get_live_market_quote", return_value=valid_quote):
+            res = executor.execute_order(signal, quote=valid_quote)
             self.assertTrue(res.success)
             self.assertEqual(res.order_id, "ALKEM_ORDER_12345")
 
@@ -128,6 +152,52 @@ class TestDhanExecutor(unittest.TestCase):
             call_kwargs = mock_dhan.place_order.call_args[1]
             self.assertEqual(call_kwargs["security_id"], "11703")
             self.assertEqual(call_kwargs["transaction_type"], "BUY")
+
+    def test_live_mode_rejects_non_dhan_or_unverified_quote(self):
+        """In live mode, non-dhan or unverified source must be rejected."""
+        from datetime import timezone, timedelta
+        from news_based_strategy.execution.quote import PriceQuote
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            super_order_enabled=False,
+        )
+        mock_dhan = MagicMock()
+        executor.dhan = mock_dhan
+        executor.dry_run = False
+
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="CNC",
+            confidence=90,
+            catalyst_type="ORDER_WIN",
+            summary="Defense order",
+        )
+
+        # 1. Non-Dhan quote (e.g. manual / market_feed)
+        non_dhan_quote = PriceQuote(price=300.0, is_real_time=True, source="market_feed", last_trade_time=datetime.now(timezone.utc), security_id="383")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, quote=non_dhan_quote)
+            self.assertFalse(res.success)
+            self.assertIn("ORDER REJECTED: Unverified quote", res.remarks)
+
+        # 2. Missing last_trade_time
+        no_ltt_quote = PriceQuote(price=300.0, is_real_time=True, source="dhan", last_trade_time=None, security_id="383")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res2 = executor.execute_order(signal, quote=no_ltt_quote)
+            self.assertFalse(res2.success)
+            self.assertIn("lacks verified exchange last_trade_time", res2.remarks)
+
+        # 3. Stale quote (> 60s)
+        stale_time = datetime.now(timezone.utc) - timedelta(seconds=120)
+        stale_quote = PriceQuote(price=300.0, is_real_time=True, source="dhan", last_trade_time=stale_time, security_id="383")
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res3 = executor.execute_order(signal, quote=stale_quote)
+            self.assertFalse(res3.success)
+            self.assertIn("Live quote for BEL is stale", res3.remarks)
 
     def test_live_mode_rejects_fallback_price_quote(self):
         """In live mode, if real-time price cannot be resolved (fallback used), order must be rejected."""
@@ -155,7 +225,7 @@ class TestDhanExecutor(unittest.TestCase):
              patch("news_based_strategy.execution.executor.get_live_market_quote", return_value=PriceQuote(price=300.0, is_real_time=False, source="fallback")):
             res = executor.execute_order(signal, ltp=None)
             self.assertFalse(res.success)
-            self.assertIn("ORDER REJECTED: Live market quote unavailable", res.remarks)
+            self.assertIn("ORDER REJECTED: Unverified quote", res.remarks)
             self.assertFalse(mock_dhan.place_order.called)
 
     def test_dry_run_super_order_formatting(self):
@@ -187,6 +257,8 @@ class TestDhanExecutor(unittest.TestCase):
 
     def test_live_mode_places_super_order(self):
         """Live mode with Super Order enabled should call dhan.place_super_order with bracket levels."""
+        from datetime import timezone
+        from news_based_strategy.execution.quote import PriceQuote
         executor = DhanExecutor(
             client_id="dummy_client",
             access_token="dummy_token",
@@ -215,8 +287,17 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Major order win",
         )
-        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
-            res = executor.execute_order(signal, ltp=300.0)
+        valid_quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")), \
+             patch("news_based_strategy.execution.executor.get_live_market_quote", return_value=valid_quote):
+            res = executor.execute_order(signal, quote=valid_quote)
             self.assertTrue(res.success)
             self.assertEqual(res.order_id, "SUPER_ORDER_12345")
             self.assertEqual(res.product_type, "INTRADAY")
@@ -325,8 +406,16 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Defense order",
         )
+        valid_quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
         with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
-            res = executor.execute_order(signal, ltp=300.0)
+            res = executor.execute_order(signal, quote=valid_quote)
             self.assertFalse(res.success)
             self.assertIn("DH-911", res.remarks)
             self.assertIn("Static IP not whitelisted", res.remarks)
@@ -383,8 +472,16 @@ class TestDhanExecutor(unittest.TestCase):
             catalyst_type="ORDER_WIN",
             summary="Major order win",
         )
+        valid_quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=datetime.now(timezone.utc),
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
         with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(False, "Trade cutoff reached (14:45 IST). No new trades permitted.")):
-            res = executor.execute_order(signal, ltp=300.0)
+            res = executor.execute_order(signal, quote=valid_quote)
             self.assertFalse(res.success)
             self.assertEqual(res.quantity, 0)
             self.assertIn("ORDER REJECTED: Trade cutoff reached", res.remarks)

@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import time
@@ -459,8 +459,13 @@ class DhanExecutor:
 
         return False, "", f"Unexpected Dhan API response: {order_resp}"
 
-    def execute_order(self, signal: TradeSignal, ltp: Optional[float] = None) -> TradeResult:
-        """Place an order or simulate execution with staleness circuit breaker, SecID, and Super Orders."""
+    def execute_order(
+        self,
+        signal: TradeSignal,
+        ltp: Optional[float] = None,
+        quote: Optional[PriceQuote] = None,
+    ) -> TradeResult:
+        """Place an order or simulate execution with strict quote provenance, freshness, SecID, and Super Orders."""
         safe_product = RiskManager.get_safe_product_type(signal.action, signal.product_type)
 
         # 0. Dynamic Security ID Resolution (Ticker -> Dhan Numeric ID)
@@ -468,12 +473,23 @@ class DhanExecutor:
         if not effective_sec_id or effective_sec_id == "0":
             effective_sec_id = resolve_security_id(signal.symbol) or "0"
 
-        # Resolve live market quote if not explicitly provided
-        if ltp is not None and ltp > 0:
-            quote = PriceQuote(price=ltp, is_real_time=True, source="manual")
+        # Resolve live market quote with full provenance
+        if quote is not None and quote.price > 0:
+            active_quote = quote
+        elif self.dhan is not None:
+            active_quote = get_live_market_quote(signal.symbol, security_id=effective_sec_id, dhan_client=self.dhan)
+        elif ltp is not None and ltp > 0:
+            active_quote = PriceQuote(
+                price=ltp,
+                is_real_time=False,
+                source="manual",
+                security_id=effective_sec_id,
+                exchange_segment="NSE_EQ",
+            )
         else:
-            quote = get_live_market_quote(signal.symbol, security_id=effective_sec_id, dhan_client=self.dhan)
-            ltp = quote.price
+            active_quote = get_live_market_quote(signal.symbol, security_id=effective_sec_id, dhan_client=None)
+
+        ltp = active_quote.price
 
         if not self.dry_run:
             if not effective_sec_id or effective_sec_id == "0" or not effective_sec_id.isdigit():
@@ -490,8 +506,67 @@ class DhanExecutor:
                     dry_run=False,
                 )
 
-            if not quote.is_real_time:
-                remarks = f"ORDER REJECTED: Live market quote unavailable for {signal.symbol} (source: {quote.source}). Real-time quote required for live execution."
+            if not active_quote.is_real_time or active_quote.source != "dhan":
+                remarks = (
+                    f"ORDER REJECTED: Unverified quote for {signal.symbol} (source: '{active_quote.source}', "
+                    f"is_real_time: {active_quote.is_real_time}). Dhan broker provenance required for live execution."
+                )
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
+
+            if active_quote.security_id and str(active_quote.security_id) != str(effective_sec_id):
+                remarks = (
+                    f"ORDER REJECTED: Quote security ID mismatch for {signal.symbol} "
+                    f"(Quote: {active_quote.security_id} != Expected: {effective_sec_id})"
+                )
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
+
+            if not active_quote.last_trade_time:
+                remarks = f"ORDER REJECTED: Live market quote for {signal.symbol} lacks verified exchange last_trade_time."
+                logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
+                return TradeResult(
+                    success=False,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    quantity=0,
+                    product_type=safe_product,
+                    order_id=None,
+                    remarks=remarks,
+                    dry_run=False,
+                )
+
+            # Validate quote freshness (<= 60s)
+            quote_ltt = active_quote.last_trade_time
+            if quote_ltt.tzinfo is not None:
+                quote_age_sec = (datetime.now(timezone.utc) - quote_ltt.astimezone(timezone.utc)).total_seconds()
+            else:
+                quote_age_sec = (datetime.now() - quote_ltt).total_seconds()
+
+            max_quote_age = 60.0
+            if quote_age_sec > max_quote_age or quote_age_sec < -10.0:
+                remarks = (
+                    f"ORDER REJECTED: Live quote for {signal.symbol} is stale "
+                    f"(Age: {quote_age_sec:.1f}s > max allowed {max_quote_age}s)."
+                )
                 logger.warning("⚠️ [%s] %s", signal.symbol, remarks)
                 return TradeResult(
                     success=False,

@@ -174,6 +174,9 @@ class StrategyRunner:
                                             b_data = b_resp.get("data", [])
                                         elif isinstance(b_resp, list):
                                             b_data = b_resp
+                                        elif isinstance(b_resp, dict) and b_resp.get("status") == "failure":
+                                            logger.error("❌ Dhan get_order_list returned failure in LIVE mode: %s. Aborting auto-order for %s.", b_resp, res.symbol)
+                                            continue
                                         else:
                                             b_data = []
 
@@ -182,14 +185,15 @@ class StrategyRunner:
                                             o for o in b_data
                                             if isinstance(o, dict) and (
                                                 today_str in str(o.get("createTime") or "")
-                                                or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT")
+                                                or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT", "PLACED", "OPEN")
                                             )
                                         ]
                                         active_today_count = max(active_today_count, len(b_today))
                                         if any(isinstance(o, dict) and (o.get("tradingSymbol") == res.symbol or o.get("symbol") == res.symbol or str(o.get("securityId")) == str(res.sec_id)) for o in b_today):
                                             already_placed = True
                                     except Exception as exc:
-                                        logger.debug("Failed to reconcile ST15 with Dhan broker order list: %s", exc)
+                                        logger.error("❌ Failed to reconcile ST15 with Dhan broker order list in LIVE mode: %s. Aborting auto-order for %s.", exc, res.symbol)
+                                        continue
 
                                 if active_today_count >= settings.MAX_POSITIONS_PER_DAY:
                                     logger.warning(
@@ -199,6 +203,26 @@ class StrategyRunner:
                                     continue
 
                                 if not already_placed:
+                                    # Live Re-Quote validation
+                                    if not self.executor.dry_run and self.executor.dhan and res.sec_id:
+                                        try:
+                                            ltp_resp = self.executor.dhan.get_ltp_data(securities={"NSE_EQ": [int(res.sec_id)]})
+                                            if isinstance(ltp_resp, dict) and ltp_resp.get("status") == "success":
+                                                data_dict = ltp_resp.get("data", {})
+                                                nse_data = data_dict.get("NSE_EQ", {})
+                                                quote_info = nse_data.get(str(res.sec_id), {})
+                                                live_ltp = float(quote_info.get("last_price", 0.0))
+                                                if live_ltp > 0:
+                                                    if live_ltp < res.signal.stop_loss_price:
+                                                        logger.warning("⛔ Live price %.2f dropped below SL %.2f for %s. Aborting auto-order.", live_ltp, res.signal.stop_loss_price, res.symbol)
+                                                        continue
+                                                    if live_ltp > res.signal.trigger_price * 1.05:
+                                                        logger.warning("⛔ Live price %.2f drifted >5%% above trigger %.2f for %s. Aborting auto-order.", live_ltp, res.signal.trigger_price, res.symbol)
+                                                        continue
+                                        except Exception as q_exc:
+                                            logger.error("❌ Error fetching live re-quote for %s before order: %s. Aborting auto-order.", res.symbol, q_exc)
+                                            continue
+
                                     mode_str = "VIRTUAL" if self.executor.dry_run else "LIVE"
                                     logger.info("🤖 [AUTO BOT] Auto-dispatching %s order for %s (Position %d/%d)...",
                                                 mode_str, res.symbol, active_today_count + 1, settings.MAX_POSITIONS_PER_DAY)
@@ -304,6 +328,10 @@ class StrategyRunner:
                     b_data = b_resp.get("data", [])
                 elif isinstance(b_resp, list):
                     b_data = b_resp
+                elif isinstance(b_resp, dict) and b_resp.get("status") == "failure":
+                    err_msg = f"Broker order list fetch failed in LIVE mode: {b_resp.get('remarks', b_resp)}"
+                    logger.error("❌ %s", err_msg)
+                    return False, None, err_msg
                 else:
                     b_data = []
 
@@ -312,14 +340,16 @@ class StrategyRunner:
                     o for o in b_data
                     if isinstance(o, dict) and (
                         today_str in str(o.get("createTime") or "")
-                        or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT")
+                        or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT", "PLACED", "OPEN")
                     )
                 ]
                 active_today_count = max(active_today_count, len(b_today))
                 if any(isinstance(o, dict) and (o.get("tradingSymbol") == sym or o.get("symbol") == sym or str(o.get("securityId")) == str(sec_id)) for o in b_today):
                     already_placed = True
             except Exception as exc:
-                logger.debug("Failed to reconcile with Dhan broker order list: %s", exc)
+                err_msg = f"Failed to reconcile with Dhan broker order list in LIVE mode: {exc}"
+                logger.error("❌ %s", err_msg)
+                return False, None, err_msg
 
         if active_today_count >= settings.MAX_POSITIONS_PER_DAY:
             msg = f"Daily position limit reached: Maximum {settings.MAX_POSITIONS_PER_DAY} positions per day reached ({active_today_count}/{settings.MAX_POSITIONS_PER_DAY} filled/placed today)"
@@ -330,6 +360,24 @@ class StrategyRunner:
             msg = f"Order already placed for {sym} today"
             logger.warning("Order execution rejected for %s: %s", sym, msg)
             return False, None, msg
+
+        # Live Re-Quote validation before execution
+        if self.executor and not self.executor.dry_run and self.executor.dhan and sec_id:
+            try:
+                ltp_resp = self.executor.dhan.get_ltp_data(securities={"NSE_EQ": [int(sec_id)]})
+                if isinstance(ltp_resp, dict) and ltp_resp.get("status") == "success":
+                    data_dict = ltp_resp.get("data", {})
+                    nse_data = data_dict.get("NSE_EQ", {})
+                    quote_info = nse_data.get(str(sec_id), {})
+                    live_ltp = float(quote_info.get("last_price", 0.0))
+                    if live_ltp > 0:
+                        if signal and live_ltp < signal.stop_loss_price:
+                            return False, None, f"Live price ({live_ltp:.2f}) dropped below stop loss ({signal.stop_loss_price:.2f})"
+                        if signal and live_ltp > signal.trigger_price * 1.05:
+                            return False, None, f"Live price ({live_ltp:.2f}) drifted >5% above trigger price ({signal.trigger_price:.2f})"
+            except Exception as q_exc:
+                logger.error("❌ Error fetching live re-quote for %s before order: %s", sym, q_exc)
+                return False, None, f"Live quote verification failed: {q_exc}"
 
         if not signal:
             trigger_price = round(candles[-1].close * 1.002, 2)
@@ -358,6 +406,8 @@ class StrategyRunner:
         order = self.executor.execute_signal(signal)
         if self.repository:
             self.repository.save_order(order)
+        if order.status in ("REJECTED_ZERO_QTY", "REJECTED_INVALID_SEC_ID", "FAILED", "ERROR", "REJECTED"):
+            return False, order, f"Order placement failed: {order.remarks}"
         return True, order, f"Order executed successfully in {'VIRTUAL' if self.executor.dry_run else 'LIVE'} mode"
 
     def re_evaluate_with_tolerance(self, new_tolerance_pct: float) -> List[ScanResult]:

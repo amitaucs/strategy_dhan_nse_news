@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
 import uuid
 from datetime import datetime, time as dtime
 from typing import Any, Dict, List, Optional, Tuple
@@ -48,13 +51,58 @@ class St14BullishCeStrategy:
         self.last_hourly_scan_time: Optional[str] = None
         self.last_5min_check_time: Optional[str] = None
         self.last_hourly_candidates_count: int = 0
+        self._lock = threading.Lock()
         self._executed_signal_ids: set[str] = set()
         self._executed_order_keys: set[str] = set()
+        self._journal_file = os.path.join(getattr(self.config, "data_dir", "data"), "st14_executed_orders.json")
+        self._load_executed_journal()
         self._last_breadth_status: Dict[str, Any] = {}
         try:
             _, self._last_breadth_status = check_market_breadth(provider=self.provider)
         except Exception:
             self._last_breadth_status = {}
+
+    def _load_executed_journal(self) -> None:
+        """Load executed order idempotency keys from disk for today to survive process restarts."""
+        try:
+            if os.path.exists(self._journal_file):
+                with open(self._journal_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+                for item in data.get("executed_orders", []):
+                    if item.get("date") == today_str:
+                        if "key" in item:
+                            self._executed_order_keys.add(item["key"])
+                        if "signal_id" in item:
+                            self._executed_signal_ids.add(item["signal_id"])
+        except Exception as e:
+            logger.warning("Could not load ST14 executed orders journal from %s: %s", self._journal_file, e)
+
+    def _persist_executed_order(self, key: str, signal_id: str, order_id: str, symbol: str) -> None:
+        """Durable append of executed order to disk journal."""
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(self._journal_file)), exist_ok=True)
+            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            data: Dict[str, Any] = {"executed_orders": []}
+            if os.path.exists(self._journal_file):
+                try:
+                    with open(self._journal_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    data = {"executed_orders": []}
+
+            data.setdefault("executed_orders", []).append({
+                "date": today_str,
+                "timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
+                "key": key,
+                "signal_id": signal_id,
+                "order_id": order_id,
+                "symbol": symbol,
+            })
+            with open(self._journal_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error("Failed to persist ST14 executed order to journal %s: %s", self._journal_file, e)
 
     def is_within_entry_window(self, target_dt: Optional[datetime] = None) -> Tuple[bool, str]:
         """Verify if current execution time is between 10:15 AM and 14:00 PM (2:00 PM) IST."""
@@ -381,145 +429,58 @@ class St14BullishCeStrategy:
 
     def execute_order(self, signal: St14TradeSignal) -> Tuple[bool, str, Optional[St14Position]]:
         """Dispatch Super Order on DhanHQ or Virtual Paper Trading Engine."""
-        if not signal.is_confirmed or not signal.option_contract or not signal.order_levels:
-            return False, "Signal not confirmed for execution", None
+        with self._lock:
+            if not signal.is_confirmed or not signal.option_contract or not signal.order_levels:
+                return False, "Signal not confirmed for execution", None
 
-        if signal.status == OrderStatus.ORDER_PLACED or (signal.order_id and signal.order_id.strip()):
-            return False, f"Order already placed for signal {signal.signal_id} (Order ID: {signal.order_id})", None
+            if signal.status == OrderStatus.ORDER_PLACED or (signal.order_id and signal.order_id.strip()):
+                return False, f"Order already placed for signal {signal.signal_id} (Order ID: {signal.order_id})", None
 
-        if signal.signal_id in self._executed_signal_ids:
-            return False, f"Signal {signal.signal_id} has already been executed.", None
+            if signal.signal_id in self._executed_signal_ids:
+                return False, f"Signal {signal.signal_id} has already been executed.", None
 
-        opt = signal.option_contract
-        today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
-        idempotency_key = f"{opt.underlying_symbol}_{opt.security_id}_{today_str}"
+            opt = signal.option_contract
+            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            idempotency_key = f"{opt.underlying_symbol}_{opt.security_id}_{today_str}"
 
-        # Broker-level / active position duplicate prevention
-        for pos in self.active_positions.values():
-            if pos.symbol == opt.underlying_symbol or pos.security_id == opt.security_id:
-                return False, f"Active position already open for {opt.underlying_symbol} ({pos.position_id})", None
+            # Broker-level / active position duplicate prevention
+            for pos in self.active_positions.values():
+                if pos.symbol == opt.underlying_symbol or pos.security_id == opt.security_id:
+                    return False, f"Active position already open for {opt.underlying_symbol} ({pos.position_id})", None
 
-        if idempotency_key in self._executed_order_keys:
-            return False, f"Order key {idempotency_key} has already been submitted today.", None
+            if idempotency_key in self._executed_order_keys:
+                return False, f"Order key {idempotency_key} has already been submitted today.", None
 
-        levels = signal.order_levels
-        qty = self.calculate_order_quantity(
-            option_entry_price=levels.entry_price,
-            lot_size=opt.lot_size,
-        )
-
-        if qty <= 0:
-            cost_1lot = levels.entry_price * opt.lot_size
-            remarks = (
-                f"❌ [ORDER REJECTED] {opt.symbol}: Cost of 1 lot (₹{cost_1lot:,.2f}) "
-                f"exceeds allocated capital per trade (₹{self.config.capital_per_trade:,.2f})."
-            )
-            logger.warning(remarks)
-            signal.status = OrderStatus.ORDER_REJECTED
-            signal.remarks = remarks
-            return False, remarks, None
-
-        now_ist_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
-
-        # 1. Virtual Paper Trading Mode
-        if self.config.mode == ExecutionMode.VIRTUAL or not self.provider.dhan:
-            sim_order_id = f"SIM_SUPER_{opt.underlying_symbol}_{int(opt.strike_price)}_{uuid.uuid4().hex[:6].upper()}"
-            remarks = (
-                f"🛡️ [VIRTUAL SUPER ORDER] Bought {qty} qty {opt.symbol} @ ₹{levels.entry_price:.2f} "
-                f"(Target: ₹{levels.target_price:.2f} [+40%], SL: ₹{levels.stop_loss_price:.2f} [-20%], Trail: {levels.trailing_jump} pts)"
-            )
-            logger.info(remarks)
-
-            position = St14Position(
-                position_id=sim_order_id,
-                symbol=opt.underlying_symbol,
-                option_symbol=opt.symbol,
-                security_id=opt.security_id,
-                quantity=qty,
-                entry_price=levels.entry_price,
-                current_ltp=levels.entry_price,
-                target_price=levels.target_price,
-                stop_loss_price=levels.stop_loss_price,
-                product_type=self.config.product_type,
-                mode=ExecutionMode.VIRTUAL,
-                entry_time_ist=now_ist_str,
-            )
-            self.active_positions[sim_order_id] = position
-            self._executed_signal_ids.add(signal.signal_id)
-            self._executed_order_keys.add(idempotency_key)
-            signal.status = OrderStatus.ORDER_PLACED
-            signal.order_id = sim_order_id
-            return True, remarks, position
-
-        # 2. Live Execution Mode via DhanHQ Super Order API
-        try:
-            if opt.is_synthetic:
-                remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Option contract is synthetic / unverified from live exchange option chain."
-                logger.error(remarks)
-                signal.status = OrderStatus.ORDER_REJECTED
-                signal.remarks = remarks
-                return False, remarks, None
-
-            if not opt.security_id or not opt.security_id.isdigit():
-                remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Invalid non-numeric security ID '{opt.security_id}' for live broker execution."
-                logger.error(remarks)
-                signal.status = OrderStatus.ORDER_REJECTED
-                signal.remarks = remarks
-                return False, remarks, None
-
-            # Broker margin check immediately before live placement
-            try:
-                fund_resp = (
-                    self.provider.fetch_fund_limits()
-                    if hasattr(self.provider, "fetch_fund_limits")
-                    else (self.provider.dhan.get_fund_limits() if hasattr(self.provider.dhan, "get_fund_limits") else None)
-                )
-                if isinstance(fund_resp, dict) and fund_resp.get("status") == "success":
-                    fund_data = fund_resp.get("data", {})
-                    avail_bal = float(
-                        fund_data.get("availabelBalance")
-                        or fund_data.get("availableBalance")
-                        or fund_data.get("sodLimit")
-                        or 0.0
-                    )
-                    required_margin = levels.entry_price * qty
-                    if avail_bal > 0 and avail_bal < required_margin:
-                        remarks = (
-                            f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Insufficient broker margin. "
-                            f"Required ₹{required_margin:,.2f}, Available: ₹{avail_bal:,.2f}."
-                        )
-                        logger.error(remarks)
-                        signal.status = OrderStatus.ORDER_REJECTED
-                        signal.remarks = remarks
-                        return False, remarks, None
-            except Exception as margin_exc:
-                logger.warning("Broker fund limit pre-check skipped due to error: %s", margin_exc)
-
-            dhan = self.provider.dhan
-            dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN
-            order_resp = dhan.place_super_order(
-                security_id=opt.security_id,
-                exchange_segment=dhan.NSE_FNO,
-                transaction_type=dhan.BUY,
-                quantity=qty,
-                order_type=dhan.LIMIT,
-                product_type=dhan_prod,
-                price=levels.entry_price,
-                targetPrice=levels.target_price,
-                stopLossPrice=levels.stop_loss_price,
-                trailingJump=levels.trailing_jump,
-                tag="st14_bull_ce",
+            levels = signal.order_levels
+            qty = self.calculate_order_quantity(
+                option_entry_price=levels.entry_price,
+                lot_size=opt.lot_size,
             )
 
-            if isinstance(order_resp, dict) and order_resp.get("status") == "success":
-                live_order_id = str(order_resp.get("data", {}).get("orderId", "LIVE_ORDER"))
+            if qty <= 0:
+                cost_1lot = levels.entry_price * opt.lot_size
                 remarks = (
-                    f"🚀 [LIVE SUPER ORDER PLACED] {qty} qty {opt.symbol} @ ₹{levels.entry_price:.2f} "
-                    f"(Order ID: {live_order_id})"
+                    f"❌ [ORDER REJECTED] {opt.symbol}: Cost of 1 lot (₹{cost_1lot:,.2f}) "
+                    f"exceeds allocated capital per trade (₹{self.config.capital_per_trade:,.2f})."
+                )
+                logger.warning(remarks)
+                signal.status = OrderStatus.ORDER_REJECTED
+                signal.remarks = remarks
+                return False, remarks, None
+
+            now_ist_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+
+            # 1. Virtual Paper Trading Mode
+            if self.config.mode == ExecutionMode.VIRTUAL or not self.provider.dhan:
+                sim_order_id = f"SIM_SUPER_{opt.underlying_symbol}_{int(opt.strike_price)}_{uuid.uuid4().hex[:6].upper()}"
+                remarks = (
+                    f"🛡️ [VIRTUAL SUPER ORDER] Bought {qty} qty {opt.symbol} @ ₹{levels.entry_price:.2f} "
+                    f"(Target: ₹{levels.target_price:.2f} [+40%], SL: ₹{levels.stop_loss_price:.2f} [-20%], Trail: {levels.trailing_jump} pts)"
                 )
                 logger.info(remarks)
+
                 position = St14Position(
-                    position_id=live_order_id,
+                    position_id=sim_order_id,
                     symbol=opt.underlying_symbol,
                     option_symbol=opt.symbol,
                     security_id=opt.security_id,
@@ -529,28 +490,128 @@ class St14BullishCeStrategy:
                     target_price=levels.target_price,
                     stop_loss_price=levels.stop_loss_price,
                     product_type=self.config.product_type,
-                    mode=ExecutionMode.LIVE,
+                    mode=ExecutionMode.VIRTUAL,
                     entry_time_ist=now_ist_str,
                 )
-                self.active_positions[live_order_id] = position
+                self.active_positions[sim_order_id] = position
                 self._executed_signal_ids.add(signal.signal_id)
                 self._executed_order_keys.add(idempotency_key)
+                self._persist_executed_order(idempotency_key, signal.signal_id, sim_order_id, opt.underlying_symbol)
                 signal.status = OrderStatus.ORDER_PLACED
-                signal.order_id = live_order_id
+                signal.order_id = sim_order_id
                 return True, remarks, position
-            else:
-                err_msg = order_resp.get("remarks") if isinstance(order_resp, dict) else str(order_resp)
-                remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: {err_msg}"
+
+            # 2. Live Execution Mode via DhanHQ Super Order API
+            try:
+                if opt.is_synthetic:
+                    remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Option contract is synthetic / unverified from live exchange option chain."
+                    logger.error(remarks)
+                    signal.status = OrderStatus.ORDER_REJECTED
+                    signal.remarks = remarks
+                    return False, remarks, None
+
+                if not opt.security_id or not opt.security_id.isdigit():
+                    remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Invalid non-numeric security ID '{opt.security_id}' for live broker execution."
+                    logger.error(remarks)
+                    signal.status = OrderStatus.ORDER_REJECTED
+                    signal.remarks = remarks
+                    return False, remarks, None
+
+                # Broker margin check immediately before live placement (fail-closed)
+                try:
+                    fund_resp = (
+                        self.provider.fetch_fund_limits()
+                        if hasattr(self.provider, "fetch_fund_limits")
+                        else (self.provider.dhan.get_fund_limits() if hasattr(self.provider.dhan, "get_fund_limits") else None)
+                    )
+                    if isinstance(fund_resp, dict) and fund_resp.get("status") == "success":
+                        fund_data = fund_resp.get("data", {})
+                        avail_bal = float(
+                            fund_data.get("availabelBalance")
+                            or fund_data.get("availableBalance")
+                            or fund_data.get("sodLimit")
+                            or 0.0
+                        )
+                        required_margin = levels.entry_price * qty
+                        if avail_bal > 0 and avail_bal < required_margin:
+                            remarks = (
+                                f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Insufficient broker margin. "
+                                f"Required ₹{required_margin:,.2f}, Available: ₹{avail_bal:,.2f}."
+                            )
+                            logger.error(remarks)
+                            signal.status = OrderStatus.ORDER_REJECTED
+                            signal.remarks = remarks
+                            return False, remarks, None
+                    elif isinstance(fund_resp, dict) and fund_resp.get("status") == "failure":
+                        remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker fund limit check failed: {fund_resp.get('remarks', fund_resp)}"
+                        logger.error(remarks)
+                        signal.status = OrderStatus.ORDER_REJECTED
+                        signal.remarks = remarks
+                        return False, remarks, None
+                except Exception as margin_exc:
+                    remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker fund limit check exception: {margin_exc}"
+                    logger.error(remarks)
+                    signal.status = OrderStatus.ORDER_REJECTED
+                    signal.remarks = remarks
+                    return False, remarks, None
+
+                dhan = self.provider.dhan
+                dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN
+                order_resp = dhan.place_super_order(
+                    security_id=opt.security_id,
+                    exchange_segment=dhan.NSE_FNO,
+                    transaction_type=dhan.BUY,
+                    quantity=qty,
+                    order_type=dhan.LIMIT,
+                    product_type=dhan_prod,
+                    price=levels.entry_price,
+                    targetPrice=levels.target_price,
+                    stopLossPrice=levels.stop_loss_price,
+                    trailingJump=levels.trailing_jump,
+                    tag="st14_bull_ce",
+                )
+
+                if isinstance(order_resp, dict) and order_resp.get("status") == "success":
+                    live_order_id = str(order_resp.get("data", {}).get("orderId", "LIVE_ORDER"))
+                    remarks = (
+                        f"🚀 [LIVE SUPER ORDER PLACED] {qty} qty {opt.symbol} @ ₹{levels.entry_price:.2f} "
+                        f"(Order ID: {live_order_id})"
+                    )
+                    logger.info(remarks)
+                    position = St14Position(
+                        position_id=live_order_id,
+                        symbol=opt.underlying_symbol,
+                        option_symbol=opt.symbol,
+                        security_id=opt.security_id,
+                        quantity=qty,
+                        entry_price=levels.entry_price,
+                        current_ltp=levels.entry_price,
+                        target_price=levels.target_price,
+                        stop_loss_price=levels.stop_loss_price,
+                        product_type=self.config.product_type,
+                        mode=ExecutionMode.LIVE,
+                        entry_time_ist=now_ist_str,
+                    )
+                    self.active_positions[live_order_id] = position
+                    self._executed_signal_ids.add(signal.signal_id)
+                    self._executed_order_keys.add(idempotency_key)
+                    self._persist_executed_order(idempotency_key, signal.signal_id, live_order_id, opt.underlying_symbol)
+                    signal.status = OrderStatus.ORDER_PLACED
+                    signal.order_id = live_order_id
+                    return True, remarks, position
+                else:
+                    err_msg = order_resp.get("remarks") if isinstance(order_resp, dict) else str(order_resp)
+                    remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: {err_msg}"
+                    logger.error(remarks)
+                    signal.status = OrderStatus.ORDER_REJECTED
+                    signal.remarks = remarks
+                    return False, remarks, None
+            except Exception as exc:
+                remarks = f"❌ [LIVE ORDER EXCEPTION] {opt.symbol}: {exc}"
                 logger.error(remarks)
                 signal.status = OrderStatus.ORDER_REJECTED
                 signal.remarks = remarks
                 return False, remarks, None
-        except Exception as exc:
-            remarks = f"❌ [LIVE ORDER EXCEPTION] {opt.symbol}: {exc}"
-            logger.error(remarks)
-            signal.status = OrderStatus.ORDER_REJECTED
-            signal.remarks = remarks
-            return False, remarks, None
 
     def run_iteration(self, bypass_timing: bool = False) -> Dict[str, Any]:
         """Run full iteration (hourly discovery scan + 5-minute trigger check)."""
@@ -614,36 +675,98 @@ class St14BullishCeStrategy:
         return target.value
 
     def emergency_square_off_all(self) -> List[St14Position]:
-        """Close all active positions immediately."""
-        closed: List[St14Position] = []
-        now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
-        for pos_id, pos in list(self.active_positions.items()):
-            pos.status = "CLOSED"
-            pos.close_reason = "Emergency Square-Off Requested"
-            pos.exit_price = pos.current_ltp
-            pos.exit_time_ist = now_str
-            closed.append(pos)
-            self.closed_positions.append(pos)
-            del self.active_positions[pos_id]
-        return closed
+        """Close all active positions immediately, canceling pending orders and placing market exits on Dhan."""
+        with self._lock:
+            closed: List[St14Position] = []
+            now_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+            for pos_id, pos in list(self.active_positions.items()):
+                # Broker-level exit if LIVE mode
+                if pos.mode == ExecutionMode.LIVE and self.provider and self.provider.dhan:
+                    try:
+                        dhan = self.provider.dhan
+                        if hasattr(dhan, "cancel_super_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
+                            try:
+                                dhan.cancel_super_order(order_id=pos.position_id)
+                            except Exception as c_err:
+                                logger.debug("Could not cancel super order %s: %s", pos.position_id, c_err)
+                        elif hasattr(dhan, "cancel_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
+                            try:
+                                dhan.cancel_order(order_id=pos.position_id)
+                            except Exception as c_err:
+                                logger.debug("Could not cancel regular order %s: %s", pos.position_id, c_err)
 
-    def square_off_intraday_positions(self, target_dt: Optional[datetime] = None) -> List[St14Position]:
-        """Enforce 15:00 (3:00 PM IST) auto square-off for all open intraday positions."""
-        closed: List[St14Position] = []
-        now_str = (target_dt or datetime.now(ZoneInfo("Asia/Kolkata"))).strftime("%Y-%m-%d %H:%M:%S")
+                        if pos.security_id and pos.quantity > 0:
+                            dhan_prod = dhan.INTRA if pos.product_type == ProductType.INTRADAY else dhan.MARGIN
+                            exit_resp = dhan.place_order(
+                                security_id=pos.security_id,
+                                exchange_segment=dhan.NSE_FNO,
+                                transaction_type=dhan.SELL,
+                                quantity=pos.quantity,
+                                order_type=dhan.MARKET,
+                                product_type=dhan_prod,
+                                tag="st14_sqoff",
+                            )
+                            logger.info("📤 Dispatched Live Emergency Square-Off for %s: %s", pos.symbol, exit_resp)
+                    except Exception as sq_err:
+                        logger.error("❌ Exception dispatching Live Emergency Square-Off for %s: %s", pos.symbol, sq_err)
 
-        for pos_id, pos in list(self.active_positions.items()):
-            if pos.product_type == ProductType.INTRADAY:
                 pos.status = "CLOSED"
-                pos.close_reason = "3:00 PM Intraday Auto Square-Off"
+                pos.close_reason = "Emergency Square-Off Requested"
                 pos.exit_price = pos.current_ltp
                 pos.exit_time_ist = now_str
                 closed.append(pos)
                 self.closed_positions.append(pos)
                 del self.active_positions[pos_id]
-                logger.info("⏰ Closed Intraday Position for %s: %s (P&L: ₹%s)", pos.symbol, pos.close_reason, pos.unrealized_pnl)
+            return closed
 
-        return closed
+    def square_off_intraday_positions(self, target_dt: Optional[datetime] = None) -> List[St14Position]:
+        """Enforce 15:00 (3:00 PM IST) auto square-off for all open intraday positions."""
+        with self._lock:
+            closed: List[St14Position] = []
+            now_str = (target_dt or datetime.now(ZoneInfo("Asia/Kolkata"))).strftime("%Y-%m-%d %H:%M:%S")
+
+            for pos_id, pos in list(self.active_positions.items()):
+                if pos.product_type == ProductType.INTRADAY:
+                    # Broker-level exit if LIVE mode
+                    if pos.mode == ExecutionMode.LIVE and self.provider and self.provider.dhan:
+                        try:
+                            dhan = self.provider.dhan
+                            if hasattr(dhan, "cancel_super_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
+                                try:
+                                    dhan.cancel_super_order(order_id=pos.position_id)
+                                except Exception as c_err:
+                                    logger.debug("Could not cancel super order %s: %s", pos.position_id, c_err)
+                            elif hasattr(dhan, "cancel_order") and pos.position_id and not pos.position_id.startswith("SIM_"):
+                                try:
+                                    dhan.cancel_order(order_id=pos.position_id)
+                                except Exception as c_err:
+                                    logger.debug("Could not cancel regular order %s: %s", pos.position_id, c_err)
+
+                            if pos.security_id and pos.quantity > 0:
+                                dhan_prod = dhan.INTRA
+                                exit_resp = dhan.place_order(
+                                    security_id=pos.security_id,
+                                    exchange_segment=dhan.NSE_FNO,
+                                    transaction_type=dhan.SELL,
+                                    quantity=pos.quantity,
+                                    order_type=dhan.MARKET,
+                                    product_type=dhan_prod,
+                                    tag="st14_sqoff",
+                                )
+                                logger.info("📤 Dispatched Live 15:00 Square-Off for %s: %s", pos.symbol, exit_resp)
+                        except Exception as sq_err:
+                            logger.error("❌ Exception dispatching Live 15:00 Square-Off for %s: %s", pos.symbol, sq_err)
+
+                    pos.status = "CLOSED"
+                    pos.close_reason = "3:00 PM Intraday Auto Square-Off"
+                    pos.exit_price = pos.current_ltp
+                    pos.exit_time_ist = now_str
+                    closed.append(pos)
+                    self.closed_positions.append(pos)
+                    del self.active_positions[pos_id]
+                    logger.info("⏰ Closed Intraday Position for %s: %s (P&L: ₹%s)", pos.symbol, pos.close_reason, pos.unrealized_pnl)
+
+            return closed
 
     def get_strategy_telemetry(self) -> Dict[str, Any]:
         """Aggregate real-time metrics for dashboard monitoring."""

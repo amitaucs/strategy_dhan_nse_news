@@ -32,7 +32,23 @@ class TestTriggerConfirmation(unittest.TestCase):
         )
         self.assertFalse(is_crossed)
         self.assertEqual(ltp, 4248.0)
-        self.assertIn("Pending Trigger", msg)
+    def test_trigger_fail_closed_on_missing_quote(self):
+        """When provider is connected to Dhan and live quote is unavailable, fail closed."""
+        from unittest.mock import MagicMock
+        mock_prov = MagicMock()
+        mock_prov.dhan = MagicMock()
+        mock_prov.fetch_ltp_batch.return_value = {"11536": 0.0}
+
+        is_crossed, ltp, msg = check_breakout_candle_cross(
+            symbol="TCS",
+            sec_id="11536",
+            breakout_candle_high=4250.0,
+            current_ltp=4260.0,  # Stale discovery price
+            provider=mock_prov,
+        )
+        self.assertFalse(is_crossed)
+        self.assertEqual(ltp, 0.0)
+        self.assertIn("Live real-time price unavailable", msg)
 
 
 if __name__ == "__main__":

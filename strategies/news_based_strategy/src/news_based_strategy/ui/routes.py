@@ -16,7 +16,7 @@ from news_based_strategy.execution.executor import (
     mask_client_id,
     parse_jwt_claims,
 )
-from news_based_strategy.execution.quote import get_live_market_ltp
+from news_based_strategy.execution.quote import get_live_market_ltp, get_live_market_quote
 from news_based_strategy.execution.risk import RiskManager, get_ist_now
 from news_based_strategy.ingestion.universe import get_fno_symbols, resolve_security_id
 from news_based_strategy.ui.auth import consume_dhan_consent, generate_dhan_consent_url
@@ -540,7 +540,8 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
     @app.post("/api/orders/place")
     async def place_order(req: PlaceOrderRequest):
         sec_id = resolve_security_id(req.symbol) or "0"
-        ltp = req.ltp or get_live_market_ltp(req.symbol, security_id=sec_id, dhan_client=state.executor.dhan)
+        quote = get_live_market_quote(req.symbol, security_id=sec_id, dhan_client=state.executor.dhan)
+        ltp = quote.price if quote.price > 0 else (req.ltp or 0.0)
 
         matching_item = next((item for item in state.feed_items if item.get("seq_id") == req.seq_id), None)
         exchange_time = matching_item.get("an_dt") if matching_item else None
@@ -556,7 +557,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
             exchange_time=exchange_time,
         )
 
-        result = state.executor.execute_order(signal, ltp=ltp)
+        result = state.executor.execute_order(signal, quote=quote, ltp=ltp)
         state.storage.save_trade(result)
 
         if not result.success:

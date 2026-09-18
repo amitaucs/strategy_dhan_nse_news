@@ -8,7 +8,7 @@ from typing import Optional
 from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, TradeSignal
 from news_based_strategy.execution.executor import DhanExecutor, check_token_expiry
-from news_based_strategy.execution.quote import get_live_market_ltp
+from news_based_strategy.execution.quote import get_live_market_ltp, get_live_market_quote
 from news_based_strategy.execution.risk import RiskManager, get_ist_now
 from news_based_strategy.ingestion.extractor import is_pypdf_available
 from news_based_strategy.ingestion.filter import NoiseFilter
@@ -156,7 +156,8 @@ def print_announcement(
             # Phase 3: Super Order Execution for High-Conviction Bullish / Bearish Filings
             if is_conviction and executor:
                 effective_sec_id = resolve_security_id(announcement.symbol) or "0"
-                ltp = get_live_market_ltp(announcement.symbol, security_id=effective_sec_id, dhan_client=executor.dhan)
+                quote = get_live_market_quote(announcement.symbol, security_id=effective_sec_id, dhan_client=executor.dhan)
+                ltp = quote.price
                 action = "BUY" if is_bullish else "SELL"
                 product = RiskManager.get_safe_product_type(action)
 
@@ -171,7 +172,7 @@ def print_announcement(
                     exchange_time=announcement.an_dt,
                 )
 
-                trade_res = executor.execute_order(signal, ltp=ltp)
+                trade_res = executor.execute_order(signal, quote=quote, ltp=ltp)
                 if storage:
                     storage.save_trade(trade_res)
 

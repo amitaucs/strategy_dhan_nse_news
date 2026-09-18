@@ -37,6 +37,12 @@ class TestUniverseAndCandles(unittest.TestCase):
         t4 = datetime.combine(d.date(), time(8, 30))
         self.assertIsNone(bucket_indian_market_2h(t4))
 
+        # Timezone-aware UTC timestamp (04:00 UTC = 09:30 IST -> Bucket 1: 09:15 IST)
+        from datetime import timezone
+        t_utc = datetime(2025, 1, 15, 4, 0, tzinfo=timezone.utc)
+        b_utc = bucket_indian_market_2h(t_utc)
+        self.assertEqual(b_utc, datetime.combine(d.date(), time(9, 15)))
+
     def test_aggregate_to_2h_candles(self):
         d = datetime(2025, 1, 15)
         minute_records = [

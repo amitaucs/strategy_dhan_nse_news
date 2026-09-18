@@ -1,5 +1,6 @@
 """Comprehensive unit tests for Phase 3: Order Placement, Dhan Super Orders, and 10 Shares Cap."""
 
+from datetime import datetime, timezone
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -7,6 +8,7 @@ from news_based_strategy.config import settings
 from news_based_strategy.core.models import Announcement, FilingAudit, TradeResult, TradeSignal
 from news_based_strategy.engine import StrategyEngine
 from news_based_strategy.execution.executor import DhanExecutor
+from news_based_strategy.execution.quote import PriceQuote
 from news_based_strategy.execution.risk import RiskManager
 from news_based_strategy.storage.repository import StrategyStorage
 
@@ -113,8 +115,17 @@ class TestPhase3Execution(unittest.TestCase):
             summary="Defense order",
         )
 
+        quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            security_id="383",
+            exchange_segment="NSE_EQ",
+            last_trade_time=datetime.now(),
+        )
+
         with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
-            result = executor.execute_order(signal, ltp=300.0)
+            result = executor.execute_order(signal, quote=quote)
             self.assertTrue(result.success)
             self.assertEqual(result.quantity, 10)
             self.assertEqual(result.order_id, "LIVE_SUPER_789")
