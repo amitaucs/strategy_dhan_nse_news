@@ -380,6 +380,21 @@ class DashboardState:
                                 "type": "5MIN_TRIGGER_MONITOR",
                                 "telemetry": self.st14_strategy.get_strategy_telemetry(),
                             })
+                    else:
+                        # Outside entry window (e.g. after 14:00 cutoff or pre-market): keep breadth telemetry updated every 60s
+                        if cur_epoch - self._last_st14_5min_check_ts >= 60:
+                            self._last_st14_5min_check_ts = cur_epoch
+                            try:
+                                from st14_bullish_ce.breadth import check_market_breadth
+                                _, b_info = await asyncio.to_thread(check_market_breadth, provider=self.st14_strategy.provider)
+                                self.st14_strategy._last_breadth_status = b_info
+                            except Exception:
+                                pass
+                            await self.broadcast_event("ST14_UPDATE", {
+                                "type": "TELEMETRY_REFRESH",
+                                "telemetry": self.st14_strategy.get_strategy_telemetry(),
+                            })
+
             except Exception as e:
                 logger.error("Error in GUI background poller: %s", e)
             await asyncio.sleep(settings.poll_interval_seconds)

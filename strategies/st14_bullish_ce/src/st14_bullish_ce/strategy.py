@@ -49,6 +49,10 @@ class St14BullishCeStrategy:
         self.last_5min_check_time: Optional[str] = None
         self.last_hourly_candidates_count: int = 0
         self._last_breadth_status: Dict[str, Any] = {}
+        try:
+            _, self._last_breadth_status = check_market_breadth(provider=self.provider)
+        except Exception:
+            self._last_breadth_status = {}
 
     def is_within_entry_window(self, target_dt: Optional[datetime] = None) -> Tuple[bool, str]:
         """Verify if current execution time is between 10:15 AM and 14:00 PM (2:00 PM) IST."""
@@ -561,6 +565,14 @@ class St14BullishCeStrategy:
         watchlist_items = [item.to_dict() for item in self.breakout_watchlist.values()]
         active_watching = len([i for i in self.breakout_watchlist.values() if i.status == OrderStatus.WAITING_TRIGGER])
 
+        breadth_data = self._last_breadth_status
+        if not breadth_data:
+            try:
+                _, breadth_data = check_market_breadth(provider=self.provider)
+                self._last_breadth_status = breadth_data
+            except Exception:
+                pass
+
         return {
             "strategy_id": "st14_bullish_ce",
             "name": "ST-14: Bullish CE Options Trading Strategy",
@@ -579,7 +591,7 @@ class St14BullishCeStrategy:
             "trailing_jump_pts": self.config.trailing_jump_pts,
             "active_positions_count": len(self.active_positions),
             "total_pnl": round(total_pnl, 2),
-            "market_breadth": self._last_breadth_status,
+            "market_breadth": breadth_data,
             "last_hourly_scan_time": self.last_hourly_scan_time,
             "last_5min_check_time": self.last_5min_check_time,
             "last_hourly_candidates_count": self.last_hourly_candidates_count,
@@ -589,5 +601,6 @@ class St14BullishCeStrategy:
             "closed_positions": closed_pos_list,
             "recent_signals": [s.to_dict() for s in self.signals_history[-15:]],
         }
+
 
 
