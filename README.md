@@ -20,42 +20,41 @@ This repository is structured as a **Decoupled Strategy Monorepo** where every t
 
 ```text
 strategy_dhan_nse_news/
-├── infra/                         # 🌐 Shared Base Platform Infrastructure
-│   └── terraform/                 # Single Source of Truth for GCP Host VM
-│       ├── terraform_common.tfvars.example
-│       ├── terraform_common.tfvars
-│       └── README.md
+├── deploy.sh                          # 🚀 One-command deploy shortcut to GCP
 │
-├── strategies/
-│   └── <strategy_name>/
-│       ├── src/                   # 🐍 Python application package
-│       │   └── <strategy_name>/
-│       │       ├── __init__.py    # Public package interface & version
-│       │       ├── config.py      # Environment configuration loader
-│       │       └── main.py        # CLI & Web server entry points
+├── infra/                             # 🌐 Platform Infrastructure & DevOps
+│   ├── terraform/                     # ☁️ GCP Infrastructure IaC (VM, VPC, Firewall, IP)
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   ├── terraform_common.tfvars
+│   │   └── terraform.tfvars
+│   │
+│   ├── docker/                        # 🐳 Containerization definitions
+│   │   ├── Dockerfile                 # Unified multi-package container
+│   │   └── docker-compose.yml
+│   │
+│   └── deploy/                        # 🛠️ Operational & Deployment Scripts
+│       ├── deploy.sh                  # Full Terraform provisioning + deployment
+│       ├── deploy_code.sh             # Fast code-only deployment to GCP VM
+│       └── docker.sh                  # Local container management (up, down, logs)
 │
-├── tests/                         # 🧪 Strategy-specific test suite
-│   ├── __init__.py
-│   └── test_*.py
+├── scanners/
+│   └── scanner_dhan/                  # 📊 Shared Scanner Library & Universe Manager
+│       ├── src/scanner_dhan/
+│       ├── tests/
+│       └── pyproject.toml
 │
-├── data/                          # 🗄️ Isolated runtime storage (DBs, caches, JSON files)
-│
-├── infra/                         # 🏗️ Infrastructure & Containerization
-│   ├── docker/                    # Dockerfile & docker-compose.yml
-│   ├── gcp/                       # Terraform IaC (main.tf, variables.tf, outputs.tf)
-│   └── scripts/                   # Dedicated operational shell scripts
-│       ├── docker.sh              # Local/server Docker management
-│       ├── deploy_code.sh         # Fast GCP VM code deployment
-│       └── deploy.sh              # Full Terraform infrastructure provisioner
-│
-├── readme/                        # 📑 Strategy Documentation Hub
-│   ├── README.md                  # Main strategy overview, logic & configuration
-│   ├── README_DOCKER.md           # Docker usage, port mapping & container logs
-│   └── README_GCP.md              # Cloud architecture, scheduling & VM monitoring
-│
-├── .env.example                   # Environment variable template
-├── pyproject.toml                 # Build system & package dependencies
-└── requirements.txt               # Pinned pip dependencies
+└── strategies/
+    ├── news_based_strategy/           # 📰 Real-Time NSE Catalyst Equity Strategy
+    │   ├── src/news_based_strategy/
+    │   ├── tests/
+    │   └── pyproject.toml
+    │
+    └── st14_bullish_ce/               # 🚀 Bullish 1-OTM Call Options Strategy
+        ├── src/st14_bullish_ce/
+        ├── tests/
+        └── pyproject.toml
 ```
 
 ---
@@ -65,46 +64,35 @@ strategy_dhan_nse_news/
 | Strategy Name | Directory | Type / Style | Port | Status | Documentation |
 | :--- | :--- | :--- | :---: | :---: | :--- |
 | **`news_based_strategy`** | [`strategies/news_based_strategy`](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/news_based_strategy) | Intraday Event-Driven (AI Catalyst) | `8000` | 🟢 Active | [Docs](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/news_based_strategy/readme/README.md) |
-| **`st15_largecap`** | [`strategies/st15_largecap`](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/st15_largecap) | Positional Momentum (Nifty 50/100) | `8015` | 🔵 Scaffold | [Docs](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/st15_largecap/readme/README.md) |
+| **`st14_bullish_ce`** | [`strategies/st14_bullish_ce`](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/st14_bullish_ce) | Intraday Bullish 1-OTM Options | Integrated (`8000`) | 🟢 Active | [Source](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/strategies/st14_bullish_ce) |
 
 ---
 
 ## 🚀 Quick Execution Guide
 
-### 🟢 Strategy 1: `news_based_strategy` (Port 8000)
-* **Local Run**:
+### 🐳 Docker & Local Operations
+* **Start Container Locally**:
   ```bash
-  cd strategies/news_based_strategy
-  python3 -m news_based_strategy.main --gui --port 8000
+  ./infra/deploy/docker.sh up -d
   ```
-* **Docker Run**:
+* **View Live Container Logs**:
   ```bash
-  cd strategies/news_based_strategy
-  ./infra/scripts/docker.sh up -d
+  ./infra/deploy/docker.sh logs
   ```
-* **Deploy to GCP**:
+* **Stop Container**:
   ```bash
-  cd strategies/news_based_strategy
-  ./infra/scripts/deploy_code.sh
+  ./infra/deploy/docker.sh down
   ```
 
----
-
-### 🔵 Strategy 2: `st15_largecap` (Port 8015)
-* **Local Run**:
+### ☁️ GCP Cloud Deployment
+* **Fast Code-Only Deploy to GCP VM**:
   ```bash
-  cd strategies/st15_largecap
-  python3 -m st15_largecap.main --gui --port 8015
+  ./deploy.sh
+  # or: ./infra/deploy/deploy_code.sh
   ```
-* **Docker Run**:
+* **Full Terraform IaC Provision & Deploy**:
   ```bash
-  cd strategies/st15_largecap
-  ./infra/scripts/docker.sh up -d
-  ```
-* **Deploy to GCP**:
-  ```bash
-  cd strategies/st15_largecap
-  ./infra/scripts/deploy_code.sh
+  ./infra/deploy/deploy.sh
   ```
 
 ---
@@ -117,8 +105,8 @@ To scaffold a new strategy (e.g. `my_new_strategy`) in this monorepo:
    ```bash
    mkdir -p strategies/my_new_strategy/{src/my_new_strategy,tests,data,infra/{docker,gcp,scripts},readme}
    ```
-2. **Assign a unique host port** (e.g., `8020`) in `docker-compose.yml` and `config.py`.
-3. **Configure isolated GCP remote target directory** (e.g., `/opt/my_new_strategy`) in `infra/scripts/deploy_code.sh`.
+2. **Assign a unique host port** in `docker-compose.yml` and `config.py`.
+3. **Configure isolated GCP remote target directory** in `infra/scripts/deploy_code.sh`.
 4. **Create strategy documentation** inside `strategies/my_new_strategy/readme/`.
 5. **Register the strategy** in this root [README.md](file:///Users/amitdatta/Amit_Work/Trading_Work/Strategy_NSE_NEWS/strategy_dhan_nse_news/README.md).
 
@@ -129,9 +117,12 @@ To scaffold a new strategy (e.g. `my_new_strategy`) in this monorepo:
 Run unit tests across all strategies from the repository root:
 
 ```bash
-# Test News-Based Strategy
-PYTHONPATH=strategies/news_based_strategy/src python3 -m unittest discover -s strategies/news_based_strategy/tests -t .
+# Test Scanner Dhan Library
+PYTHONPATH="scanners/scanner_dhan/src:scanners/scanner_dhan" /opt/anaconda3/bin/python -m pytest scanners/scanner_dhan/tests
 
-# Test ST15 LargeCap Strategy
-PYTHONPATH=strategies/st15_largecap/src python3 -m unittest discover -s strategies/st15_largecap/tests -t .
+# Test ST-14 Bullish CE Options Strategy
+PYTHONPATH="scanners/scanner_dhan/src:strategies/st14_bullish_ce/src" /opt/anaconda3/bin/python -m pytest strategies/st14_bullish_ce/tests
+
+# Test News-Based Strategy
+PYTHONPATH="scanners/scanner_dhan/src:strategies/st14_bullish_ce/src:strategies/news_based_strategy/src" /opt/anaconda3/bin/python -m pytest strategies/news_based_strategy/tests
 ```

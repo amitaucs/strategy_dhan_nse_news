@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Automated Deployment Script for GCP Compute Engine
+# Automated Infrastructure & Code Deployment Script for GCP Compute Engine
 # Provisions infrastructure via Terraform, syncs codebase, and starts Docker.
 # Usage:
-#   ./infra/scripts/deploy.sh
+#   ./infra/deploy/deploy.sh
 # ==============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Resolve repository root
-CUR="$PROJECT_ROOT"
-while [[ "$CUR" != "/" && ! -d "$CUR/infra/terraform" ]]; do
-  CUR="$(dirname "$CUR")"
-done
-REPO_ROOT="$CUR"
+TERRAFORM_DIR="${REPO_ROOT}/infra/terraform"
+COMMON_TFVARS="${TERRAFORM_DIR}/terraform_common.tfvars"
+APP_TFVARS="${TERRAFORM_DIR}/terraform.tfvars"
 
-GCP_DIR="${PROJECT_ROOT}/infra/gcp"
-COMMON_TFVARS="${REPO_ROOT}/infra/terraform/terraform_common.tfvars"
-STRATEGY_TFVARS="${GCP_DIR}/terraform.tfvars"
-
-cd "$GCP_DIR"
+cd "$TERRAFORM_DIR"
 
 echo "======================================================================"
-echo "⚡ NSE Catalyst Trading Terminal - GCP Terraform Deployment"
+echo "⚡ NSE Unified Trading Platform - GCP Terraform Infrastructure & Deploy"
 echo "======================================================================"
 
 # Check if terraform is installed
@@ -44,20 +37,20 @@ fi
 
 # Check for terraform_common.tfvars
 if [[ ! -f "$COMMON_TFVARS" ]]; then
-  if [[ -f "${REPO_ROOT}/infra/terraform/terraform_common.tfvars.example" ]]; then
+  if [[ -f "${TERRAFORM_DIR}/terraform_common.tfvars.example" ]]; then
     echo "⚠️  'infra/terraform/terraform_common.tfvars' not found. Creating from example..."
-    cp "${REPO_ROOT}/infra/terraform/terraform_common.tfvars.example" "$COMMON_TFVARS"
+    cp "${TERRAFORM_DIR}/terraform_common.tfvars.example" "$COMMON_TFVARS"
     echo "📝 Please edit 'infra/terraform/terraform_common.tfvars' with your GCP project_id and re-run:"
-    echo "   ./infra/scripts/deploy.sh"
+    echo "   ./infra/deploy/deploy.sh"
     exit 1
   fi
 fi
 
-# Check for strategy terraform.tfvars
-if [[ ! -f "$STRATEGY_TFVARS" ]]; then
-  if [[ -f "${GCP_DIR}/terraform.tfvars.example" ]]; then
-    echo "⚠️  'infra/gcp/terraform.tfvars' not found. Creating from example..."
-    cp "${GCP_DIR}/terraform.tfvars.example" "$STRATEGY_TFVARS"
+# Check for terraform.tfvars
+if [[ ! -f "$APP_TFVARS" ]]; then
+  if [[ -f "${TERRAFORM_DIR}/terraform.tfvars.example" ]]; then
+    echo "⚠️  'infra/terraform/terraform.tfvars' not found. Creating from example..."
+    cp "${TERRAFORM_DIR}/terraform.tfvars.example" "$APP_TFVARS"
   fi
 fi
 
@@ -69,8 +62,8 @@ VAR_ARGS=()
 if [[ -f "$COMMON_TFVARS" ]]; then
   VAR_ARGS+=("-var-file=$COMMON_TFVARS")
 fi
-if [[ -f "$STRATEGY_TFVARS" ]]; then
-  VAR_ARGS+=("-var-file=$STRATEGY_TFVARS")
+if [[ -f "$APP_TFVARS" ]]; then
+  VAR_ARGS+=("-var-file=$APP_TFVARS")
 fi
 
 terraform apply -auto-approve "${VAR_ARGS[@]}"
@@ -96,8 +89,8 @@ done
 # 3. Sync codebase to remote instance
 echo "📦 [4/4] Syncing codebase and launching container on remote VM..."
 REMOTE_DIR="/opt/nse_trading_terminal"
-if [[ -f "$STRATEGY_TFVARS" ]]; then
-  STRAT_DIR=$(grep -E '^\s*remote_deploy_dir\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+if [[ -f "$APP_TFVARS" ]]; then
+  STRAT_DIR=$(grep -E '^\s*remote_deploy_dir\s*=' "$APP_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
   [[ -n "$STRAT_DIR" ]] && REMOTE_DIR="$STRAT_DIR"
 fi
 
@@ -116,7 +109,8 @@ tar \
   --exclude='*terraform*' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
-  -czf /tmp/nse_app_bundle.tar.gz scanners strategies/news_based_strategy
+  -czf /tmp/nse_app_bundle.tar.gz scanners strategies/news_based_strategy strategies/st14_bullish_ce infra/docker infra/deploy
+
 gcloud compute scp /tmp/nse_app_bundle.tar.gz "${INSTANCE_NAME}:/tmp/nse_app_bundle.tar.gz" --zone="$ZONE" ${PROJECT_ID:+--project="$PROJECT_ID"}
 rm -f /tmp/nse_app_bundle.tar.gz
 
@@ -124,14 +118,14 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" ${PROJECT_ID:+--project="$PRO
   cd $REMOTE_DIR
   tar -xzf /tmp/nse_app_bundle.tar.gz
   rm -f /tmp/nse_app_bundle.tar.gz
-  cd strategies/news_based_strategy
-  chmod +x infra/scripts/docker.sh
-  sudo ./infra/scripts/docker.sh up -d --build
+  chmod +x infra/deploy/docker.sh
+  sudo ./infra/deploy/docker.sh up -d --build
 "
 
 echo ""
 echo "======================================================================"
 echo "🎉 Deployment Complete!"
 echo "🌐 Web Dashboard: $WEB_URL"
-echo "📜 View Live Logs: gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command=\"cd $REMOTE_DIR && sudo ./infra/scripts/docker.sh logs\""
+echo "📜 View Live Logs: gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command=\"cd $REMOTE_DIR && sudo ./infra/deploy/docker.sh logs\""
 echo "======================================================================"
+

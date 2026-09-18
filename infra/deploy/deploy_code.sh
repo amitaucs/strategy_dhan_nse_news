@@ -6,26 +6,19 @@
 # and rebuild the Docker container without re-running Terraform / changing infra.
 #
 # Usage:
-#   ./infra/scripts/deploy_code.sh
-#   ./infra/scripts/deploy_code.sh --zone us-central1-a --instance nse-trading-terminal
+#   ./infra/deploy/deploy_code.sh
+#   ./infra/deploy/deploy_code.sh --zone us-central1-a --instance nse-trading-terminal
 # ==============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
-# Resolve repository root
-CUR="$PROJECT_ROOT"
-while [[ "$CUR" != "/" && ! -d "$CUR/infra/terraform" ]]; do
-  CUR="$(dirname "$CUR")"
-done
-REPO_ROOT="$CUR"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 COMMON_TFVARS="${REPO_ROOT}/infra/terraform/terraform_common.tfvars"
-STRATEGY_TFVARS="${PROJECT_ROOT}/infra/gcp/terraform.tfvars"
+TERRAFORM_TFVARS="${REPO_ROOT}/infra/terraform/terraform.tfvars"
 
-# Default Configuration (parsed from common + strategy tfvars)
+# Default Configuration (parsed from tfvars if available)
 DEFAULT_PROJECT_ID=""
 DEFAULT_ZONE="us-central1-a"
 DEFAULT_INSTANCE="nse-trading-terminal"
@@ -40,11 +33,11 @@ if [[ -f "$COMMON_TFVARS" ]]; then
   [[ -n "$COMMON_INST" ]] && DEFAULT_INSTANCE="$COMMON_INST"
 fi
 
-if [[ -f "$STRATEGY_TFVARS" ]]; then
-  STRAT_PID=$(grep -E '^\s*project_id\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
-  STRAT_ZONE=$(grep -E '^\s*zone\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
-  STRAT_INST=$(grep -E '^\s*instance_name\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
-  STRAT_DIR=$(grep -E '^\s*remote_deploy_dir\s*=' "$STRATEGY_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+if [[ -f "$TERRAFORM_TFVARS" ]]; then
+  STRAT_PID=$(grep -E '^\s*project_id\s*=' "$TERRAFORM_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_ZONE=$(grep -E '^\s*zone\s*=' "$TERRAFORM_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_INST=$(grep -E '^\s*instance_name\s*=' "$TERRAFORM_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
+  STRAT_DIR=$(grep -E '^\s*remote_deploy_dir\s*=' "$TERRAFORM_TFVARS" | head -n1 | cut -d'=' -f2 | tr -d ' "' || echo "")
   [[ -n "$STRAT_PID" ]] && DEFAULT_PROJECT_ID="$STRAT_PID"
   [[ -n "$STRAT_ZONE" ]] && DEFAULT_ZONE="$STRAT_ZONE"
   [[ -n "$STRAT_INST" ]] && DEFAULT_INSTANCE="$STRAT_INST"
@@ -90,10 +83,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "======================================================================"
-echo "⚡ NSE Catalyst Trading Terminal — Fast Code Deploy to GCP"
+echo "⚡ NSE Unified Trading Platform — Fast Code Deploy to GCP"
 echo "======================================================================"
 echo "🖥️  Target VM:   ${INSTANCE_NAME} (Zone: ${ZONE}${PROJECT_ID:+, Project: $PROJECT_ID})"
-echo "📁 Source:      ${PROJECT_ROOT}"
+echo "📁 Source:      ${REPO_ROOT}"
 echo "📁 Destination: ${REMOTE_DIR}"
 echo "======================================================================"
 
@@ -123,7 +116,7 @@ tar \
   --exclude='*terraform*' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
-  -czf "$BUNDLE_TMP" scanners strategies/news_based_strategy strategies/st14_bullish_ce strategies/st15_largecap
+  -czf "$BUNDLE_TMP" scanners strategies/news_based_strategy strategies/st14_bullish_ce infra/docker infra/deploy
 
 BUNDLE_SIZE=$(du -h "$BUNDLE_TMP" | cut -f1)
 echo "✅ Archive created ($BUNDLE_SIZE)."
@@ -150,9 +143,9 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" $GCLOUD_PROJECT_FLAG --comman
   sudo mkdir -p ${REMOTE_DIR}
   sudo tar -xzf /tmp/nse_app_bundle.tar.gz -C ${REMOTE_DIR}
   rm -f /tmp/nse_app_bundle.tar.gz
-  cd ${REMOTE_DIR}/strategies/news_based_strategy
-  sudo chmod +x infra/scripts/docker.sh
-  sudo ./infra/scripts/docker.sh up -d --build
+  cd ${REMOTE_DIR}
+  sudo chmod +x infra/deploy/docker.sh
+  sudo ./infra/deploy/docker.sh up -d --build
 "
 
 # 5. Verify container health & status
@@ -176,5 +169,6 @@ echo ""
 echo "======================================================================"
 echo "🎉 Code deployment successfully finished!"
 echo "🌐 Terminal Dashboard: https://stnse.amitdatta.co.in"
-echo "📜 View live logs:     gcloud compute ssh $INSTANCE_NAME --zone=$ZONE $GCLOUD_PROJECT_FLAG --command=\"cd $REMOTE_DIR && sudo ./infra/scripts/docker.sh logs\""
+echo "📜 View live logs:     gcloud compute ssh $INSTANCE_NAME --zone=$ZONE $GCLOUD_PROJECT_FLAG --command=\"cd $REMOTE_DIR && sudo ./infra/deploy/docker.sh logs\""
 echo "======================================================================"
+

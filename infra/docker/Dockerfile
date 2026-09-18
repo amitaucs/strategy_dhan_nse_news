@@ -1,4 +1,5 @@
-# Production Dockerfile for NSE Catalyst Trading Terminal
+# Production Dockerfile for Unified NSE Trading Platform
+# Packages News Catalyst Strategy, ST-14 Bullish CE Options, and Scanner Dhan
 FROM python:3.11-slim
 
 # Prevent python from writing pyc files and buffering stdout/stderr; configure IST timezone

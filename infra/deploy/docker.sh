@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Docker Management Helper for NSE Catalyst Trading Terminal
+# Docker Management Helper for NSE Unified Trading Platform
 # Usage:
-#   ./infra/scripts/docker.sh up [-d] [-p PORT] [--build]
-#   ./infra/scripts/docker.sh down
-#   ./infra/scripts/docker.sh restart [-d] [-p PORT]
-#   ./infra/scripts/docker.sh logs [-f] [--tail N]
-#   ./infra/scripts/docker.sh ps
-#   ./infra/scripts/docker.sh poller
+#   ./infra/deploy/docker.sh up [-d] [-p PORT] [--build]
+#   ./infra/deploy/docker.sh down
+#   ./infra/deploy/docker.sh restart [-d] [-p PORT]
+#   ./infra/deploy/docker.sh logs [-f] [--tail N]
+#   ./infra/deploy/docker.sh ps
+#   ./infra/deploy/docker.sh shell
 # ==============================================================================
 
 set -e
 
-# Resolve directories relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-COMPOSE_FILE="${PROJECT_ROOT}/infra/docker/docker-compose.yml"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+COMPOSE_FILE="${REPO_ROOT}/infra/docker/docker-compose.yml"
 
 # Default port if not provided
 DEFAULT_PORT=8000
 PORT="${PORT:-$DEFAULT_PORT}"
 
-# Help menu
 show_help() {
   cat << EOF
-NSE Catalyst Trading Terminal - Docker Controller
+NSE Unified Trading Platform - Docker Controller
 
 Usage:
   $(basename "$0") <command> [options]
@@ -35,7 +33,6 @@ Commands:
   restart     Restart the container
   logs        View / follow container logs in real time
   ps|status   Check container status and health
-  poller      Run pure CLI terminal poller interactively
   shell       Open an interactive shell inside the container
   help        Show this help message
 
@@ -46,23 +43,19 @@ Options for 'up' / 'restart':
 
 Examples:
   # Start in background on default port 8000
-  ./infra/scripts/docker.sh up -d
+  ./infra/deploy/docker.sh up -d
 
-  # Start in background on custom port 9000 with image rebuild
-  ./infra/scripts/docker.sh up -d -p 9000 --build
-
-  # Start in foreground (streaming logs directly to console)
-  ./infra/scripts/docker.sh up -p 9000
+  # Start in background on custom port with rebuild
+  ./infra/deploy/docker.sh up -d -p 8000 --build
 
   # View live streaming logs
-  ./infra/scripts/docker.sh logs
+  ./infra/deploy/docker.sh logs
 
   # Stop container
-  ./infra/scripts/docker.sh down
+  ./infra/deploy/docker.sh down
 EOF
 }
 
-# Main command dispatcher
 COMMAND="$1"
 shift || true
 
@@ -93,7 +86,7 @@ case "$COMMAND" in
       esac
     done
 
-    echo "🚀 Starting NSE Catalyst Trading Terminal on host port ${PORT}..."
+    echo "🚀 Starting NSE Trading Platform on host port ${PORT}..."
     if [[ -n "$DETACH" ]]; then
       echo "ℹ️  Running in background (detached mode)."
     else
@@ -105,12 +98,12 @@ case "$COMMAND" in
     if [[ -n "$DETACH" ]]; then
       echo "✅ Container started successfully!"
       echo "🌐 Web Dashboard: http://localhost:${PORT}"
-      echo "📜 View live logs: ./infra/scripts/docker.sh logs"
+      echo "📜 View live logs: ./infra/deploy/docker.sh logs"
     fi
     ;;
 
   down|stop)
-    echo "🛑 Stopping NSE Catalyst Trading Terminal..."
+    echo "🛑 Stopping NSE Trading Platform..."
     docker compose -f "$COMPOSE_FILE" down "$@"
     echo "✅ Container stopped."
     ;;
@@ -152,16 +145,6 @@ case "$COMMAND" in
 
   ps|status)
     docker compose -f "$COMPOSE_FILE" ps "$@"
-    ;;
-
-  poller)
-    echo "📡 Running interactive CLI poller inside Docker..."
-    cd "$PROJECT_ROOT"
-    docker run -it --rm \
-      --env-file .env \
-      -v "${PROJECT_ROOT}/data:/app/data" \
-      nse-catalyst-terminal \
-      python3 -m news_based_strategy.main "$@"
     ;;
 
   shell|bash)
