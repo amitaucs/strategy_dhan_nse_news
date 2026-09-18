@@ -160,21 +160,48 @@ class StrategyRunner:
                                     o for o in today_orders
                                     if o.get("status") in ("PLACED", "SIMULATED", "FILLED", "OPEN")
                                 ]
-                                if len(active_today) >= settings.MAX_POSITIONS_PER_DAY:
-                                    logger.warning(
-                                        "⚠️ Daily position limit reached (%d/%d). Auto-order skipped for %s.",
-                                        len(active_today), settings.MAX_POSITIONS_PER_DAY, res.symbol
-                                    )
-                                    continue
-
+                                active_today_count = len(active_today)
                                 already_placed = any(
                                     o.get("symbol") == res.symbol and o.get("status") in ("PLACED", "SIMULATED", "FILLED", "OPEN")
                                     for o in today_orders
                                 )
+
+                                # Broker ground-truth reconciliation if LIVE
+                                if not self.executor.dry_run and self.executor.dhan:
+                                    try:
+                                        b_resp = self.executor.dhan.get_order_list()
+                                        if isinstance(b_resp, dict) and b_resp.get("status") == "success":
+                                            b_data = b_resp.get("data", [])
+                                        elif isinstance(b_resp, list):
+                                            b_data = b_resp
+                                        else:
+                                            b_data = []
+
+                                        today_str = datetime.now().strftime("%Y-%m-%d")
+                                        b_today = [
+                                            o for o in b_data
+                                            if isinstance(o, dict) and (
+                                                today_str in str(o.get("createTime") or "")
+                                                or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT")
+                                            )
+                                        ]
+                                        active_today_count = max(active_today_count, len(b_today))
+                                        if any(isinstance(o, dict) and (o.get("tradingSymbol") == res.symbol or o.get("symbol") == res.symbol or str(o.get("securityId")) == str(res.sec_id)) for o in b_today):
+                                            already_placed = True
+                                    except Exception as exc:
+                                        logger.debug("Failed to reconcile ST15 with Dhan broker order list: %s", exc)
+
+                                if active_today_count >= settings.MAX_POSITIONS_PER_DAY:
+                                    logger.warning(
+                                        "⚠️ Daily position limit reached (%d/%d). Auto-order skipped for %s.",
+                                        active_today_count, settings.MAX_POSITIONS_PER_DAY, res.symbol
+                                    )
+                                    continue
+
                                 if not already_placed:
                                     mode_str = "VIRTUAL" if self.executor.dry_run else "LIVE"
                                     logger.info("🤖 [AUTO BOT] Auto-dispatching %s order for %s (Position %d/%d)...",
-                                                mode_str, res.symbol, len(active_today) + 1, settings.MAX_POSITIONS_PER_DAY)
+                                                mode_str, res.symbol, active_today_count + 1, settings.MAX_POSITIONS_PER_DAY)
                                     order = self.executor.execute_signal(res.signal)
                                     if self.repository:
                                         self.repository.save_order(order)
@@ -254,25 +281,55 @@ class StrategyRunner:
             signal = scan_res.signal
 
         # 2. Check daily position limit and duplicate order prevention
+        active_today_count = 0
+        already_placed = False
+
         if self.repository:
             today_orders = self.repository.get_today_orders()
             active_today = [
                 o for o in today_orders
                 if o.get("status") in ("PLACED", "SIMULATED", "FILLED", "OPEN")
             ]
-            if len(active_today) >= settings.MAX_POSITIONS_PER_DAY:
-                msg = f"Daily position limit reached: Maximum {settings.MAX_POSITIONS_PER_DAY} positions per day reached ({len(active_today)}/{settings.MAX_POSITIONS_PER_DAY} filled/placed today)"
-                logger.warning("Order execution rejected for %s: %s", sym, msg)
-                return False, None, msg
-
+            active_today_count = len(active_today)
             already_placed = any(
                 o.get("symbol") == sym and o.get("status") in ("PLACED", "SIMULATED", "FILLED", "OPEN")
                 for o in today_orders
             )
-            if already_placed:
-                msg = f"Order already placed for {sym} today"
-                logger.warning("Order execution rejected for %s: %s", sym, msg)
-                return False, None, msg
+
+        # Broker ground-truth check if Live
+        if self.executor and not self.executor.dry_run and self.executor.dhan:
+            try:
+                b_resp = self.executor.dhan.get_order_list()
+                if isinstance(b_resp, dict) and b_resp.get("status") == "success":
+                    b_data = b_resp.get("data", [])
+                elif isinstance(b_resp, list):
+                    b_data = b_resp
+                else:
+                    b_data = []
+
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                b_today = [
+                    o for o in b_data
+                    if isinstance(o, dict) and (
+                        today_str in str(o.get("createTime") or "")
+                        or o.get("orderStatus") in ("TRADED", "PENDING", "TRANSIT")
+                    )
+                ]
+                active_today_count = max(active_today_count, len(b_today))
+                if any(isinstance(o, dict) and (o.get("tradingSymbol") == sym or o.get("symbol") == sym or str(o.get("securityId")) == str(sec_id)) for o in b_today):
+                    already_placed = True
+            except Exception as exc:
+                logger.debug("Failed to reconcile with Dhan broker order list: %s", exc)
+
+        if active_today_count >= settings.MAX_POSITIONS_PER_DAY:
+            msg = f"Daily position limit reached: Maximum {settings.MAX_POSITIONS_PER_DAY} positions per day reached ({active_today_count}/{settings.MAX_POSITIONS_PER_DAY} filled/placed today)"
+            logger.warning("Order execution rejected for %s: %s", sym, msg)
+            return False, None, msg
+
+        if already_placed:
+            msg = f"Order already placed for {sym} today"
+            logger.warning("Order execution rejected for %s: %s", sym, msg)
+            return False, None, msg
 
         if not signal:
             trigger_price = round(candles[-1].close * 1.002, 2)

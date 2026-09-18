@@ -133,7 +133,34 @@ class DhanExecutor:
     def get_daily_order_count(self, ref_dt: Optional[datetime] = None) -> int:
         """Return count of orders successfully placed on reference date in IST (defaults to today)."""
         target_date = (ref_dt or RiskManager.get_ist_now()).date()
-        return sum(1 for dt in self._daily_order_timestamps if dt.date() == target_date)
+        local_count = sum(1 for dt in self._daily_order_timestamps if dt.date() == target_date)
+        if self.dhan and not self.dry_run:
+            try:
+                resp = self.dhan.get_order_list()
+                if isinstance(resp, list):
+                    broker_orders = resp
+                elif isinstance(resp, dict) and resp.get("status") == "success":
+                    broker_orders = resp.get("data", [])
+                else:
+                    broker_orders = []
+
+                broker_count = 0
+                for order in broker_orders:
+                    if isinstance(order, dict):
+                        create_time = (
+                            order.get("createTime")
+                            or order.get("orderTime")
+                            or order.get("orderDateTime")
+                            or ""
+                        )
+                        if str(target_date) in str(create_time):
+                            broker_count += 1
+                        elif not create_time:
+                            broker_count += 1
+                return max(local_count, broker_count)
+            except Exception as e:
+                logger.debug("Could not fetch Dhan broker order list for daily count: %s", e)
+        return local_count
 
     def record_placed_order(self, dt: Optional[datetime] = None) -> None:
         """Record an executed order timestamp for daily limit tracking in IST."""

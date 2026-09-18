@@ -1,8 +1,11 @@
 """Risk management, market hours validation, and position sizing."""
 
+import logging
 from datetime import datetime, timezone, timedelta
 import math
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
@@ -244,8 +247,8 @@ class RiskManager:
 
         exchange_time = cls.parse_exchange_timestamp(an_dt_str)
         if not exchange_time:
-            # If exchange timestamp cannot be parsed, fail open with 0.0 latency
-            return True, 0.0
+            logger.warning("❌ [NEWS STALENESS GATE] Exchange broadcast timestamp '%s' is missing or unparseable. Failing closed to block unverified execution.", an_dt_str)
+            return False, float("inf")
 
         ref = reference_time or cls.get_ist_now()
         age = (ref - exchange_time).total_seconds()

@@ -10,7 +10,7 @@ import os
 import threading
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -88,11 +88,18 @@ class DhanUniverseManager:
                     logger.warning("Could not load universe cache for %s: %s", key, exc)
 
     def is_cache_valid(self, universe_key: str) -> bool:
-        """Check if universe cache file exists and is within 24-hour TTL."""
+        """Check if universe cache file exists, is valid JSON with metadata, and is within 24-hour TTL."""
         cpath = self._get_cache_path(universe_key)
         if not cpath.exists():
             return False
         try:
+            with open(cpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    if "last_updated" in data:
+                        lu = datetime.strptime(data["last_updated"], "%Y-%m-%d %H:%M:%S")
+                        ttl = data.get("ttl_seconds", CACHE_TTL_SECONDS)
+                        return (datetime.now() - lu).total_seconds() < ttl
             mtime = cpath.stat().st_mtime
             return (time.time() - mtime) < CACHE_TTL_SECONDS
         except Exception:
@@ -186,13 +193,18 @@ class DhanUniverseManager:
             self._fno_symbols_set = set(sorted_fno_symbols)
             self._fno_lot_sizes = fno_symbols_dict
 
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            expires_str = (now + timedelta(seconds=CACHE_TTL_SECONDS)).strftime("%Y-%m-%d %H:%M:%S")
 
             # Save F&O Universe Cache
             fno_data = {
+                "version": 1,
                 "universe": "ALL_F_AND_O",
                 "count": len(sorted_fno_symbols),
                 "last_updated": now_str,
+                "expires_at": expires_str,
+                "ttl_seconds": CACHE_TTL_SECONDS,
                 "symbols": sorted_fno_symbols,
                 "lot_sizes": fno_symbols_dict,
                 "security_ids": fno_sec_ids,
@@ -204,8 +216,11 @@ class DhanUniverseManager:
 
             # Save Dhan Equity Master Cache
             eq_data = {
+                "version": 1,
                 "count": len(equity_sec_ids),
                 "last_updated": now_str,
+                "expires_at": expires_str,
+                "ttl_seconds": CACHE_TTL_SECONDS,
                 "equity_sec_ids": equity_sec_ids,
             }
             with open(self._get_cache_path("dhan_equity_master"), "w", encoding="utf-8") as f:
@@ -244,11 +259,16 @@ class DhanUniverseManager:
                 if s in self._equity_sec_ids:
                     sec_ids[s] = self._equity_sec_ids[s]
 
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now()
+            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            expires_str = (now + timedelta(seconds=CACHE_TTL_SECONDS)).strftime("%Y-%m-%d %H:%M:%S")
             data = {
+                "version": 1,
                 "universe": index_name,
                 "count": len(symbols),
                 "last_updated": now_str,
+                "expires_at": expires_str,
+                "ttl_seconds": CACHE_TTL_SECONDS,
                 "symbols": symbols,
                 "security_ids": sec_ids,
             }
@@ -314,15 +334,19 @@ class DhanUniverseManager:
         elif norm in ("NIFTY_50", "NIFTY50", "50"):
             key = "NIFTY_50"
 
-        # Check memory cache
-        if key in self._memory_cache:
+        disk_key = "fno" if key == "ALL_F_AND_O" else key.lower()
+        if not self.is_cache_valid(disk_key):
+            logger.info("ℹ️ [Universe Manager] Cache for '%s' is expired or missing. Triggering fresh sync...", key)
+            self.sync_all(force=True)
+
+        # Check memory cache if fresh
+        if key in self._memory_cache and self.is_cache_valid(disk_key):
             d = self._memory_cache[key]
             return key, list(d.get("symbols", [])), dict(d.get("security_ids", {}))
 
-        # Check disk cache
-        disk_key = "fno" if key == "ALL_F_AND_O" else key.lower()
+        # Check disk cache if fresh
         cpath = self._get_cache_path(disk_key)
-        if cpath.exists():
+        if cpath.exists() and self.is_cache_valid(disk_key):
             try:
                 with open(cpath, "r", encoding="utf-8") as f:
                     d = json.load(f)
@@ -331,8 +355,7 @@ class DhanUniverseManager:
             except Exception:
                 pass
 
-        # Perform sync if cache is not present
-        self.sync_all(force=False)
+        # Fallback to in-memory if sync ran or partial available
         if key in self._memory_cache:
             d = self._memory_cache[key]
             return key, list(d.get("symbols", [])), dict(d.get("security_ids", {}))

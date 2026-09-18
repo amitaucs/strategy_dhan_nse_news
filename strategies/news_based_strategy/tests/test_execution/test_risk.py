@@ -108,6 +108,15 @@ class TestRiskManager(unittest.TestCase):
         is_fresh4, _ = RiskManager.is_news_fresh(stale_time_str, max_age_seconds=0, reference_time=ref_time)
         self.assertTrue(is_fresh4)
 
+        # Missing or unparseable exchange timestamp must fail closed when check is active
+        is_fresh_empty, age_empty = RiskManager.is_news_fresh("", max_age_seconds=180, reference_time=ref_time)
+        self.assertFalse(is_fresh_empty)
+        self.assertEqual(age_empty, float("inf"))
+
+        is_fresh_invalid, age_invalid = RiskManager.is_news_fresh("NOT_A_DATE", max_age_seconds=180, reference_time=ref_time)
+        self.assertFalse(is_fresh_invalid)
+        self.assertEqual(age_invalid, float("inf"))
+
     def test_executor_stale_news_rejection(self):
         from news_based_strategy.core.models import TradeSignal
         from news_based_strategy.execution.executor import DhanExecutor

@@ -1,11 +1,13 @@
 """Nifty 200 universe management and DhanHQ Security ID synchronization."""
 
 import csv
+from datetime import datetime
 import io
 import json
 import logging
 import os
 from pathlib import Path
+import ssl
 from typing import Dict, List, Optional, Set
 import urllib.request
 
@@ -105,36 +107,60 @@ SYMBOL_ALIASES: Dict[str, str] = {
 class UniverseManager:
     """Manages Nifty 200 ticker list and security ID resolution."""
 
-    def __init__(self, cache_path: str = DEFAULT_CACHE_PATH):
+    def __init__(self, cache_path: str = DEFAULT_CACHE_PATH, cache_ttl_seconds: int = 86400):
         self.cache_path = cache_path
+        self.cache_ttl_seconds = cache_ttl_seconds
         self._sec_ids: Dict[str, str] = dict(DEFAULT_SEC_IDS)
         # Deduplicate and sort exactly
         self._symbols: List[str] = sorted(list(set(NIFTY_200_SYMBOLS)))
-        self.load_cache()
-        if len(self._sec_ids) < len(self._symbols):
+        is_fresh = self.load_cache()
+        if not is_fresh or len(self._sec_ids) < len(self._symbols):
             try:
                 self.sync_from_dhan()
             except Exception:
                 pass
 
-    def load_cache(self) -> None:
-        """Load cached symbol mappings from disk if available."""
+    def load_cache(self) -> bool:
+        """Load cached symbol mappings from disk if available and fresh (TTL <= 24h)."""
         if os.path.exists(self.cache_path):
             try:
                 with open(self.cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, dict):
-                        self._sec_ids.update(data)
-                        logger.info("Loaded %d symbol mappings from cache", len(data))
+                        if "mappings" in data and "updated_at" in data:
+                            updated_at = datetime.fromisoformat(data["updated_at"])
+                            ttl = data.get("ttl_seconds", self.cache_ttl_seconds)
+                            if (datetime.now() - updated_at).total_seconds() > ttl:
+                                logger.info("Cached universe at %s has expired (Age > %ds).", self.cache_path, ttl)
+                                return False
+                            mappings = data.get("mappings", {})
+                            self._sec_ids.update(mappings)
+                            logger.info("Loaded %d symbol mappings from verified cache", len(mappings))
+                            return True
+                        elif "version" not in data:
+                            mtime = os.path.getmtime(self.cache_path)
+                            if (datetime.now().timestamp() - mtime) > self.cache_ttl_seconds:
+                                logger.info("Legacy universe cache at %s is stale (> 24h).", self.cache_path)
+                                return False
+                            self._sec_ids.update(data)
+                            logger.info("Loaded %d symbol mappings from legacy cache", len(data))
+                            return True
             except Exception as e:
                 logger.warning("Failed to load symbol cache from %s: %s", self.cache_path, e)
+        return False
 
     def save_cache(self) -> None:
-        """Persist current symbol mappings to disk."""
+        """Persist current symbol mappings to disk with version and TTL metadata."""
         try:
             os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            payload = {
+                "version": 1,
+                "updated_at": datetime.now().isoformat(),
+                "ttl_seconds": self.cache_ttl_seconds,
+                "mappings": self._sec_ids,
+            }
             with open(self.cache_path, "w", encoding="utf-8") as f:
-                json.dump(self._sec_ids, f, indent=2)
+                json.dump(payload, f, indent=2)
             logger.info("Saved %d symbol mappings to cache at %s", len(self._sec_ids), self.cache_path)
         except Exception as e:
             logger.warning("Failed to save symbol cache to %s: %s", self.cache_path, e)
@@ -143,7 +169,7 @@ class UniverseManager:
         """Download latest Dhan official scrip master CSV and resolve security IDs."""
         try:
             logger.info("Syncing Nifty 200 scrip master from DhanHQ (%s)...", DHAN_SCRIP_MASTER_URL)
-            ssl_ctx = ssl._create_unverified_context()
+            ssl_ctx = ssl.create_default_context()
             req = urllib.request.Request(
                 DHAN_SCRIP_MASTER_URL,
                 headers={"User-Agent": "Mozilla/5.0 (TradingPlatform/ST15)"},

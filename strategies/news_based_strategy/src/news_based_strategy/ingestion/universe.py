@@ -497,21 +497,10 @@ def sync_dhan_fno_symbols(
             DHAN_SCRIP_MASTER_URL,
             headers={"User-Agent": "Mozilla/5.0 (NewsStrategy/1.0)"},
         )
-        ctx = None
-        try:
-            import ssl
-            try:
-                ctx = ssl.create_default_context()
-            except Exception:
-                ctx = ssl._create_unverified_context()
-        except Exception:
-            pass
+        import ssl
+        ctx = ssl.create_default_context()
 
-        try:
-            resp_cm = urllib.request.urlopen(req, context=ctx, timeout=timeout) if ctx else urllib.request.urlopen(req, timeout=timeout)
-        except Exception:
-            import ssl
-            resp_cm = urllib.request.urlopen(req, context=ssl._create_unverified_context(), timeout=timeout)
+        resp_cm = urllib.request.urlopen(req, context=ctx, timeout=timeout)
 
         with resp_cm as resp:
             if resp.status == 200:

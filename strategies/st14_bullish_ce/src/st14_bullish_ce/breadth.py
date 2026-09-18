@@ -57,7 +57,7 @@ def _fetch_index_quote_dhan(dhan_client: Any, sec_id: str) -> Optional[Tuple[flo
 def _fetch_index_quote_market_feed(ticker: str) -> Optional[Tuple[float, float, bool]]:
     """Fetch live real-time index price and change percentage from market feed."""
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-    ctx = ssl._create_unverified_context()
+    ctx = ssl.create_default_context()
     endpoints = [
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d",
         f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d",

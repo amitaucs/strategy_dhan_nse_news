@@ -170,7 +170,7 @@ def _fetch_from_market_feed(symbol: str) -> Optional[float]:
 
         try:
             req = urllib.request.Request(url, headers=headers)
-            ctx = ssl._create_unverified_context()
+            ctx = ssl.create_default_context()
             with urllib.request.urlopen(req, context=ctx, timeout=3.0) as resp_obj:
                 if resp_obj.status == 200:
                     data = json.loads(resp_obj.read().decode("utf-8"))

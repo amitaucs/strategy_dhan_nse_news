@@ -117,17 +117,25 @@ def load_dhan_credentials(env_path: str = ".env") -> tuple[str, str]:
 class DhanDataProvider:
     """Historical and snapshot market data provider using DhanHQ Data APIs with rate-limit protection."""
 
-    _rate_lock = threading.Lock()
-    _last_request_time = 0.0
+    _quote_lock = threading.Lock()
+    _last_quote_time = 0.0
+    _historical_lock = threading.Lock()
+    _last_historical_time = 0.0
+    _rest_lock = threading.Lock()
+    _last_rest_time = 0.0
+
     _data_api_health_cache: tuple[float, dict[str, Any]] | None = None
-    request_delay: float = 0.25
+    quote_delay: float = 1.0       # Dhan REST quote API strict limit: 1 request/sec
+    historical_delay: float = 0.20 # Dhan historical data API limit: ~5 requests/sec
+    rest_delay: float = 0.50       # Dhan general REST API: ~2 requests/sec
     max_retries: int = 4
 
     def __init__(
         self,
         client_id: str | None = None,
         access_token: str | None = None,
-        request_delay: float = 0.25,
+        quote_delay: float = 1.0,
+        historical_delay: float = 0.20,
         max_retries: int = 4,
     ) -> None:
         if not client_id or not access_token:
@@ -140,7 +148,8 @@ class DhanDataProvider:
 
         self.client_id = client_id or ""
         self.access_token = access_token or ""
-        self.request_delay = max(0.15, request_delay)
+        self.quote_delay = max(1.0, quote_delay)
+        self.historical_delay = max(0.15, historical_delay)
         self.max_retries = max_retries
 
         if self.client_id and self.access_token:
@@ -150,14 +159,36 @@ class DhanDataProvider:
             self.context = None
             self.dhan = None
 
+    def _pace_quote_request(self) -> None:
+        """Enforce strict 1 req/sec pacing for Dhan marketfeed snapshot/quote APIs."""
+        with DhanDataProvider._quote_lock:
+            now = time.monotonic()
+            elapsed = now - DhanDataProvider._last_quote_time
+            if elapsed < self.quote_delay:
+                time.sleep(self.quote_delay - elapsed)
+            DhanDataProvider._last_quote_time = time.monotonic()
+
+    def _pace_historical_request(self) -> None:
+        """Enforce thread-safe pacing for Dhan historical daily/minute data APIs."""
+        with DhanDataProvider._historical_lock:
+            now = time.monotonic()
+            elapsed = now - DhanDataProvider._last_historical_time
+            if elapsed < self.historical_delay:
+                time.sleep(self.historical_delay - elapsed)
+            DhanDataProvider._last_historical_time = time.monotonic()
+
+    def _pace_rest_request(self) -> None:
+        """Enforce thread-safe pacing for general Dhan REST APIs (option chain, expiry, funds)."""
+        with DhanDataProvider._rest_lock:
+            now = time.monotonic()
+            elapsed = now - DhanDataProvider._last_rest_time
+            if elapsed < self.rest_delay:
+                time.sleep(self.rest_delay - elapsed)
+            DhanDataProvider._last_rest_time = time.monotonic()
+
     def _pace_request(self) -> None:
-        """Ensure thread-safe inter-request pacing across all concurrent scanner workers."""
-        with DhanDataProvider._rate_lock:
-            now = time.time()
-            elapsed = now - DhanDataProvider._last_request_time
-            if elapsed < self.request_delay:
-                time.sleep(self.request_delay - elapsed)
-            DhanDataProvider._last_request_time = time.time()
+        """Backwards-compatible alias for historical/general request pacing."""
+        self._pace_historical_request()
 
     @staticmethod
     def _is_rate_limit_response(response: Any) -> bool:
@@ -323,7 +354,7 @@ class DhanDataProvider:
         to_str = to_date.strftime("%Y-%m-%d")
 
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_historical_request()
             try:
                 response = self.dhan.historical_daily_data(
                     security_id=str(security_id),
@@ -413,7 +444,7 @@ class DhanDataProvider:
 
         ltp_map: dict[str, float] = {}
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_quote_request()
             try:
                 response = self.dhan.ticker_data({exchange_segment: int_ids})
                 if self._is_data_api_unsubscribed(response):
@@ -467,7 +498,7 @@ class DhanDataProvider:
         quote_map: dict[str, MarketQuoteTick] = {}
         recv_time = datetime.now(timezone.utc)
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_quote_request()
             try:
                 if hasattr(self.dhan, "quote_data"):
                     response = self.dhan.quote_data({exchange_segment: int_ids})
@@ -536,7 +567,7 @@ class DhanDataProvider:
             return []
 
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_rest_request()
             try:
                 sec_int = int(under_security_id)
                 response = self.dhan.expiry_list(
@@ -574,7 +605,7 @@ class DhanDataProvider:
             return {}
 
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_rest_request()
             try:
                 sec_int = int(under_security_id)
                 response = self.dhan.option_chain(
@@ -602,7 +633,7 @@ class DhanDataProvider:
             return {"status": "failure", "remarks": "Dhan client not initialized"}
 
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_rest_request()
             try:
                 if hasattr(self.dhan, "get_fund_limits"):
                     response = self.dhan.get_fund_limits()
@@ -635,7 +666,7 @@ class DhanDataProvider:
         to_str = to_date.strftime("%Y-%m-%d")
 
         for attempt in range(1, self.max_retries + 1):
-            self._pace_request()
+            self._pace_historical_request()
             try:
                 response = self.dhan.intraday_minute_data(
                     security_id=str(security_id),
@@ -704,25 +735,33 @@ class DhanDataProvider:
         self,
         security_id: str,
         days: int = 25,
+        exclude_incomplete: bool = False,
     ) -> pd.DataFrame:
         """Fetch 1-minute bars from Dhan and resample into 1-Hour (60-minute) OHLCV candles aligned to 09:15 IST."""
-        return self.fetch_resampled_bars(security_id=security_id, rule="60min", days=min(days, 30))
+        return self.fetch_resampled_bars(security_id=security_id, rule="60min", days=min(days, 30), exclude_incomplete=exclude_incomplete)
 
     def fetch_2h_bars(
         self,
         security_id: str,
         days: int = 25,
+        exclude_incomplete: bool = False,
     ) -> pd.DataFrame:
         """Fetch 1-minute bars from Dhan and resample into 2-Hour OHLCV candles aligned to 09:15 IST."""
-        return self.fetch_resampled_bars(security_id=security_id, rule="120min", days=min(days, 30))
+        return self.fetch_resampled_bars(security_id=security_id, rule="120min", days=min(days, 30), exclude_incomplete=exclude_incomplete)
 
     def fetch_resampled_bars(
         self,
         security_id: str,
         rule: str = "15min",
         days: int = 25,
+        exclude_incomplete: bool = False,
     ) -> pd.DataFrame:
-        """Fetch 1-minute bars from Dhan and resample into custom OHLCV candles aligned to 09:15 IST."""
+        """Fetch 1-minute bars from Dhan and resample into custom OHLCV candles aligned to 09:15 IST.
+        
+        Session: 09:15 to 15:30 IST.
+        When exclude_incomplete is True:
+          Drops candles with partial minutes (e.g. 15:15 1H bar which only has 15 minutes, or in-progress bars).
+        """
         safe_days = min(days, 30)
         m_df = self.fetch_intraday_minute_bars(security_id=security_id, days=safe_days)
         if m_df.empty:
@@ -743,6 +782,13 @@ class DhanDataProvider:
             .dropna()
             .reset_index()
         )
+        if exclude_incomplete and not resampled.empty:
+            counts = m_df.resample(rule, origin="start_day", offset="9h15min")["close"].count().reset_index()
+            counts.columns = ["timestamp", "bar_count"]
+            resampled = pd.merge(resampled, counts, on="timestamp")
+            expected_minutes = 60 if rule in ("60min", "1H", "1h") else (120 if rule in ("120min", "2H", "2h") else 15)
+            resampled = resampled[resampled["bar_count"] >= expected_minutes].drop(columns=["bar_count"])
+
         return resampled
 
     def fetch_monthly_bars(

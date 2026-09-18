@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, time
 import logging
+import threading
 import time as time_lib
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
@@ -94,6 +95,9 @@ from st15_largecap.config import settings
 class CandleFetcher:
     """Fetches intraday data from DhanHQ, caches historical candles, and transforms to 2H candles."""
 
+    _rate_lock = threading.Lock()
+    _last_call_time: float = 0.0
+
     def __init__(
         self,
         dhan_client: Optional[Any] = None,
@@ -102,8 +106,7 @@ class CandleFetcher:
         self.dhan = dhan_client
         self.cache_ttl_seconds = cache_ttl_seconds
         self._cache: Dict[str, Tuple[datetime, List[Candle]]] = {}
-        self._last_call_time: float = 0.0
-        self._min_interval: float = 0.12  # Max ~8 requests/sec to honor Dhan rate limits
+        self._min_interval: float = 0.15  # Strict rate limit delay between calls
 
         if not self.dhan and settings.DHAN_CLIENT_ID and settings.DHAN_ACCESS_TOKEN:
             try:
@@ -135,7 +138,7 @@ class CandleFetcher:
         days: int = 180,
         force_refresh: bool = False,
     ) -> List[Candle]:
-        """Fetch historical intraday data with smart chunking (90-day intervals), caching and rate-limiting."""
+        """Fetch historical intraday data with atomic chunking (90-day intervals), caching and rate-limiting."""
         cache_key = f"{symbol or security_id}_{days}"
         now = datetime.now()
 
@@ -163,22 +166,24 @@ class CandleFetcher:
         # Fetch older chunks first
         chunks = sorted(chunks, key=lambda c: c[0], reverse=True)
         all_records: List[Dict[str, Any]] = []
+        all_chunks_succeeded = True
 
         for chunk_start, chunk_end in chunks:
             from_date = (now - timedelta(days=chunk_start)).strftime("%Y-%m-%d")
             to_date = (now - timedelta(days=chunk_end)).strftime("%Y-%m-%d")
 
-            # Rate Limiting: enforce minimum interval between Dhan API calls
-            elapsed = time_lib.time() - self._last_call_time
-            if elapsed < self._min_interval:
-                time_lib.sleep(self._min_interval - elapsed)
+            # Thread-safe Rate Limiting: enforce minimum interval between Dhan API calls
+            with CandleFetcher._rate_lock:
+                elapsed = time_lib.time() - CandleFetcher._last_call_time
+                if elapsed < self._min_interval:
+                    time_lib.sleep(self._min_interval - elapsed)
+                CandleFetcher._last_call_time = time_lib.time()
 
             max_retries = 2
             chunk_success = False
 
             for attempt in range(max_retries + 1):
                 try:
-                    self._last_call_time = time_lib.time()
                     response = self.dhan.intraday_minute_data(
                         security_id=str(security_id),
                         exchange_segment=exchange_segment,
@@ -231,7 +236,12 @@ class CandleFetcher:
                     logger.warning("Error fetching chunk (%s to %s) for %s: %s", from_date, to_date, symbol, e)
                     break
 
-        if all_records:
+            if not chunk_success:
+                logger.warning("Failed to fetch chunk [%s to %s] for %s (%s). Aborting partial candle assembly.", from_date, to_date, symbol, security_id)
+                all_chunks_succeeded = False
+                break
+
+        if all_chunks_succeeded and all_records:
             # Deduplicate by timestamp and sort
             df_rec = pd.DataFrame(all_records)
             df_rec = df_rec.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
@@ -240,9 +250,14 @@ class CandleFetcher:
                 self._cache[cache_key] = (now, candles)
                 return candles
 
+        # Fallback to cache only if age is within reasonable bounds (<= 24h)
         if cache_key in self._cache:
-            return self._cache[cache_key][1]
+            cached_time, cached_candles = self._cache[cache_key]
+            fallback_max_seconds = 86400  # 24 hours max fallback
+            if (now - cached_time).total_seconds() <= fallback_max_seconds and cached_candles:
+                logger.info("Using cached candles fallback (age: %.0fs) for %s", (now - cached_time).total_seconds(), symbol or security_id)
+                return cached_candles
 
-        logger.warning("No real candles available for %s (SecID: %s).", symbol, security_id)
+        logger.warning("No complete candles available for %s (SecID: %s).", symbol, security_id)
         return []
 

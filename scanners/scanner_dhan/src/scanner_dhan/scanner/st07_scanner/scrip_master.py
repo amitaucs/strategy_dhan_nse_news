@@ -22,18 +22,14 @@ CACHE_MAX_AGE_SECONDS = 86400  # 24 hours
 
 
 def _get_ssl_context() -> ssl.SSLContext:
-    """Create a resilient SSL context with certifi / unverified fallback."""
+    """Create a verified SSL context using certifi or system root certificates."""
     try:
         import certifi
 
         return ssl.create_default_context(cafile=certifi.where())
     except Exception:
         pass
-    try:
-        return ssl.create_default_context()
-    except Exception:
-        pass
-    return ssl._create_unverified_context()
+    return ssl.create_default_context()
 
 
 def load_dhan_scrip_master(force_refresh: bool = False) -> pd.DataFrame:
@@ -61,14 +57,8 @@ def load_dhan_scrip_master(force_refresh: bool = False) -> pd.DataFrame:
             headers={"User-Agent": "DhanHQ-ST07-Scanner/1.0"},
         )
         ctx = _get_ssl_context()
-        try:
-            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-                content = resp.read()
-        except Exception:
-            # Fallback to unverified context if local macOS certificate chain fails
-            unverified_ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, timeout=10, context=unverified_ctx) as resp:
-                content = resp.read()
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+            content = resp.read()
 
         with open(CACHE_FILE, "wb") as f:
             f.write(content)
