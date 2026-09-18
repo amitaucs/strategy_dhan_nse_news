@@ -30,17 +30,18 @@ def check_breakout_candle_cross(
             - live_ltp: Current LTP checked
             - message: Status message describing the trigger state
     """
-    ltp = current_ltp
+    ltp = None
+    dhan_prov = provider or DhanDataProvider()
+    if dhan_prov.dhan and sec_id:
+        try:
+            ltp_map = dhan_prov.fetch_ltp_batch([sec_id])
+            if sec_id in ltp_map and ltp_map[sec_id] > 0:
+                ltp = ltp_map[sec_id]
+        except Exception as exc:
+            logger.debug("Error fetching live LTP for %s: %s", symbol, exc)
 
     if ltp is None or ltp <= 0:
-        dhan_prov = provider or DhanDataProvider()
-        if dhan_prov.dhan:
-            try:
-                ltp_map = dhan_prov.fetch_ltp_batch([sec_id])
-                if sec_id in ltp_map and ltp_map[sec_id] > 0:
-                    ltp = ltp_map[sec_id]
-            except Exception as exc:
-                logger.debug("Error fetching live LTP for %s: %s", symbol, exc)
+        ltp = current_ltp
 
     if ltp is None or ltp <= 0:
         # If no live feed available, assume trigger matches breakout high for simulation

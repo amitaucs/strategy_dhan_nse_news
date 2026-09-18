@@ -751,7 +751,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           <span id="st14-watchlist-table-badge" class="text-xs font-mono text-amber-300 bg-amber-950/60 border border-amber-800/50 px-2.5 py-0.5 rounded-full">0 Candidates</span>
         </div>
         <div class="flex items-center gap-2">
-          <button onclick="runSt14TriggerCheckNow()" class="text-xs font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/60 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow">
+          <button onclick="runSt14HourlyScanNow()" class="text-xs font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/60 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow" title="Scan 228 F&O universe for 5D/5H breakouts and rising VWAP">
+            <span>⚡ Run 1-Hr Discovery Scan</span>
+          </button>
+          <button onclick="runSt14TriggerCheckNow()" class="text-xs font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/60 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow" title="Poll active watchlist candidates for breakout breach">
             <span>🎯 Check Triggers Now</span>
           </button>
         </div>
@@ -786,11 +789,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     <div class="bg-[#111827] border border-gray-800 rounded-xl p-4 shadow-md space-y-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <span class="text-sm font-bold text-white">⚡ ST-14 Historical Breakout Signals &amp; Candidates</span>
-          <span id="st14-signals-count-badge" class="text-xs font-mono text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2.5 py-0.5 rounded-full">0 Candidates</span>
+          <span class="text-sm font-bold text-white">⚡ ST-14 Confirmed / Executed Breakout Signals History</span>
+          <span id="st14-signals-count-badge" class="text-xs font-mono text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2.5 py-0.5 rounded-full">0 Executed Signals</span>
         </div>
-        <button onclick="runSt14HourlyScanNow()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
-          <span>🔄 Refresh Scan</span>
+        <button onclick="loadSt14Data()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
+          <span>🔄 Refresh Signals</span>
         </button>
       </div>
 
@@ -3926,12 +3929,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (spinner) spinner.classList.remove('hidden');
       try {
         showToast('⚡ Running ST-14 1-Hour Discovery Scanner across 228 F&O universe...', '🔍');
-        const res = await fetch('/api/strategies/st14_bullish_ce/scan-hourly', { method: 'POST' });
+        const res = await fetch('/api/strategies/st14_bullish_ce/scan-hourly?bypass_timing=true', { method: 'POST' });
         if (res.ok) {
           const data = await res.json();
-          const qCount = data.result && data.result.signals ? data.result.signals.length : 0;
+          const qCount = data.result && data.result.discovered_count !== undefined
+            ? data.result.discovered_count
+            : (data.result && data.result.candidates ? data.result.candidates.length : (data.telemetry && data.telemetry.breakout_watchlist ? data.telemetry.breakout_watchlist.length : 0));
           const ordCount = data.result && data.result.orders_placed ? data.result.orders_placed : 0;
-          showToast(`✅ ST-14 Discovery Scan completed: ${qCount} breakout candidates added to watchlist! (${ordCount} orders placed)`, '🎯');
+          showToast(`✅ ST-14 Discovery Scan completed: ${qCount} breakout candidate(s) in watchlist! (${ordCount} orders placed)`, '🎯');
           loadSt14Data();
         } else {
           showToast('Failed to run ST-14 hourly scan', '❌');
@@ -3948,10 +3953,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (spinner) spinner.classList.remove('hidden');
       try {
         showToast('🎯 Polling ST-14 Breakout Watchlist (5-Minute Trigger Check)...', '🔍');
-        const res = await fetch('/api/strategies/st14_bullish_ce/check-triggers', { method: 'POST' });
+        const res = await fetch('/api/strategies/st14_bullish_ce/check-triggers?bypass_timing=true', { method: 'POST' });
         if (res.ok) {
           const data = await res.json();
-          const trgCount = data.result && data.result.triggered !== undefined ? data.result.triggered : 0;
+          const trgCount = data.result && data.result.triggered_count !== undefined 
+            ? data.result.triggered_count 
+            : (data.result && data.result.triggered !== undefined ? data.result.triggered : 0);
           const ordCount = data.result && data.result.orders_placed ? data.result.orders_placed : 0;
           showToast(`🎯 ST-14 Trigger Check completed: ${trgCount} breached, ${ordCount} orders placed!`, '⚡');
           loadSt14Data();

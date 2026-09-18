@@ -838,8 +838,9 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         # Update live telemetry metrics for ST-14 Bullish CE strategy
         if hasattr(state, "st14_strategy") and state.st14_strategy:
             st14_telem = state.st14_strategy.get_strategy_telemetry()
+            total_st14_signals = len(st14_telem.get("breakout_watchlist", [])) + len(st14_telem.get("recent_signals", []))
             StrategyRegistry.update_metrics("st14_bullish_ce", {
-                "signals_today": len(st14_telem.get("recent_signals", [])),
+                "signals_today": total_st14_signals,
                 "orders_placed": len(st14_telem.get("closed_positions", [])) + st14_telem.get("active_positions_count", 0),
                 "allocated_capital": st14_telem.get("capital_per_trade", 25000.0),
                 "auto_order_enabled": state.st14_strategy.config.auto_order,
@@ -879,7 +880,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
             resp["auto_order_enabled"] = state.st14_strategy.config.auto_order
             resp["telemetry"] = telem
             resp["metrics"].update({
-                "signals_today": len(telem.get("recent_signals", [])),
+                "signals_today": len(telem.get("breakout_watchlist", [])) + len(telem.get("recent_signals", [])),
                 "orders_placed": len(telem.get("closed_positions", [])) + telem.get("active_positions_count", 0),
                 "allocated_capital": telem.get("capital_per_trade", 25000.0),
             })
