@@ -517,46 +517,86 @@ class St14BullishCeStrategy:
                     signal.remarks = remarks
                     return False, remarks, None
 
-                # Broker margin check immediately before live placement (fail-closed)
+                dhan = self.provider.dhan
+                dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN
+
+                # Broker margin check immediately before live placement (Strict fail-closed)
                 try:
-                    fund_resp = (
-                        self.provider.fetch_fund_limits()
-                        if hasattr(self.provider, "fetch_fund_limits")
-                        else (self.provider.dhan.get_fund_limits() if hasattr(self.provider.dhan, "get_fund_limits") else None)
-                    )
-                    if isinstance(fund_resp, dict) and fund_resp.get("status") == "success":
-                        fund_data = fund_resp.get("data", {})
-                        avail_bal = float(
-                            fund_data.get("availabelBalance")
-                            or fund_data.get("availableBalance")
-                            or fund_data.get("sodLimit")
-                            or 0.0
+                    # 1. Query exact required margin from Dhan margin_calculator API
+                    if hasattr(dhan, "margin_calculator"):
+                        margin_resp = dhan.margin_calculator(
+                            security_id=str(opt.security_id),
+                            exchange_segment=dhan.NSE_FNO,
+                            transaction_type=dhan.BUY,
+                            quantity=qty,
+                            product_type=dhan_prod,
+                            price=levels.entry_price,
                         )
-                        required_margin = levels.entry_price * qty
-                        if avail_bal > 0 and avail_bal < required_margin:
-                            remarks = (
-                                f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Insufficient broker margin. "
-                                f"Required ₹{required_margin:,.2f}, Available: ₹{avail_bal:,.2f}."
-                            )
-                            logger.error(remarks)
-                            signal.status = OrderStatus.ORDER_REJECTED
-                            signal.remarks = remarks
-                            return False, remarks, None
-                    elif isinstance(fund_resp, dict) and fund_resp.get("status") == "failure":
-                        remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker fund limit check failed: {fund_resp.get('remarks', fund_resp)}"
+                    else:
+                        margin_resp = None
+
+                    if not (isinstance(margin_resp, dict) and margin_resp.get("status") == "success"):
+                        err_msg = margin_resp.get("remarks", margin_resp) if isinstance(margin_resp, dict) else "Margin calculator unavailable"
+                        remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker margin calculation failed ({err_msg})."
                         logger.error(remarks)
                         signal.status = OrderStatus.ORDER_REJECTED
                         signal.remarks = remarks
                         return False, remarks, None
+
+                    margin_data = margin_resp.get("data", {})
+                    required_margin = float(
+                        margin_data.get("totalMargin")
+                        or margin_data.get("marginRequirement")
+                        or (levels.entry_price * qty)
+                    )
+                    if required_margin <= 0:
+                        required_margin = levels.entry_price * qty
+
+                    # 2. Query live available funds from Dhan fund limits API
+                    fund_resp = (
+                        self.provider.fetch_fund_limits()
+                        if hasattr(self.provider, "fetch_fund_limits")
+                        else (dhan.get_fund_limits() if hasattr(dhan, "get_fund_limits") else None)
+                    )
+                    if not (isinstance(fund_resp, dict) and fund_resp.get("status") == "success"):
+                        err_msg = fund_resp.get("remarks", fund_resp) if isinstance(fund_resp, dict) else "Fund limits unavailable"
+                        remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker fund limit check failed ({err_msg})."
+                        logger.error(remarks)
+                        signal.status = OrderStatus.ORDER_REJECTED
+                        signal.remarks = remarks
+                        return False, remarks, None
+
+                    fund_data = fund_resp.get("data", {})
+                    avail_bal = float(
+                        fund_data.get("availabelBalance")
+                        or fund_data.get("availableBalance")
+                        or fund_data.get("sodLimit")
+                        or 0.0
+                    )
+
+                    if avail_bal <= 0:
+                        remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Available broker balance is zero or unavailable (Available: ₹{avail_bal:,.2f})."
+                        logger.error(remarks)
+                        signal.status = OrderStatus.ORDER_REJECTED
+                        signal.remarks = remarks
+                        return False, remarks, None
+
+                    if avail_bal < required_margin:
+                        remarks = (
+                            f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Insufficient broker margin. "
+                            f"Required ₹{required_margin:,.2f}, Available: ₹{avail_bal:,.2f}."
+                        )
+                        logger.error(remarks)
+                        signal.status = OrderStatus.ORDER_REJECTED
+                        signal.remarks = remarks
+                        return False, remarks, None
+
                 except Exception as margin_exc:
                     remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Broker fund limit check exception: {margin_exc}"
                     logger.error(remarks)
                     signal.status = OrderStatus.ORDER_REJECTED
                     signal.remarks = remarks
                     return False, remarks, None
-
-                dhan = self.provider.dhan
-                dhan_prod = dhan.INTRA if self.config.product_type == ProductType.INTRADAY else dhan.MARGIN
                 order_resp = dhan.place_super_order(
                     security_id=opt.security_id,
                     exchange_segment=dhan.NSE_FNO,

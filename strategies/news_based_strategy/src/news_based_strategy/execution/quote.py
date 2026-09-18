@@ -1,7 +1,7 @@
 """Live Market Price (LTP) resolution module with multi-tier broker and exchange fallbacks."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import logging
 import ssl
@@ -16,6 +16,9 @@ except ImportError:
     _HAS_REQUESTS = False
 
 logger = logging.getLogger(__name__)
+
+# Indian Standard Time (IST) is UTC+05:30
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 @dataclass
@@ -92,14 +95,21 @@ def _set_cached_quote(symbol: str, quote: PriceQuote, security_id: Optional[str]
 
 
 def parse_trade_timestamp(val: Any) -> Optional[datetime]:
-    """Robustly parse trade timestamps from Dhan and exchange feeds into timezone-aware UTC datetime."""
+    """Robustly parse trade timestamps from Dhan and exchange feeds into timezone-aware UTC datetime.
+    
+    Indian exchange/broker feeds return timestamps in Indian Standard Time (IST, UTC+05:30).
+    Naive datetime strings and objects are localized to IST and then converted to UTC.
+    """
     if val is None:
         return None
     if isinstance(val, datetime):
-        return val if val.tzinfo is not None else val.replace(tzinfo=timezone.utc)
+        if val.tzinfo is not None:
+            return val.astimezone(timezone.utc)
+        return val.replace(tzinfo=IST).astimezone(timezone.utc)
     if isinstance(val, (int, float)):
         try:
             # Handle millisecond epoch (> 1e11) vs second epoch
+            # Unix epoch timestamps are UTC by definition
             ts = val / 1000.0 if val > 1e11 else float(val)
             return datetime.fromtimestamp(ts, tz=timezone.utc)
         except Exception:
@@ -108,7 +118,7 @@ def parse_trade_timestamp(val: Any) -> Optional[datetime]:
         v = val.strip()
         if not v:
             return None
-        # Try numeric string
+        # Try numeric string (epoch)
         try:
             num = float(v)
             ts = num / 1000.0 if num > 1e11 else num
@@ -118,10 +128,12 @@ def parse_trade_timestamp(val: Any) -> Optional[datetime]:
         # Try ISO format
         try:
             dt = datetime.fromisoformat(v)
-            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc)
+            return dt.replace(tzinfo=IST).astimezone(timezone.utc)
         except Exception:
             pass
-        # Try standard trading date formats
+        # Try standard trading date formats (all naive formats represent Indian market local time IST)
         for fmt in (
             "%Y-%m-%d %H:%M:%S",
             "%d-%m-%Y %H:%M:%S",
@@ -129,10 +141,13 @@ def parse_trade_timestamp(val: Any) -> Optional[datetime]:
             "%d/%m/%Y %H:%M:%S",
             "%Y-%m-%d %H:%M:%S%z",
             "%d-%b-%Y %H:%M:%S",
+            "%d-%b-%Y %H:%M:%S%z",
         ):
             try:
                 dt = datetime.strptime(v, fmt)
-                return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+                if dt.tzinfo is not None:
+                    return dt.astimezone(timezone.utc)
+                return dt.replace(tzinfo=IST).astimezone(timezone.utc)
             except Exception:
                 continue
     return None

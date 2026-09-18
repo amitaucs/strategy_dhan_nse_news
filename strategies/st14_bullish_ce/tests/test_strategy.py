@@ -446,6 +446,14 @@ class TestSt14Strategy(unittest.TestCase):
         """Live mode must query broker fund limits and reject if available margin is insufficient."""
         self.strategy.config.mode = ExecutionMode.LIVE
         mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.return_value = {
+            "status": "success",
+            "data": {"totalMargin": 15075.0},
+        }
         mock_dhan.get_fund_limits.return_value = {
             "status": "success",
             "data": {
@@ -491,12 +499,125 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertIsNone(pos)
         self.assertIn("Insufficient broker margin", remarks)
         self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+        mock_dhan.margin_calculator.assert_called_once()
+
+    def test_live_margin_check_rejects_zero_balance(self):
+        """Live mode must fail closed and reject if available balance is zero."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.return_value = {
+            "status": "success",
+            "data": {"totalMargin": 15075.0},
+        }
+        mock_dhan.get_fund_limits.return_value = {
+            "status": "success",
+            "data": {
+                "availabelBalance": 0.0,  # Zero balance
+            },
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="12345",
+            lot_size=300,
+            ltp=50.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=50.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_ZERO_BAL",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Available broker balance is zero or unavailable", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
+    def test_live_margin_check_rejects_margin_calculator_failure(self):
+        """Live mode must fail closed if margin_calculator returns non-success or error."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.return_value = {
+            "status": "failure",
+            "remarks": "Invalid security ID",
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="12345",
+            lot_size=300,
+            ltp=50.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=50.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_MC_FAIL",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Broker margin calculation failed", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
 
     def test_live_margin_check_fails_closed_on_exception(self):
         """If broker fund check raises exception in LIVE mode, fail-closed and reject order."""
         self.strategy.config.mode = ExecutionMode.LIVE
         mock_dhan = MagicMock()
-        mock_dhan.get_fund_limits.side_effect = ConnectionError("Broker timeout")
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.side_effect = ConnectionError("Broker timeout")
         self.strategy.provider.dhan = mock_dhan
 
         opt = St14OptionContract(
@@ -534,8 +655,67 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertFalse(success)
         self.assertIsNone(pos)
         self.assertEqual(signal.status, OrderStatus.ORDER_REJECTED)
-        self.assertIn("Broker fund limit check", remarks)
+        self.assertIn("Broker fund limit check exception", remarks)
         self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+
+    def test_live_margin_check_approves_when_funds_sufficient(self):
+        """When margin_calculator and get_fund_limits succeed and balance >= margin, order is dispatched."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.return_value = {
+            "status": "success",
+            "data": {"totalMargin": 15075.0},
+        }
+        mock_dhan.get_fund_limits.return_value = {
+            "status": "success",
+            "data": {"availabelBalance": 50000.0},
+        }
+        mock_dhan.place_super_order.return_value = {
+            "status": "success",
+            "data": {"orderId": "LIVE_SUP_1001"},
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="INFY 29OCT26 1900 CE",
+            underlying_symbol="INFY",
+            strike_price=1900.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="12345",
+            lot_size=300,
+            ltp=50.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=50.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_INFY_SUFF_01",
+            symbol="INFY",
+            underlying_sec_id="1594",
+            underlying_ltp=1880.0,
+            breakout_candle_high=1875.0,
+            daily_ema20=1820.0,
+            hourly_ema20=1860.0,
+            vwap=1870.0,
+            vwap_dist_pct=0.53,
+            vwap_angle_deg=44.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertTrue(success)
+        self.assertIsNotNone(pos)
+        self.assertEqual(pos.position_id, "LIVE_SUP_1001")
+        self.assertEqual(mock_dhan.place_super_order.call_count, 1)
 
     def test_live_square_off_dispatches_broker_exit_orders(self):
         """Square-off in Live mode cancels target/SL legs, checks broker netQty, and places MARKET exit with price=0.0."""

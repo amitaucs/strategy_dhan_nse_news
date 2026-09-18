@@ -645,7 +645,81 @@ class TestLiveMarketLTP(unittest.TestCase):
         self.assertEqual(price2, 460.0)
         self.assertEqual(mock_dhan.ticker_data.call_count, 1)
 
+    def test_parse_trade_timestamp_interprets_naive_dhan_strings_as_ist(self):
+        """Dhan naive timestamp strings (DD/MM/YYYY HH:MM:SS) must be parsed as IST and converted to UTC."""
+        from news_based_strategy.execution.quote import parse_trade_timestamp, IST
+
+        # 14:30:00 IST on 18-Sep-2026 is 09:00:00 UTC
+        ts_str = "18/09/2026 14:30:00"
+        dt = parse_trade_timestamp(ts_str)
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.year, 2026)
+        self.assertEqual(dt.month, 9)
+        self.assertEqual(dt.day, 18)
+        self.assertEqual(dt.hour, 9)
+        self.assertEqual(dt.minute, 0)
+        self.assertEqual(dt.second, 0)
+
+        # Standard YYYY-MM-DD HH:MM:SS format
+        ts_str2 = "2026-09-18 14:30:00"
+        dt2 = parse_trade_timestamp(ts_str2)
+        self.assertEqual(dt2, dt)
+
+        # Naive datetime object should be assumed IST
+        naive_dt = datetime(2026, 9, 18, 14, 30, 0)
+        dt3 = parse_trade_timestamp(naive_dt)
+        self.assertEqual(dt3, dt)
+
+        # String with explicit timezone offset
+        explicit_tz_str = "2026-09-18T14:30:00+05:30"
+        dt4 = parse_trade_timestamp(explicit_tz_str)
+        self.assertEqual(dt4, dt)
+
+    def test_dhan_ist_quote_freshness_in_live_executor(self):
+        """A live quote stamped with current IST string must pass freshness check and not be rejected as future-dated."""
+        from news_based_strategy.execution.quote import parse_trade_timestamp, IST
+        executor = DhanExecutor(
+            client_id="dummy_client",
+            access_token="dummy_token",
+            dry_run=False,
+            super_order_enabled=False,
+        )
+        mock_dhan = MagicMock()
+        mock_dhan.place_order.return_value = {"status": "success", "data": {"orderId": "ORD_LIVE_IST_1"}}
+        executor.dhan = mock_dhan
+
+        signal = TradeSignal(
+            symbol="BEL",
+            security_id="383",
+            action="BUY",
+            product_type="CNC",
+            confidence=90,
+            catalyst_type="ORDER_WIN",
+            summary="Defense order",
+        )
+
+        # Generate IST timestamp string as Dhan does (e.g. "18/09/2026 17:30:00")
+        now_ist = datetime.now(IST)
+        ist_timestamp_str = now_ist.strftime("%d/%m/%Y %H:%M:%S")
+        parsed_ltt = parse_trade_timestamp(ist_timestamp_str)
+
+        quote = PriceQuote(
+            price=300.0,
+            is_real_time=True,
+            source="dhan",
+            last_trade_time=parsed_ltt,
+            security_id="383",
+            exchange_segment="NSE_EQ",
+        )
+
+        with patch("news_based_strategy.execution.risk.RiskManager.is_trade_allowed", return_value=(True, "OK")):
+            res = executor.execute_order(signal, quote=quote)
+            self.assertTrue(res.success, f"Order failed with remarks: {res.remarks}")
+            self.assertEqual(res.order_id, "ORD_LIVE_IST_1")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
