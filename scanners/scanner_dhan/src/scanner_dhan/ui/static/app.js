@@ -268,7 +268,7 @@ function renderStudioPanel(scannerId) {
   );
 
   const renderBoolParam = (p) => `
-    <div class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition flex items-center justify-between">
+    <div id="param-card-${scanner.id}-${p.name}" class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition flex items-center justify-between">
       <div>
         <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5 cursor-pointer" for="input-${scanner.id}-${p.name}">
           <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-sky-400"></i>
@@ -289,7 +289,7 @@ function renderStudioPanel(scannerId) {
   `;
 
   const renderSelectParam = (p) => `
-    <div class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition">
+    <div id="param-card-${scanner.id}-${p.name}" class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition">
       <div class="flex items-center justify-between mb-2">
         <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
           <i data-lucide="sliders" class="w-3.5 h-3.5 text-sky-400"></i>
@@ -323,7 +323,7 @@ function renderStudioPanel(scannerId) {
   `;
 
   const renderSliderParam = (p) => `
-    <div class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition">
+    <div id="param-card-${scanner.id}-${p.name}" class="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition">
       <div class="flex items-center justify-between mb-2">
         <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
           <i data-lucide="gauge" class="w-3.5 h-3.5 text-sky-400"></i>
@@ -340,7 +340,7 @@ function renderStudioPanel(scannerId) {
         max="${p.max || 100}"
         step="${p.step || 1}"
         value="${p.default}"
-        class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400 mt-2"
+        class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400 mt-2 disabled:opacity-30 disabled:cursor-not-allowed"
         oninput="document.getElementById('val-${scanner.id}-${p.name}').innerText = (this.value > 0 && '${p.name}'.includes('dist') ? '+' : '') + this.value + '${p.name.includes("pct") || p.name.includes("dist") ? "%" : ""}'"
       />
       <div class="flex justify-between text-[10px] text-slate-500 font-mono mt-1.5">
@@ -452,6 +452,70 @@ function renderStudioPanel(scannerId) {
   `;
 
   initLucide();
+
+  // Dynamic Parameter Dependency Handling (e.g. RSI scan_mode auto-disables irrelevant threshold slider)
+  const scanModeInput = document.getElementById(`input-${scanner.id}-scan_mode`);
+  if (scanModeInput) {
+    const updateRsiParamState = () => {
+      const mode = scanModeInput.value;
+      const oversoldCard = document.getElementById(`param-card-${scanner.id}-oversold_threshold`);
+      const overboughtCard = document.getElementById(`param-card-${scanner.id}-overbought_threshold`);
+      const oversoldInput = document.getElementById(`input-${scanner.id}-oversold_threshold`);
+      const overboughtInput = document.getElementById(`input-${scanner.id}-overbought_threshold`);
+
+      if (mode === "OVERSOLD_ONLY") {
+        if (overboughtCard) {
+          overboughtCard.classList.add("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = overboughtCard.querySelector("label span");
+          if (labelSpan && !labelSpan.innerText.includes("(Disabled)")) {
+            labelSpan.innerText = `${labelSpan.innerText} (Disabled)`;
+          }
+        }
+        if (overboughtInput) overboughtInput.disabled = true;
+
+        if (oversoldCard) {
+          oversoldCard.classList.remove("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = oversoldCard.querySelector("label span");
+          if (labelSpan) labelSpan.innerText = labelSpan.innerText.replace(" (Disabled)", "");
+        }
+        if (oversoldInput) oversoldInput.disabled = false;
+      } else if (mode === "OVERBOUGHT_ONLY") {
+        if (oversoldCard) {
+          oversoldCard.classList.add("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = oversoldCard.querySelector("label span");
+          if (labelSpan && !labelSpan.innerText.includes("(Disabled)")) {
+            labelSpan.innerText = `${labelSpan.innerText} (Disabled)`;
+          }
+        }
+        if (oversoldInput) oversoldInput.disabled = true;
+
+        if (overboughtCard) {
+          overboughtCard.classList.remove("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = overboughtCard.querySelector("label span");
+          if (labelSpan) labelSpan.innerText = labelSpan.innerText.replace(" (Disabled)", "");
+        }
+        if (overboughtInput) overboughtInput.disabled = false;
+      } else {
+        // EXTREMES_ONLY or ALL_STOCKS -> Both active
+        if (oversoldCard) {
+          oversoldCard.classList.remove("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = oversoldCard.querySelector("label span");
+          if (labelSpan) labelSpan.innerText = labelSpan.innerText.replace(" (Disabled)", "");
+        }
+        if (oversoldInput) oversoldInput.disabled = false;
+
+        if (overboughtCard) {
+          overboughtCard.classList.remove("opacity-35", "grayscale", "pointer-events-none");
+          const labelSpan = overboughtCard.querySelector("label span");
+          if (labelSpan) labelSpan.innerText = labelSpan.innerText.replace(" (Disabled)", "");
+        }
+        if (overboughtInput) overboughtInput.disabled = false;
+      }
+    };
+
+    scanModeInput.addEventListener("change", updateRsiParamState);
+    updateRsiParamState(); // Run once immediately on render
+  }
 }
 
 async function runScanner(scannerId, overrideParams = null) {

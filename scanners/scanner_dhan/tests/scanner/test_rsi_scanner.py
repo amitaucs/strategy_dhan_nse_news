@@ -64,3 +64,16 @@ def test_rsi_scan_result_model() -> None:
     assert d["is_matched"] is True
     assert d["is_at_support"] is True
 
+
+def test_rsi_scan_mode_options() -> None:
+    """Verify scan_mode parameter contains all expected choices."""
+    scanner = RsiExtremesScanner()
+    scan_mode_param = next(p for p in scanner.parameters if p.name == "scan_mode")
+    assert scan_mode_param.default == "EXTREMES_ONLY"
+    option_vals = [opt["value"] for opt in scan_mode_param.options]
+    assert "EXTREMES_ONLY" in option_vals
+    assert "OVERSOLD_ONLY" in option_vals
+    assert "OVERBOUGHT_ONLY" in option_vals
+    assert "ALL_STOCKS" in option_vals
+
+

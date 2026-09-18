@@ -171,11 +171,14 @@ class RsiExtremesScanner(BaseScanner):
             zone = RsiZone.NEUTRAL
             if rsi_val is not None:
                 if rsi_val <= oversold:
-                    is_matched = True
                     zone = RsiZone.OVERSOLD
+                    if scan_mode in ("EXTREMES_ONLY", "OVERSOLD_ONLY", "ALL_STOCKS"):
+                        is_matched = True
                 elif rsi_val >= overbought:
-                    is_matched = True
                     zone = RsiZone.OVERBOUGHT
+                    if scan_mode in ("EXTREMES_ONLY", "OVERBOUGHT_ONLY", "ALL_STOCKS"):
+                        is_matched = True
+
 
             scan_results.append(
                 RsiScanResult(
