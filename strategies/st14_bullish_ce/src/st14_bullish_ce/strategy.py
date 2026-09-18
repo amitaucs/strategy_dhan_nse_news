@@ -48,6 +48,8 @@ class St14BullishCeStrategy:
         self.last_hourly_scan_time: Optional[str] = None
         self.last_5min_check_time: Optional[str] = None
         self.last_hourly_candidates_count: int = 0
+        self._executed_signal_ids: set[str] = set()
+        self._executed_order_keys: set[str] = set()
         self._last_breadth_status: Dict[str, Any] = {}
         try:
             _, self._last_breadth_status = check_market_breadth(provider=self.provider)
@@ -368,7 +370,24 @@ class St14BullishCeStrategy:
         if not signal.is_confirmed or not signal.option_contract or not signal.order_levels:
             return False, "Signal not confirmed for execution", None
 
+        if signal.status == OrderStatus.ORDER_PLACED or (signal.order_id and signal.order_id.strip()):
+            return False, f"Order already placed for signal {signal.signal_id} (Order ID: {signal.order_id})", None
+
+        if signal.signal_id in self._executed_signal_ids:
+            return False, f"Signal {signal.signal_id} has already been executed.", None
+
         opt = signal.option_contract
+        today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+        idempotency_key = f"{opt.underlying_symbol}_{opt.security_id}_{today_str}"
+
+        # Broker-level / active position duplicate prevention
+        for pos in self.active_positions.values():
+            if pos.symbol == opt.underlying_symbol or pos.security_id == opt.security_id:
+                return False, f"Active position already open for {opt.underlying_symbol} ({pos.position_id})", None
+
+        if idempotency_key in self._executed_order_keys:
+            return False, f"Order key {idempotency_key} has already been submitted today.", None
+
         levels = signal.order_levels
         qty = self.calculate_order_quantity(
             option_entry_price=levels.entry_price,
@@ -401,6 +420,8 @@ class St14BullishCeStrategy:
                 entry_time_ist=now_ist_str,
             )
             self.active_positions[sim_order_id] = position
+            self._executed_signal_ids.add(signal.signal_id)
+            self._executed_order_keys.add(idempotency_key)
             signal.status = OrderStatus.ORDER_PLACED
             signal.order_id = sim_order_id
             return True, remarks, position
@@ -459,6 +480,8 @@ class St14BullishCeStrategy:
                     entry_time_ist=now_ist_str,
                 )
                 self.active_positions[live_order_id] = position
+                self._executed_signal_ids.add(signal.signal_id)
+                self._executed_order_keys.add(idempotency_key)
                 signal.status = OrderStatus.ORDER_PLACED
                 signal.order_id = live_order_id
                 return True, remarks, position

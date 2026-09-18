@@ -323,8 +323,78 @@ class TestSt14Strategy(unittest.TestCase):
         self.assertIn("Invalid non-numeric security ID", remarks)
         self.assertEqual(mock_dhan.place_super_order.call_count, 0)
 
+    def test_idempotency_prevents_duplicate_executions(self):
+        """Re-executing the same signal or placing duplicate orders for the same contract must be rejected."""
+        opt = St14OptionContract(
+            symbol="TCS 29OCT26 4000 CE",
+            underlying_symbol="TCS",
+            strike_price=4000.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="OPT_TCS_4000_CE",
+            lot_size=175,
+            ltp=80.0,
+            is_next_month=True,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=80.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_TCS_IDEMPOTENT_01",
+            symbol="TCS",
+            underlying_sec_id="11536",
+            underlying_ltp=3980.0,
+            breakout_candle_high=3975.0,
+            daily_ema20=3900.0,
+            hourly_ema20=3950.0,
+            vwap=3960.0,
+            vwap_dist_pct=0.5,
+            vwap_angle_deg=45.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        # 1. First execution succeeds
+        success1, remarks1, pos1 = self.strategy.execute_order(signal)
+        self.assertTrue(success1)
+        self.assertIsNotNone(pos1)
+        self.assertEqual(signal.status, OrderStatus.ORDER_PLACED)
+
+        # 2. Second execution with the same signal is blocked
+        success2, remarks2, pos2 = self.strategy.execute_order(signal)
+        self.assertFalse(success2)
+        self.assertIsNone(pos2)
+        self.assertIn("already placed", remarks2.lower())
+
+        # 3. Another signal with a new ID for the same active stock is also blocked
+        signal2 = St14TradeSignal(
+            signal_id="SIG_TCS_IDEMPOTENT_02",
+            symbol="TCS",
+            underlying_sec_id="11536",
+            underlying_ltp=3990.0,
+            breakout_candle_high=3975.0,
+            daily_ema20=3900.0,
+            hourly_ema20=3950.0,
+            vwap=3960.0,
+            vwap_dist_pct=0.5,
+            vwap_angle_deg=45.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+        success3, remarks3, pos3 = self.strategy.execute_order(signal2)
+        self.assertFalse(success3)
+        self.assertIsNone(pos3)
+        self.assertIn("active position already open", remarks3.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

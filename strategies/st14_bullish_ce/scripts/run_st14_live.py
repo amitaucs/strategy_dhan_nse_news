@@ -101,9 +101,13 @@ def main() -> None:
                         lv = sig.order_levels
                         print(f"   ↳ Super Order: Entry ₹{lv.entry_price:.2f} | Target ₹{lv.target_price:.2f} (+{lv.target_pct}%) | SL ₹{lv.stop_loss_price:.2f} (-{lv.stop_loss_pct}%)")
 
-                    if sig.is_confirmed:
+                    if not strategy.config.auto_order and sig.is_confirmed and sig.status == OrderStatus.TRIGGERED:
                         success, remarks, pos = strategy.execute_order(sig)
-                        print(f"   ↳ Result: {remarks}")
+                        print(f"   ↳ Manual Execution Result: {remarks}")
+                    elif sig.status == OrderStatus.ORDER_PLACED:
+                        print(f"   ↳ Status: Order Placed (Order ID: {sig.order_id})")
+                    else:
+                        print(f"   ↳ Status: {sig.status.value} - {sig.remarks}")
 
             telemetry = strategy.get_strategy_telemetry()
             print(f"\n📊 Active Positions: {telemetry['active_positions_count']} | Total P&L: ₹{telemetry['total_pnl']:,.2f}")
