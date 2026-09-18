@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 
 if TYPE_CHECKING:
     import pandas as pd
     from dhanhq import dhanhq
+
+from scanner_dhan.universe.manager import (
+    get_fno_lot_size,
+    get_universe_manager,
+    is_fno_stock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,473 +21,80 @@ __all__ = [
     "FNO_SYMBOLS",
     "FNO_SECURITY_IDS",
     "resolve_fno_securities",
+    "get_fno_symbols",
+    "get_fno_lot_sizes",
+    "is_fno_stock",
+    "get_fno_lot_size",
 ]
 
-# 100% verified active NSE Equity stocks trading in F&O segment
-FNO_SYMBOLS: list[str] = [
-    "360ONE",
-    "ABB",
-    "ABCAPITAL",
-    "ADANIENSOL",
-    "ADANIENT",
-    "ADANIGREEN",
-    "ADANIPORTS",
-    "ADANIPOWER",
-    "ALKEM",
-    "AMBER",
-    "AMBUJACEM",
-    "ANGELONE",
-    "APLAPOLLO",
-    "APOLLOHOSP",
-    "ASHOKLEY",
-    "ASIANPAINT",
-    "ASTRAL",
-    "ATHERENERG",
-    "AUBANK",
-    "AUROPHARMA",
-    "AXISBANK",
-    "BAJAJ-AUTO",
-    "BAJAJFINSV",
-    "BAJAJHLDNG",
-    "BAJFINANCE",
-    "BANDHANBNK",
-    "BANKBARODA",
-    "BANKINDIA",
-    "BDL",
-    "BEL",
-    "BHARATFORG",
-    "BHARTIARTL",
-    "BHEL",
-    "BIOCON",
-    "BLUESTARCO",
-    "BOSCHLTD",
-    "BPCL",
-    "BRITANNIA",
-    "BSE",
-    "CAMS",
-    "CANBK",
-    "CDSL",
-    "CGPOWER",
-    "CHOLAFIN",
-    "CIPLA",
-    "COALINDIA",
-    "COCHINSHIP",
-    "COFORGE",
-    "COLPAL",
-    "CONCOR",
-    "CROMPTON",
-    "CUMMINSIND",
-    "DABUR",
-    "DELHIVERY",
-    "DIVISLAB",
-    "DIXON",
-    "DLF",
-    "DMART",
-    "DRREDDY",
-    "EICHERMOT",
-    "ETERNAL",
-    "EXIDEIND",
-    "FEDERALBNK",
-    "FORCEMOT",
-    "FORTIS",
-    "GAIL",
-    "GLENMARK",
-    "GMRAIRPORT",
-    "GNFC",
-    "GODFRYPHLP",
-    "GODREJCP",
-    "GODREJPROP",
-    "GRASIM",
-    "GVT&D",
-    "HAL",
-    "HAVELLS",
-    "HCLTECH",
-    "HDFCAMC",
-    "HDFCBANK",
-    "HDFCLIFE",
-    "HEROMOTOCO",
-    "HINDALCO",
-    "HINDPETRO",
-    "HINDUNILVR",
-    "HINDZINC",
-    "HYUNDAI",
-    "ICICIBANK",
-    "ICICIGI",
-    "ICICIPRULI",
-    "IDEA",
-    "IDFCFIRSTB",
-    "IEX",
-    "INDHOTEL",
-    "INDIANB",
-    "INDIGO",
-    "INDUSINDBK",
-    "INDUSTOWER",
-    "INFY",
-    "INOXWIND",
-    "IOC",
-    "IREDA",
-    "IRFC",
-    "ITC",
-    "JINDALSTEL",
-    "JIOFIN",
-    "JSWENERGY",
-    "JSWSTEEL",
-    "JUBLFOOD",
-    "KALYANKJIL",
-    "KAYNES",
-    "KEI",
-    "KFINTECH",
-    "KOTAKBANK",
-    "KPITTECH",
-    "LAURUSLABS",
-    "LICHSGFIN",
-    "LICI",
-    "LODHA",
-    "LT",
-    "LTF",
-    "LTM",
-    "LUPIN",
-    "M&M",
-    "MAHABANK",
-    "MANAPPURAM",
-    "MANKIND",
-    "MARICO",
-    "MARUTI",
-    "MAXHEALTH",
-    "MAZDOCK",
-    "MCX",
-    "MFSL",
-    "MOTHERSON",
-    "MOTILALOFS",
-    "MPHASIS",
-    "MUTHOOTFIN",
-    "NAM-INDIA",
-    "NATIONALUM",
-    "NAUKRI",
-    "NBCC",
-    "NESTLEIND",
-    "NHPC",
-    "NMDC",
-    "NTPC",
-    "NYKAA",
-    "OBEROIRLTY",
-    "OFSS",
-    "OIL",
-    "ONGC",
-    "PAGEIND",
-    "PATANJALI",
-    "PAYTM",
-    "PERSISTENT",
-    "PETRONET",
-    "PFC",
-    "PGEL",
-    "PHOENIXLTD",
-    "PIDILITIND",
-    "PIIND",
-    "PNB",
-    "PNBHOUSING",
-    "POLICYBZR",
-    "POLYCAB",
-    "POWERGRID",
-    "POWERINDIA",
-    "PREMIERENE",
-    "PRESTIGE",
-    "RADICO",
-    "RBLBANK",
-    "RECLTD",
-    "RELIANCE",
-    "RVNL",
-    "SAGILITY",
-    "SAIL",
-    "SBICARD",
-    "SBILIFE",
-    "SBIN",
-    "SHREECEM",
-    "SHRIRAMFIN",
-    "SIEMENS",
-    "SOLARINDS",
-    "SONACOMS",
-    "SRF",
-    "SUNPHARMA",
-    "SUPREMEIND",
-    "SUZLON",
-    "SWIGGY",
-    "TATACONSUM",
-    "TATACHEM",
-    "TATACOMM",
-    "TATAELXSI",
-    "TATAMOTORS",
-    "TATAPOWER",
-    "TATASTEEL",
-    "TCS",
-    "TECHM",
-    "TIINDIA",
-    "TITAN",
-    "TMPV",
-    "TORNTPHARM",
-    "TRENT",
-    "TVSMOTOR",
-    "ULTRACEMCO",
-    "UNIONBANK",
-    "UNITDSPR",
-    "UNOMINDA",
-    "UPL",
-    "VBL",
-    "VEDL",
-    "VMM",
-    "VOLTAS",
-    "WAAREEENER",
-    "WIPRO",
-    "YESBANK",
-    "ZYDUSLIFE",
-]
 
-# Official Dhan NSE Equity security_id mapping (Series EQ)
-FNO_SECURITY_IDS: dict[str, str] = {
-    "360ONE": "13061",
-    "ABB": "13",
-    "ABCAPITAL": "21614",
-    "ADANIENSOL": "10217",
-    "ADANIENT": "25",
-    "ADANIGREEN": "3563",
-    "ADANIPORTS": "15083",
-    "ADANIPOWER": "17388",
-    "ALKEM": "11703",
-    "AMBER": "1185",
-    "AMBUJACEM": "1270",
-    "ANGELONE": "324",
-    "APLAPOLLO": "25780",
-    "APOLLOHOSP": "157",
-    "ASHOKLEY": "212",
-    "ASIANPAINT": "236",
-    "ASTRAL": "14418",
-    "ATHERENERG": "757645",
-    "AUBANK": "21238",
-    "AUROPHARMA": "275",
-    "AXISBANK": "5900",
-    "BAJAJ-AUTO": "16669",
-    "BAJAJFINSV": "16675",
-    "BAJAJHLDNG": "305",
-    "BAJFINANCE": "317",
-    "BANDHANBNK": "2263",
-    "BANKBARODA": "4668",
-    "BANKINDIA": "4745",
-    "BDL": "2144",
-    "BEL": "383",
-    "BHARATFORG": "422",
-    "BHARTIARTL": "10604",
-    "BHEL": "438",
-    "BIOCON": "11373",
-    "BLUESTARCO": "8311",
-    "BOSCHLTD": "2181",
-    "BPCL": "526",
-    "BRITANNIA": "547",
-    "BSE": "19585",
-    "CAMS": "342",
-    "CANBK": "10794",
-    "CDSL": "21174",
-    "CGPOWER": "760",
-    "CHOLAFIN": "685",
-    "CIPLA": "694",
-    "COALINDIA": "20374",
-    "COCHINSHIP": "21508",
-    "COFORGE": "11543",
-    "COLPAL": "15141",
-    "CONCOR": "4749",
-    "CROMPTON": "17094",
-    "CUMMINSIND": "1901",
-    "DABUR": "772",
-    "DELHIVERY": "9599",
-    "DIVISLAB": "10940",
-    "DIXON": "21690",
-    "DLF": "14732",
-    "DMART": "19913",
-    "DRREDDY": "881",
-    "EICHERMOT": "910",
-    "ETERNAL": "5097",
-    "EXIDEIND": "676",
-    "FEDERALBNK": "1023",
-    "FORCEMOT": "11573",
-    "FORTIS": "14592",
-    "GAIL": "4717",
-    "GLENMARK": "7406",
-    "GMRAIRPORT": "13528",
-    "GNFC": "1174",
-    "GODFRYPHLP": "1181",
-    "GODREJCP": "10099",
-    "GODREJPROP": "17875",
-    "GRASIM": "1232",
-    "GVT&D": "16783",
-    "HAL": "2303",
-    "HAVELLS": "9819",
-    "HCLTECH": "7229",
-    "HDFCAMC": "4244",
-    "HDFCBANK": "1333",
-    "HDFCLIFE": "467",
-    "HEROMOTOCO": "1348",
-    "HINDALCO": "1363",
-    "HINDPETRO": "1406",
-    "HINDUNILVR": "1394",
-    "HINDZINC": "1424",
-    "HYUNDAI": "25844",
-    "ICICIBANK": "4963",
-    "ICICIGI": "21770",
-    "ICICIPRULI": "18652",
-    "IDEA": "14366",
-    "IDFCFIRSTB": "11184",
-    "IEX": "220",
-    "INDHOTEL": "1512",
-    "INDIANB": "14309",
-    "INDIGO": "11195",
-    "INDUSINDBK": "5258",
-    "INDUSTOWER": "29135",
-    "INFY": "1594",
-    "INOXWIND": "7852",
-    "IOC": "1624",
-    "IREDA": "20261",
-    "IRFC": "2029",
-    "ITC": "1660",
-    "JINDALSTEL": "6733",
-    "JIOFIN": "18143",
-    "JSWENERGY": "17869",
-    "JSWSTEEL": "11723",
-    "JUBLFOOD": "18096",
-    "KALYANKJIL": "2955",
-    "KAYNES": "12092",
-    "KEI": "13310",
-    "KFINTECH": "13359",
-    "KOTAKBANK": "1922",
-    "KPITTECH": "9683",
-    "LAURUSLABS": "19234",
-    "LICHSGFIN": "1997",
-    "LICI": "9480",
-    "LODHA": "3220",
-    "LT": "11483",
-    "LTF": "24948",
-    "LTM": "17818",
-    "LUPIN": "10440",
-    "M&M": "2031",
-    "MAHABANK": "11377",
-    "MANAPPURAM": "19061",
-    "MANKIND": "15380",
-    "MARICO": "4067",
-    "MARUTI": "10999",
-    "MAXHEALTH": "22377",
-    "MAZDOCK": "509",
-    "MCX": "31181",
-    "MFSL": "2142",
-    "MOTHERSON": "4204",
-    "MOTILALOFS": "14947",
-    "MPHASIS": "4503",
-    "MUTHOOTFIN": "23650",
-    "NAM-INDIA": "357",
-    "NATIONALUM": "6364",
-    "NAUKRI": "13751",
-    "NBCC": "31415",
-    "NESTLEIND": "17963",
-    "NHPC": "17400",
-    "NMDC": "15332",
-    "NTPC": "11630",
-    "NYKAA": "6545",
-    "OBEROIRLTY": "20242",
-    "OFSS": "10738",
-    "OIL": "17438",
-    "ONGC": "2475",
-    "PAGEIND": "14413",
-    "PATANJALI": "17029",
-    "PAYTM": "6705",
-    "PERSISTENT": "18365",
-    "PETRONET": "11351",
-    "PFC": "14299",
-    "PGEL": "25358",
-    "PHOENIXLTD": "14552",
-    "PIDILITIND": "2664",
-    "PIIND": "24184",
-    "PNB": "10666",
-    "PNBHOUSING": "18908",
-    "POLICYBZR": "6656",
-    "POLYCAB": "9590",
-    "POWERGRID": "14977",
-    "POWERINDIA": "18457",
-    "PREMIERENE": "25049",
-    "PRESTIGE": "20302",
-    "RADICO": "10990",
-    "RBLBANK": "18391",
-    "RECLTD": "15355",
-    "RELIANCE": "2885",
-    "RVNL": "9552",
-    "SAGILITY": "27052",
-    "SAIL": "2963",
-    "SBICARD": "17971",
-    "SBILIFE": "21808",
-    "SBIN": "3045",
-    "SHREECEM": "3103",
-    "SHRIRAMFIN": "4306",
-    "SIEMENS": "3150",
-    "SOLARINDS": "13332",
-    "SONACOMS": "4684",
-    "SRF": "3273",
-    "SUNPHARMA": "3351",
-    "SUPREMEIND": "3363",
-    "SUZLON": "12018",
-    "SWIGGY": "27066",
-    "TATACONSUM": "3432",
-    "TATACHEM": "3405",
-    "TATACOMM": "3721",
-    "TATAELXSI": "3411",
-    "TATAMOTORS": "3456",
-    "TATAPOWER": "3426",
-    "TATASTEEL": "3499",
-    "TCS": "11536",
-    "TECHM": "13538",
-    "TIINDIA": "312",
-    "TITAN": "3506",
-    "TMPV": "3456",
-    "TORNTPHARM": "3518",
-    "TRENT": "1964",
-    "TVSMOTOR": "8479",
-    "ULTRACEMCO": "11532",
-    "UNIONBANK": "10753",
-    "UNITDSPR": "10447",
-    "UNOMINDA": "14154",
-    "UPL": "11287",
-    "VBL": "18921",
-    "VEDL": "3063",
-    "VMM": "27969",
-    "VOLTAS": "3718",
-    "WAAREEENER": "25907",
-    "WIPRO": "3787",
-    "YESBANK": "11915",
-    "ZYDUSLIFE": "7929",
-}
+def get_fno_symbols() -> List[str]:
+    """Retrieve dynamic active NSE F&O underlying symbol list from DhanUniverseManager."""
+    _, symbols, _ = get_universe_manager().get_universe("ALL_F_AND_O")
+    return symbols
+
+
+def get_fno_lot_sizes() -> Dict[str, int]:
+    """Retrieve dynamic exchange lot sizes for all active NSE F&O stocks."""
+    mgr = get_universe_manager()
+    # Trigger load if empty
+    if not mgr._fno_lot_sizes:
+        mgr.get_universe("ALL_F_AND_O")
+    return dict(mgr._fno_lot_sizes)
 
 
 def resolve_fno_securities(
-    dhan_client: dhanhq | None = None,
-    security_df: pd.DataFrame | None = None,
-) -> dict[str, str]:
-    """Resolve NSE F&O underlying stock symbols to Dhan security IDs.
+    dhan: dhanhq | None = None,
+    security_list_df: pd.DataFrame | None = None,
+) -> Dict[str, str]:
+    """Resolve Dhan security IDs for all active NSE F&O stocks."""
+    _, _, sec_ids = get_universe_manager().get_universe("ALL_F_AND_O")
+    return sec_ids
 
-    Uses the security master DataFrame if provided, falling back to
-    built-in verified mappings.
-    """
-    resolved = dict(FNO_SECURITY_IDS)
 
-    if security_df is not None and not security_df.empty:
-        try:
-            nse_eq = security_df[
-                (security_df["SEM_EXM_EXCH_ID"] == "NSE")
-                & (security_df["SEM_INSTRUMENT_NAME"] == "EQUITY")
-                & (security_df["SEM_SERIES"] == "EQ")
-            ]
-            for sym in FNO_SYMBOLS:
-                match = nse_eq[nse_eq["SEM_TRADING_SYMBOL"] == sym]
-                if not match.empty:
-                    resolved[sym] = str(match.iloc[0]["SEM_SMST_SECURITY_ID"])
-            logger.info("Resolved %d F&O symbols from security master", len(resolved))
-        except Exception as exc:
-            logger.warning(
-                "Error resolving F&O security master DataFrame: %s. Using fallback map.", exc
-            )
+# Dynamic proxy classes for backwards compatibility
+class _DynamicFnoSymbols(list):
+    def __iter__(self):
+        return iter(get_fno_symbols())
 
-    return resolved
+    def __len__(self):
+        return len(get_fno_symbols())
+
+    def __contains__(self, item):
+        return is_fno_stock(str(item))
+
+    def __getitem__(self, index):
+        return get_fno_symbols()[index]
+
+    def __repr__(self):
+        return repr(get_fno_symbols())
+
+
+class _DynamicFnoSecIds(dict):
+    def items(self):
+        return resolve_fno_securities().items()
+
+    def keys(self):
+        return resolve_fno_securities().keys()
+
+    def values(self):
+        return resolve_fno_securities().values()
+
+    def get(self, key, default=None):
+        return resolve_fno_securities().get(key, default)
+
+    def __getitem__(self, key):
+        return resolve_fno_securities()[key]
+
+    def __contains__(self, key):
+        return key in resolve_fno_securities()
+
+    def __len__(self):
+        return len(resolve_fno_securities())
+
+    def __repr__(self):
+        return repr(resolve_fno_securities())
+
+
+FNO_SYMBOLS = _DynamicFnoSymbols()
+FNO_SECURITY_IDS = _DynamicFnoSecIds()

@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from scanner_dhan.data.dhan_provider import DhanDataProvider
+from scanner_dhan.universe.manager import get_fno_lot_size, get_universe_manager, is_fno_stock
 from st14_bullish_ce.models import St14OptionContract
 
 logger = logging.getLogger(__name__)
@@ -118,8 +119,17 @@ def resolve_1otm_ce_contract(
     available_strikes: Optional[List[float]] = None,
     mock_sec_id: Optional[str] = None,
     mock_lot_size: Optional[int] = None,
-) -> St14OptionContract:
-    """Resolve full 1-OTM CE option contract for the underlying stock with date-based expiry."""
+) -> Optional[St14OptionContract]:
+    """Resolve full 1-OTM CE option contract for the underlying stock with date-based expiry.
+
+    Returns:
+        Optional[St14OptionContract]: Option contract details or None if symbol is not in active F&O.
+    """
+    # 1. Strict F&O Universe Gate
+    if not mock_sec_id and not is_fno_stock(symbol):
+        logger.warning("⛔ [Option Resolver] Symbol '%s' is not in the active NSE F&O universe. Disqualifying from option trades.", symbol)
+        return None
+
     today = current_date or dt.date.today()
     expiry_dt, is_next_month = resolve_target_expiry(today)
     expiry_str = expiry_dt.strftime("%Y-%m-%d")
@@ -132,29 +142,38 @@ def resolve_1otm_ce_contract(
 
     option_symbol = f"{symbol} {expiry_label} {int(otm1_strike) if otm1_strike.is_integer() else otm1_strike} CE"
 
-    # Default synthetic security ID and lot size
-    sec_id = mock_sec_id or f"OPT_{symbol}_{int(otm1_strike)}_CE"
-    lot_size = mock_lot_size or 250  # Default standard F&O lot size
+    # Fetch exact exchange lot size from universe manager
+    lot_size = mock_lot_size or get_fno_lot_size(symbol, default=250)
 
     # Estimated option premium simulation (~1.5% - 2.5% of underlying for 1 OTM)
     simulated_ltp = round(underlying_ltp * 0.02, 2)
+    sec_id = mock_sec_id or f"OPT_{symbol}_{int(otm1_strike)}_CE"
 
     dhan_prov = provider or DhanDataProvider()
     if dhan_prov.dhan:
         try:
-            # Attempt to query Dhan option chain if available
-            resp = dhan_prov.dhan.option_chain(
-                underlying_scrip=symbol,
-                underlying_seg="NSE_EQ",
-                expiry=expiry_str,
-            )
-            if isinstance(resp, dict) and resp.get("status") == "success" and "data" in resp:
-                oc_data = resp["data"].get("oc", {})
-                strike_key = f"{otm1_strike:.2f}"
-                if strike_key in oc_data:
-                    ce_info = oc_data[strike_key].get("ce", {})
-                    sec_id = str(ce_info.get("security_id", sec_id))
-                    simulated_ltp = float(ce_info.get("last_price", simulated_ltp))
+            # Resolve underlying security ID on NSE_EQ
+            mgr = get_universe_manager()
+            under_sec_id = mgr._equity_sec_ids.get(symbol.upper())
+            if not under_sec_id:
+                under_sec_id = str(dhan_prov.resolve_security_id(symbol))
+
+            if under_sec_id and str(under_sec_id) not in ("0", ""):
+                # Query Dhan option chain
+                resp = dhan_prov.dhan.option_chain(
+                    under_security_id=int(under_sec_id),
+                    under_exchange_segment="NSE_EQ",
+                    expiry=expiry_str,
+                )
+                if isinstance(resp, dict) and resp.get("status") == "success" and "data" in resp:
+                    oc_data = resp["data"].get("oc", {})
+                    strike_key = f"{otm1_strike:.2f}"
+                    if strike_key in oc_data:
+                        ce_info = oc_data[strike_key].get("ce", {})
+                        if "security_id" in ce_info:
+                            sec_id = str(ce_info["security_id"])
+                        if "last_price" in ce_info and float(ce_info["last_price"]) > 0:
+                            simulated_ltp = float(ce_info["last_price"])
         except Exception as exc:
             logger.debug("Option chain lookup fallback for %s: %s", symbol, exc)
 
@@ -169,4 +188,3 @@ def resolve_1otm_ce_contract(
         ltp=simulated_ltp,
         is_next_month=is_next_month,
     )
-

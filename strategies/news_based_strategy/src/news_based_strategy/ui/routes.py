@@ -1101,5 +1101,23 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         }
 
 
+    @app.post("/api/universe/sync")
+    async def sync_universe_endpoint(force: bool = True):
+        """Force immediate re-synchronization of all market universes and Dhan Scrip Master."""
+        try:
+            from scanner_dhan.universe.manager import get_universe_manager
+            from news_based_strategy.ingestion.universe import sync_dhan_fno_symbols
+            summary = await asyncio.to_thread(get_universe_manager().sync_all, force=force)
+            sync_dhan_fno_symbols()
+            return {
+                "success": True,
+                "summary": summary,
+                "message": "Universal market universes successfully synchronized from official sources.",
+            }
+        except Exception as exc:
+            logger.error("Error during universe sync endpoint execution: %s", exc)
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
 __all__ = ["register_routes", "COOKIE_NAME"]
 

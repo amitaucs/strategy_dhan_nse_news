@@ -185,6 +185,10 @@ class St14BullishCeStrategy:
                 provider=self.provider,
                 current_date=today_date,
             )
+            if not opt_contract:
+                logger.warning("⛔ [ST-14 Discovery] Excluded %s: No active F&O derivatives on Dhan.", cand.symbol)
+                continue
+
             levels = self.calculate_super_order_levels(option_ltp=opt_contract.ltp)
 
             existing = self.breakout_watchlist.get(cand.symbol)
@@ -285,6 +289,12 @@ class St14BullishCeStrategy:
                     provider=self.provider,
                     current_date=today_date,
                 )
+                if not opt_contract:
+                    logger.warning("⛔ [ST-14 Trigger] Excluded %s: No active F&O option contract found.", symbol)
+                    item.status = OrderStatus.DISQUALIFIED
+                    item.remarks = "Disqualified: Not an active F&O option on Dhan"
+                    continue
+
                 levels = self.calculate_super_order_levels(option_ltp=opt_contract.ltp)
                 item.option_contract = opt_contract
                 item.order_levels = levels

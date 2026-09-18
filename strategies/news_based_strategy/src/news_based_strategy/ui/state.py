@@ -108,12 +108,15 @@ class DashboardState:
         StrategyRegistry.update_auto_order("st14_bullish_ce", st14_cfg.auto_order)
 
 
-        # Initialize and sync Dhan F&O universe and numeric security IDs
+        # Initialize and sync Dhan universal market universes (F&O, Nifty 50, 100, 200, 500, Smallcap)
         try:
+            from scanner_dhan.universe.manager import get_universe_manager
+            mgr = get_universe_manager()
+            mgr.sync_all(force=False)
             sync_dhan_fno_symbols()
-            logger.info("Dhan F&O universe initialized with %d mapped SecIDs", len(get_security_id_map()))
+            logger.info("Universal Market Universes synchronized with %d mapped SecIDs", len(get_security_id_map()))
         except Exception as exc:
-            logger.warning("Could not sync Dhan F&O universe on state init: %s", exc)
+            logger.warning("Could not sync Universal Market Universes on state init: %s", exc)
         self._poller_task: Optional[asyncio.Task] = None
         self.poll_cycles_count: int = 0
         self.last_polled_at: Optional[datetime] = get_ist_now()
@@ -123,6 +126,7 @@ class DashboardState:
         self._view_mode: str = "TODAY"
         self._last_st14_hourly_scan_ts: float = 0.0
         self._last_st14_5min_check_ts: float = 0.0
+        self._last_universe_sync_ts: float = 0.0
 
     def load_recent_audits_from_db(self, today_only: bool = True, date_str: Optional[str] = None) -> None:
         """Load recent actionable audits from database into feed_items, defaulting to current trading day."""
@@ -337,10 +341,21 @@ class DashboardState:
                         "radar_status": "ACTIVE",
                     })
 
+                # 🌅 Daily 08:30 IST Universal Market Universes Auto-Sync (NSE Indices + Dhan Scrip Master)
+                now_ist = get_ist_now()
+                cur_epoch = time.time()
+                if now_ist.hour == 8 and now_ist.minute >= 30 and (cur_epoch - self._last_universe_sync_ts >= 3600):
+                    self._last_universe_sync_ts = cur_epoch
+                    try:
+                        from scanner_dhan.universe.manager import get_universe_manager
+                        await asyncio.to_thread(get_universe_manager().sync_all, force=True)
+                        logger.info("🌅 [08:30 IST Daily Sync] Updated all market universes & Dhan scrip master.")
+                    except Exception as e:
+                        logger.warning("Error in 08:30 IST universe sync: %s", e)
+
                 # 🚀 ST-14 Automated Multi-Timeframe Background Loop (1-Hour Scan + 5-Minute Trigger Monitor)
                 if hasattr(self, "st14_strategy") and self.st14_strategy and self.st14_strategy.config.status == "ACTIVE":
                     st14_now = get_ist_now()
-                    cur_epoch = time.time()
                     within_window, _ = self.st14_strategy.is_within_entry_window(st14_now)
 
                     if within_window:

@@ -566,6 +566,13 @@ def sync_dhan_fno_symbols(
 
 def get_fno_symbols() -> Set[str]:
     """Get the active set of NSE F&O underlying tickers."""
+    try:
+        from scanner_dhan.universe.manager import get_universe_manager
+        _, syms, _ = get_universe_manager().get_universe("ALL_F_AND_O")
+        if syms:
+            _ACTIVE_FNO_SYMBOLS.update(syms)
+    except Exception:
+        pass
     return _ACTIVE_FNO_SYMBOLS
 
 
@@ -574,6 +581,12 @@ def is_fno_stock(symbol: str) -> bool:
     if not symbol:
         return False
     normalized = symbol.strip().upper()
+    try:
+        from scanner_dhan.universe.manager import is_fno_stock as mgr_is_fno
+        if mgr_is_fno(normalized):
+            return True
+    except Exception:
+        pass
     return normalized in get_fno_symbols()
 
 
@@ -587,6 +600,15 @@ def resolve_security_id(symbol: str) -> Optional[str]:
     if not symbol:
         return None
     clean = symbol.strip().upper()
+
+    # 0. Check DhanUniverseManager equity security IDs
+    try:
+        from scanner_dhan.universe.manager import get_universe_manager
+        mgr = get_universe_manager()
+        if mgr._equity_sec_ids and clean in mgr._equity_sec_ids:
+            return mgr._equity_sec_ids[clean]
+    except Exception:
+        pass
 
     # 1. Check in-memory active map
     if clean in _SECURITY_ID_MAP:

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List
 
 if TYPE_CHECKING:
     import pandas as pd
     from dhanhq import dhanhq
+
+from scanner_dhan.universe.manager import get_universe_manager
 
 logger = logging.getLogger(__name__)
 
@@ -15,140 +17,67 @@ __all__ = [
     "NIFTY_50_SYMBOLS",
     "NIFTY_50_SECURITY_IDS",
     "resolve_nifty50_securities",
+    "get_nifty50_symbols",
 ]
 
-# Standard 50 constituents of Nifty 50 Index (NSE Trading Symbols)
-NIFTY_50_SYMBOLS: list[str] = [
-    "ADANIENT",
-    "ADANIPORTS",
-    "APOLLOHOSP",
-    "ASIANPAINT",
-    "AXISBANK",
-    "BAJAJ-AUTO",
-    "BAJFINANCE",
-    "BAJAJFINSV",
-    "BEL",
-    "BHARTIARTL",
-    "BPCL",
-    "BRITANNIA",
-    "CIPLA",
-    "COALINDIA",
-    "DRREDDY",
-    "EICHERMOT",
-    "GRASIM",
-    "HCLTECH",
-    "HDFCBANK",
-    "HDFCLIFE",
-    "HEROMOTOCO",
-    "HINDALCO",
-    "HINDUNILVR",
-    "ICICIBANK",
-    "INDUSINDBK",
-    "INFY",
-    "ITC",
-    "JSWSTEEL",
-    "KOTAKBANK",
-    "LT",
-    "M&M",
-    "MARUTI",
-    "NESTLEIND",
-    "NTPC",
-    "ONGC",
-    "POWERGRID",
-    "RELIANCE",
-    "SBILIFE",
-    "SBIN",
-    "SHRIRAMFIN",
-    "SUNPHARMA",
-    "TATACONSUM",
-    "TATAMOTORS",
-    "TATASTEEL",
-    "TCS",
-    "TECHM",
-    "TITAN",
-    "TRENT",
-    "ULTRACEMCO",
-    "WIPRO",
-]
 
-# Built-in high-stability NSE Equity security_id mapping for Nifty 50 stocks
-NIFTY_50_SECURITY_IDS: dict[str, str] = {
-    "ADANIENT": "25",
-    "ADANIPORTS": "15083",
-    "APOLLOHOSP": "157",
-    "ASIANPAINT": "236",
-    "AXISBANK": "5900",
-    "BAJAJ-AUTO": "16669",
-    "BAJFINANCE": "317",
-    "BAJAJFINSV": "16675",
-    "BEL": "383",
-    "BHARTIARTL": "10604",
-    "BPCL": "526",
-    "BRITANNIA": "547",
-    "CIPLA": "694",
-    "COALINDIA": "20374",
-    "DRREDDY": "881",
-    "EICHERMOT": "910",
-    "GRASIM": "1232",
-    "HCLTECH": "7229",
-    "HDFCBANK": "1333",
-    "HDFCLIFE": "467",
-    "HEROMOTOCO": "1348",
-    "HINDALCO": "1363",
-    "HINDUNILVR": "1394",
-    "ICICIBANK": "4963",
-    "INDUSINDBK": "5258",
-    "INFY": "1594",
-    "ITC": "1660",
-    "JSWSTEEL": "11723",
-    "KOTAKBANK": "1922",
-    "LT": "11483",
-    "M&M": "2031",
-    "MARUTI": "10999",
-    "NESTLEIND": "17963",
-    "NTPC": "11630",
-    "ONGC": "2475",
-    "POWERGRID": "14977",
-    "RELIANCE": "2885",
-    "SBILIFE": "21808",
-    "SBIN": "3045",
-    "SHRIRAMFIN": "4306",
-    "SUNPHARMA": "3351",
-    "TATACONSUM": "3432",
-    "TATAMOTORS": "3456",
-    "TATASTEEL": "3499",
-    "TCS": "11536",
-    "TECHM": "13538",
-    "TITAN": "3506",
-    "TRENT": "1964",
-    "ULTRACEMCO": "11532",
-    "WIPRO": "3787",
-}
+def get_nifty50_symbols() -> List[str]:
+    """Retrieve dynamic Nifty 50 symbol list from DhanUniverseManager."""
+    _, symbols, _ = get_universe_manager().get_universe("NIFTY_50")
+    return symbols
 
 
 def resolve_nifty50_securities(
-    dhan_client: dhanhq | None = None,
-    security_df: pd.DataFrame | None = None,
-) -> dict[str, str]:
-    """Resolve Nifty 50 symbols to Dhan security IDs.
+    dhan: dhanhq | None = None,
+    security_list_df: pd.DataFrame | None = None,
+) -> Dict[str, str]:
+    """Resolve Dhan security IDs for all Nifty 50 stocks."""
+    _, _, sec_ids = get_universe_manager().get_universe("NIFTY_50")
+    return sec_ids
 
-    Uses security master DataFrame if provided or fetchable, falling back to
-    built-in mappings.
-    """
-    resolved = dict(NIFTY_50_SECURITY_IDS)
 
-    if security_df is not None and not security_df.empty:
-        try:
-            nse_eq = security_df[
-                (security_df["SEM_EXM_EXCH_ID"] == "NSE")
-                & (security_df["SEM_INSTRUMENT_NAME"] == "EQUITY")
-            ]
-            for sym in NIFTY_50_SYMBOLS:
-                match = nse_eq[nse_eq["SEM_TRADING_SYMBOL"] == sym]
-                if not match.empty:
-                    resolved[sym] = str(match.iloc[0]["SEM_SMST_SECURITY_ID"])
-            logger.info("Resolved %d Nifty 50 symbols from security master", len(resolved))
-        except Exception as exc:
-            logger.warning("Error parsing security master DataFrame: %s. Using fallback map.", exc)
+class _DynamicN50Symbols(list):
+    def __iter__(self):
+        return iter(get_nifty50_symbols())
 
-    return resolved
+    def __len__(self):
+        return len(get_nifty50_symbols())
+
+    def __contains__(self, item):
+        return item in get_nifty50_symbols()
+
+    def __getitem__(self, index):
+        return get_nifty50_symbols()[index]
+
+    def __repr__(self):
+        return repr(get_nifty50_symbols())
+
+
+class _DynamicN50SecIds(dict):
+    def items(self):
+        return resolve_nifty50_securities().items()
+
+    def keys(self):
+        return resolve_nifty50_securities().keys()
+
+    def values(self):
+        return resolve_nifty50_securities().values()
+
+    def get(self, key, default=None):
+        return resolve_nifty50_securities().get(key, default)
+
+    def __getitem__(self, key):
+        return resolve_nifty50_securities()[key]
+
+    def __contains__(self, key):
+        return key in resolve_nifty50_securities()
+
+    def __len__(self):
+        return len(resolve_nifty50_securities())
+
+    def __repr__(self):
+        return repr(resolve_nifty50_securities())
+
+
+NIFTY_50_SYMBOLS = _DynamicN50Symbols()
+NIFTY_50_SECURITY_IDS = _DynamicN50SecIds()
