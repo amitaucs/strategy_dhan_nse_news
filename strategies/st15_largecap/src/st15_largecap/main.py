@@ -25,6 +25,9 @@ def main():
         "--server", "--gui", action="store_true", help="Launch the Web UI Dashboard on Port 8015"
     )
     parser.add_argument(
+        "--host", type=str, default=settings.HOST, help=f"Web server host (default: {settings.HOST})"
+    )
+    parser.add_argument(
         "--port", type=int, default=settings.PORT, help=f"Web server port (default: {settings.PORT})"
     )
     parser.add_argument(
@@ -62,7 +65,7 @@ def main():
 
     if args.server or len(sys.argv) == 1:
         # Default behavior: Launch Web Dashboard
-        start_server(host=settings.HOST, port=args.port)
+        start_server(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
