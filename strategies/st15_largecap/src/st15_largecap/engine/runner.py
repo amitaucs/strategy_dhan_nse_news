@@ -203,24 +203,48 @@ class StrategyRunner:
                                     continue
 
                                 if not already_placed:
-                                    # Live Re-Quote validation
+                                    # Live Re-Quote validation (Fail-closed)
                                     if not self.executor.dry_run and self.executor.dhan and res.sec_id:
+                                        live_ltp = None
                                         try:
-                                            ltp_resp = self.executor.dhan.get_ltp_data(securities={"NSE_EQ": [int(res.sec_id)]})
+                                            sec_int = int(res.sec_id)
+                                            if hasattr(self.executor.dhan, "ticker_data"):
+                                                ltp_resp = self.executor.dhan.ticker_data(securities={"NSE_EQ": [sec_int]})
+                                            elif hasattr(self.executor.dhan, "quote_data"):
+                                                ltp_resp = self.executor.dhan.quote_data(securities={"NSE_EQ": [sec_int]})
+                                            else:
+                                                ltp_resp = None
+
                                             if isinstance(ltp_resp, dict) and ltp_resp.get("status") == "success":
                                                 data_dict = ltp_resp.get("data", {})
                                                 nse_data = data_dict.get("NSE_EQ", {})
-                                                quote_info = nse_data.get(str(res.sec_id), {})
-                                                live_ltp = float(quote_info.get("last_price", 0.0))
-                                                if live_ltp > 0:
-                                                    if live_ltp < res.signal.stop_loss_price:
-                                                        logger.warning("⛔ Live price %.2f dropped below SL %.2f for %s. Aborting auto-order.", live_ltp, res.signal.stop_loss_price, res.symbol)
-                                                        continue
-                                                    if live_ltp > res.signal.trigger_price * 1.05:
-                                                        logger.warning("⛔ Live price %.2f drifted >5%% above trigger %.2f for %s. Aborting auto-order.", live_ltp, res.signal.trigger_price, res.symbol)
-                                                        continue
+                                                quote_info = nse_data.get(str(sec_int), {})
+                                                price_val = quote_info.get("last_price") or quote_info.get("lastPrice")
+                                                if not price_val and "ohlc" in quote_info:
+                                                    price_val = quote_info["ohlc"].get("close")
+                                                if price_val is not None and float(price_val) > 0:
+                                                    live_ltp = float(price_val)
                                         except Exception as q_exc:
-                                            logger.error("❌ Error fetching live re-quote for %s before order: %s. Aborting auto-order.", res.symbol, q_exc)
+                                            logger.error("❌ Error fetching live re-quote for %s before order: %s", res.symbol, q_exc)
+
+                                        if live_ltp is None or live_ltp <= 0:
+                                            logger.warning(
+                                                "⛔ Live quote verification failed for %s (invalid/zero/missing price from Dhan ticker_data). Aborting auto-order.",
+                                                res.symbol,
+                                            )
+                                            continue
+
+                                        if res.signal and live_ltp < res.signal.stop_loss_price:
+                                            logger.warning(
+                                                "⛔ Live price %.2f dropped below SL %.2f for %s. Aborting auto-order.",
+                                                live_ltp, res.signal.stop_loss_price, res.symbol,
+                                            )
+                                            continue
+                                        if res.signal and live_ltp > res.signal.trigger_price * 1.05:
+                                            logger.warning(
+                                                "⛔ Live price %.2f drifted >5%% above trigger %.2f for %s. Aborting auto-order.",
+                                                live_ltp, res.signal.trigger_price, res.symbol,
+                                            )
                                             continue
 
                                     mode_str = "VIRTUAL" if self.executor.dry_run else "LIVE"
@@ -361,23 +385,40 @@ class StrategyRunner:
             logger.warning("Order execution rejected for %s: %s", sym, msg)
             return False, None, msg
 
-        # Live Re-Quote validation before execution
+        # Live Re-Quote validation before execution (Fail-closed)
         if self.executor and not self.executor.dry_run and self.executor.dhan and sec_id:
+            live_ltp = None
             try:
-                ltp_resp = self.executor.dhan.get_ltp_data(securities={"NSE_EQ": [int(sec_id)]})
+                sec_int = int(sec_id)
+                if hasattr(self.executor.dhan, "ticker_data"):
+                    ltp_resp = self.executor.dhan.ticker_data(securities={"NSE_EQ": [sec_int]})
+                elif hasattr(self.executor.dhan, "quote_data"):
+                    ltp_resp = self.executor.dhan.quote_data(securities={"NSE_EQ": [sec_int]})
+                else:
+                    ltp_resp = None
+
                 if isinstance(ltp_resp, dict) and ltp_resp.get("status") == "success":
                     data_dict = ltp_resp.get("data", {})
                     nse_data = data_dict.get("NSE_EQ", {})
-                    quote_info = nse_data.get(str(sec_id), {})
-                    live_ltp = float(quote_info.get("last_price", 0.0))
-                    if live_ltp > 0:
-                        if signal and live_ltp < signal.stop_loss_price:
-                            return False, None, f"Live price ({live_ltp:.2f}) dropped below stop loss ({signal.stop_loss_price:.2f})"
-                        if signal and live_ltp > signal.trigger_price * 1.05:
-                            return False, None, f"Live price ({live_ltp:.2f}) drifted >5% above trigger price ({signal.trigger_price:.2f})"
+                    quote_info = nse_data.get(str(sec_int), {})
+                    price_val = quote_info.get("last_price") or quote_info.get("lastPrice")
+                    if not price_val and "ohlc" in quote_info:
+                        price_val = quote_info["ohlc"].get("close")
+                    if price_val is not None and float(price_val) > 0:
+                        live_ltp = float(price_val)
             except Exception as q_exc:
                 logger.error("❌ Error fetching live re-quote for %s before order: %s", sym, q_exc)
                 return False, None, f"Live quote verification failed: {q_exc}"
+
+            if live_ltp is None or live_ltp <= 0:
+                msg = f"Live quote verification failed for {sym}: broker returned invalid, missing, or zero LTP"
+                logger.warning("Order execution rejected for %s: %s", sym, msg)
+                return False, None, msg
+
+            if signal and live_ltp < signal.stop_loss_price:
+                return False, None, f"Live price ({live_ltp:.2f}) dropped below stop loss ({signal.stop_loss_price:.2f})"
+            if signal and live_ltp > signal.trigger_price * 1.05:
+                return False, None, f"Live price ({live_ltp:.2f}) drifted >5% above trigger price ({signal.trigger_price:.2f})"
 
         if not signal:
             trigger_price = round(candles[-1].close * 1.002, 2)

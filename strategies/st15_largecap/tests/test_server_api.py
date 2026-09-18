@@ -1,7 +1,8 @@
+from datetime import datetime
 import sys
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 # Ensure tests fixture is accessible
@@ -10,6 +11,7 @@ if str(test_dir) not in sys.path:
     sys.path.insert(0, str(test_dir))
 
 from fixtures.mock_data import generate_mock_2h_candles
+from st15_largecap.core.models import ScanResult, SetupSignal, SignalStatus
 from st15_largecap.ui.server import app, runner
 
 
@@ -26,12 +28,16 @@ class TestServerAPI(unittest.TestCase):
         runner._latest_results = []
         runner._latest_signals = []
         runner.clear_cache()
+        runner.executor.dry_run = True
+        runner.executor.dhan = None
 
     def tearDown(self):
         runner.stop_background_loop()
         runner._latest_results = []
         runner._latest_signals = []
         runner.clear_cache()
+        runner.executor.dry_run = True
+        runner.executor.dhan = None
 
     def test_root_html_page(self):
         response = self.client.get("/")
@@ -405,6 +411,145 @@ class TestServerAPI(unittest.TestCase):
         scans_res = self.client.get("/api/scans")
         self.assertEqual(scans_res.status_code, 200)
         self.assertEqual(len(scans_res.json()), 4)
+
+    def test_live_re_quote_ticker_data_stop_loss_breach(self):
+        mock_dhan = MagicMock()
+        # Mock ticker_data returning price 690 (breaching SL 700)
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {"NSE_EQ": {"1333": {"last_price": 690.0}}},
+        }
+        mock_dhan.get_order_list.return_value = {"status": "success", "data": []}
+
+        sig = SetupSignal(
+            symbol="HDFCBANK",
+            sec_id="1333",
+            setup_time=datetime.now(),
+            trigger_price=750.0,
+            stop_loss_price=700.0,
+            target_profit_price=900.0,
+            risk_per_share=50.0,
+            risk_reward_ratio=3.0,
+            ema_20=730.0,
+            ema_50=700.0,
+            ema_200=650.0,
+            supertrend=710.0,
+            ha_close=748.0,
+            ha_open=742.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            status=SignalStatus.TRIGGERED,
+        )
+        runner.executor.dhan = mock_dhan
+        runner.executor.dry_run = False
+        runner.screener.ema_proximity_pct = 2.0
+        runner._latest_signals = [sig]
+
+        mock_candles = generate_mock_2h_candles(
+            symbol="HDFCBANK",
+            base_price=640.0,
+            num_candles=80,
+            bullish_trend=True,
+            pullback_at_end=True,
+        )
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles), \
+             patch.object(runner.repository, "get_today_orders", return_value=[]):
+            success, order, msg = runner.validate_and_execute("HDFCBANK")
+            self.assertFalse(success)
+            self.assertIn("dropped below stop loss", msg)
+            mock_dhan.ticker_data.assert_called_once_with(securities={"NSE_EQ": [1333]})
+
+    def test_live_re_quote_ticker_data_drift_rejection(self):
+        mock_dhan = MagicMock()
+        # Mock ticker_data returning price 800 (> 5% above trigger 750)
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {"NSE_EQ": {"1333": {"last_price": 800.0}}},
+        }
+        mock_dhan.get_order_list.return_value = {"status": "success", "data": []}
+
+        sig = SetupSignal(
+            symbol="HDFCBANK",
+            sec_id="1333",
+            setup_time=datetime.now(),
+            trigger_price=750.0,
+            stop_loss_price=700.0,
+            target_profit_price=900.0,
+            risk_per_share=50.0,
+            risk_reward_ratio=3.0,
+            ema_20=730.0,
+            ema_50=700.0,
+            ema_200=650.0,
+            supertrend=710.0,
+            ha_close=748.0,
+            ha_open=742.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            status=SignalStatus.TRIGGERED,
+        )
+        runner.executor.dhan = mock_dhan
+        runner.executor.dry_run = False
+        runner.screener.ema_proximity_pct = 2.0
+        runner._latest_signals = [sig]
+
+        mock_candles = generate_mock_2h_candles(
+            symbol="HDFCBANK",
+            base_price=640.0,
+            num_candles=80,
+            bullish_trend=True,
+            pullback_at_end=True,
+        )
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles), \
+             patch.object(runner.repository, "get_today_orders", return_value=[]):
+            success, order, msg = runner.validate_and_execute("HDFCBANK")
+            self.assertFalse(success)
+            self.assertIn("drifted >5% above trigger price", msg)
+
+    def test_live_re_quote_ticker_data_fails_closed_on_zero_or_invalid_price(self):
+        mock_dhan = MagicMock()
+        # Mock ticker_data returning 0.0 or missing price
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {"NSE_EQ": {"1333": {"last_price": 0.0}}},
+        }
+        mock_dhan.get_order_list.return_value = {"status": "success", "data": []}
+
+        sig = SetupSignal(
+            symbol="HDFCBANK",
+            sec_id="1333",
+            setup_time=datetime.now(),
+            trigger_price=750.0,
+            stop_loss_price=700.0,
+            target_profit_price=900.0,
+            risk_per_share=50.0,
+            risk_reward_ratio=3.0,
+            ema_20=730.0,
+            ema_50=700.0,
+            ema_200=650.0,
+            supertrend=710.0,
+            ha_close=748.0,
+            ha_open=742.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            status=SignalStatus.TRIGGERED,
+        )
+        runner.executor.dhan = mock_dhan
+        runner.executor.dry_run = False
+        runner.screener.ema_proximity_pct = 2.0
+        runner._latest_signals = [sig]
+
+        mock_candles = generate_mock_2h_candles(
+            symbol="HDFCBANK",
+            base_price=640.0,
+            num_candles=80,
+            bullish_trend=True,
+            pullback_at_end=True,
+        )
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles), \
+             patch.object(runner.repository, "get_today_orders", return_value=[]):
+            success, order, msg = runner.validate_and_execute("HDFCBANK")
+            self.assertFalse(success)
+            self.assertIn("Live quote verification failed", msg)
 
 
 if __name__ == "__main__":
