@@ -8,7 +8,7 @@ import logging
 import os
 from pathlib import Path
 import ssl
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import urllib.request
 
 from st15_largecap.config import settings
@@ -105,12 +105,13 @@ SYMBOL_ALIASES: Dict[str, str] = {
 
 
 class UniverseManager:
-    """Manages Nifty 200 ticker list and security ID resolution."""
+    """Manages Nifty 200 ticker list and security ID resolution with provenance tracking."""
 
     def __init__(self, cache_path: str = DEFAULT_CACHE_PATH, cache_ttl_seconds: int = 86400):
         self.cache_path = cache_path
         self.cache_ttl_seconds = cache_ttl_seconds
         self._sec_ids: Dict[str, str] = dict(DEFAULT_SEC_IDS)
+        self._provenance: Dict[str, str] = {s: "static_fallback" for s in DEFAULT_SEC_IDS}
         # Deduplicate and sort exactly
         self._symbols: List[str] = sorted(list(set(NIFTY_200_SYMBOLS)))
         is_fresh = self.load_cache()
@@ -135,6 +136,8 @@ class UniverseManager:
                                 return False
                             mappings = data.get("mappings", {})
                             self._sec_ids.update(mappings)
+                            for s in mappings:
+                                self._provenance[s] = "dhan_scrip_master"
                             logger.info("Loaded %d symbol mappings from verified cache", len(mappings))
                             return True
                         elif "version" not in data:
@@ -143,6 +146,8 @@ class UniverseManager:
                                 logger.info("Legacy universe cache at %s is stale (> 24h).", self.cache_path)
                                 return False
                             self._sec_ids.update(data)
+                            for s in data:
+                                self._provenance[s] = "dhan_scrip_master"
                             logger.info("Loaded %d symbol mappings from legacy cache", len(data))
                             return True
             except Exception as e:
@@ -206,9 +211,11 @@ class UniverseManager:
                 target_alias = SYMBOL_ALIASES.get(sym, sym).upper()
                 if sym in nse_eq_map:
                     self._sec_ids[sym] = nse_eq_map[sym]
+                    self._provenance[sym] = "dhan_scrip_master"
                     synced_count += 1
                 elif target_alias in nse_eq_map:
                     self._sec_ids[sym] = nse_eq_map[target_alias]
+                    self._provenance[sym] = "dhan_scrip_master"
                     synced_count += 1
 
             logger.info("Successfully resolved %d / %d Nifty 200 security IDs from Dhan", len(self._sec_ids), len(self._symbols))
@@ -222,6 +229,19 @@ class UniverseManager:
         """Get Dhan Security ID for a symbol."""
         clean = symbol.upper().strip()
         return self._sec_ids.get(clean, "")
+
+    def is_security_id_verified(self, symbol: str) -> bool:
+        """Check if security ID was resolved from verified Dhan Scrip Master / active cache."""
+        clean = symbol.upper().strip()
+        return self._provenance.get(clean) == "dhan_scrip_master"
+
+    def get_security_id_provenance(self, symbol: str) -> Tuple[str, str, bool]:
+        """Return (security_id, source, is_verified)."""
+        clean = symbol.upper().strip()
+        sec_id = self._sec_ids.get(clean, "")
+        source = self._provenance.get(clean, "static_fallback")
+        is_verified = source == "dhan_scrip_master"
+        return sec_id, source, is_verified
 
     def get_universe(self) -> List[str]:
         """Get the full list of Nifty 200 symbols."""

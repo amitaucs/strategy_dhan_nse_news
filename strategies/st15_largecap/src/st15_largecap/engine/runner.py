@@ -203,6 +203,11 @@ class StrategyRunner:
                                     continue
 
                                 if not already_placed:
+                                    if not self.executor.dry_run:
+                                        if hasattr(self.universe, "is_security_id_verified") and not self.universe.is_security_id_verified(res.symbol):
+                                            logger.warning("⛔ Unverified Security ID for %s (fallback prohibited for live execution). Skipping auto-order.", res.symbol)
+                                            continue
+
                                     # Live Re-Quote validation (Fail-closed)
                                     if not self.executor.dry_run and self.executor.dhan and res.sec_id:
                                         live_ltp = None
@@ -284,12 +289,58 @@ class StrategyRunner:
         """
         sym = symbol.upper().strip()
         sec_id = self.universe.get_security_id(sym)
-        candles = self.fetcher.fetch_2h_candles(security_id=sec_id, symbol=sym, days=settings.HISTORY_DAYS)
+        # 1. Force refresh fresh 2H candles directly from broker
+        candles = self.fetcher.fetch_2h_candles(
+            security_id=sec_id, symbol=sym, days=settings.HISTORY_DAYS, force_refresh=True
+        )
 
         if not candles or len(candles) < 20:
             return False, None, "Insufficient candle data to validate setup"
 
-        # 1. Check if an existing signal exists for this symbol and validate live conditions
+        # 2. Strict Candle Freshness Invariant for Live Execution
+        if self.executor and not self.executor.dry_run:
+            latest_candle = candles[-1]
+            if not latest_candle.timestamp:
+                msg = f"Stale candle data for {sym}: Latest candle lacks a valid timestamp."
+                logger.warning("Order execution rejected for %s: %s", sym, msg)
+                return False, None, msg
+
+            candle_ts = latest_candle.timestamp
+            if hasattr(candle_ts, "tzinfo") and candle_ts.tzinfo is not None:
+                candle_ts = candle_ts.replace(tzinfo=None)
+
+            now_dt = datetime.now()
+            # If during active market trading session (Mon-Fri 09:15 to 15:30 IST), ensure latest candle is from today
+            is_market_session = (
+                now_dt.weekday() < 5
+                and (now_dt.hour > 9 or (now_dt.hour == 9 and now_dt.minute >= 15))
+                and (now_dt.hour < 15 or (now_dt.hour == 15 and now_dt.minute <= 30))
+            )
+            if is_market_session:
+                if candle_ts.date() != now_dt.date():
+                    msg = (
+                        f"Stale candle data: Latest candle is from {candle_ts.strftime('%Y-%m-%d %H:%M:%S')}. "
+                        f"Current-session candle data required for live execution."
+                    )
+                    logger.warning("Order execution rejected for %s: %s", sym, msg)
+                    return False, None, msg
+            else:
+                candle_age_days = (now_dt.date() - candle_ts.date()).days
+                if candle_age_days > 4:
+                    msg = (
+                        f"Stale candle data: Latest candle is {candle_age_days} days old "
+                        f"({candle_ts.strftime('%Y-%m-%d %H:%M:%S')}). Current-session candle data required for live execution."
+                    )
+                    logger.warning("Order execution rejected for %s: %s", sym, msg)
+                    return False, None, msg
+
+            # Check security ID verification provenance for Live mode
+            if hasattr(self.universe, "is_security_id_verified") and not self.universe.is_security_id_verified(sym):
+                msg = f"Unverified Security ID for {sym}: Live execution requires verified Dhan Scrip Master synchronization."
+                logger.warning("Order execution rejected for %s: %s", sym, msg)
+                return False, None, msg
+
+        # 3. Check if an existing signal exists for this symbol and validate live conditions
         matching_signal = next((s for s in self._latest_signals if s.symbol == sym), None)
         if not matching_signal and self.repository:
             db_signals = self.repository.get_signals(limit=20)

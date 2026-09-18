@@ -1,6 +1,6 @@
-from datetime import datetime
-import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -11,6 +11,7 @@ if str(test_dir) not in sys.path:
     sys.path.insert(0, str(test_dir))
 
 from fixtures.mock_data import generate_mock_2h_candles
+from st15_largecap.config import settings
 from st15_largecap.core.models import ScanResult, SetupSignal, SignalStatus
 from st15_largecap.ui.server import app, runner
 
@@ -551,8 +552,88 @@ class TestServerAPI(unittest.TestCase):
             self.assertFalse(success)
             self.assertIn("Live quote verification failed", msg)
 
+    def test_validate_and_execute_forces_fresh_candles_and_rejects_stale_data(self):
+        """In LIVE mode, validate_and_execute must request force_refresh=True and reject stale candle data."""
+        mock_dhan = MagicMock()
+        mock_dhan.ticker_data.return_value = {
+            "status": "success",
+            "data": {"NSE_EQ": {"1333": {"last_price": 750.0}}},
+        }
+        mock_dhan.get_order_list.return_value = {"status": "success", "data": []}
+
+        sig = SetupSignal(
+            symbol="HDFCBANK",
+            sec_id="1333",
+            setup_time=datetime.now(),
+            trigger_price=750.0,
+            stop_loss_price=700.0,
+            target_profit_price=900.0,
+            risk_per_share=50.0,
+            risk_reward_ratio=3.0,
+            ema_20=730.0,
+            ema_50=700.0,
+            ema_200=650.0,
+            supertrend=710.0,
+            ha_close=748.0,
+            ha_open=742.0,
+            nearest_ema_name="EMA_20",
+            nearest_ema_dist_pct=0.03,
+            status=SignalStatus.TRIGGERED,
+        )
+        runner.executor.dhan = mock_dhan
+        runner.executor.dry_run = False
+        runner.screener.ema_proximity_pct = 2.0
+        runner._latest_signals = [sig]
+
+        # Stale candles from 10 days ago
+        stale_candles = generate_mock_2h_candles(
+            symbol="HDFCBANK",
+            base_price=640.0,
+            num_candles=80,
+            bullish_trend=True,
+            pullback_at_end=True,
+        )
+        for c in stale_candles:
+            c.timestamp = c.timestamp - timedelta(days=10)
+
+        # Mark security ID as verified for this test
+        runner.universe._provenance["HDFCBANK"] = "dhan_scrip_master"
+
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=stale_candles) as mock_fetch, \
+             patch.object(runner.repository, "get_today_orders", return_value=[]):
+            success, order, msg = runner.validate_and_execute("HDFCBANK")
+            self.assertFalse(success)
+            self.assertIn("Stale candle data", msg)
+            mock_fetch.assert_called_once_with(
+                security_id="1333", symbol="HDFCBANK", days=settings.HISTORY_DAYS, force_refresh=True
+            )
+
+    def test_validate_and_execute_rejects_unverified_security_id(self):
+        """In LIVE mode, if a security ID is from static_fallback, validate_and_execute must reject."""
+        mock_dhan = MagicMock()
+        runner.executor.dhan = mock_dhan
+        runner.executor.dry_run = False
+
+        mock_candles = generate_mock_2h_candles(
+            symbol="HDFCBANK",
+            base_price=640.0,
+            num_candles=80,
+            bullish_trend=True,
+            pullback_at_end=True,
+        )
+
+        # Force unverified provenance
+        runner.universe._provenance["HDFCBANK"] = "static_fallback"
+
+        with patch.object(runner.fetcher, "fetch_2h_candles", return_value=mock_candles):
+            success, order, msg = runner.validate_and_execute("HDFCBANK")
+            self.assertFalse(success)
+            self.assertIn("Unverified Security ID", msg)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

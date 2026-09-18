@@ -147,6 +147,16 @@ class TestOptionsResolver(unittest.TestCase):
         self.assertEqual(contract.expiry_date, "2026-10-27")
         self.assertFalse(contract.is_synthetic)
 
+    def test_unverified_fno_lot_size_disqualifies_contract(self):
+        """If a symbol has no verified lot size in the F&O master and no mock is provided, contract resolution must return None."""
+        contract = resolve_1otm_ce_contract(
+            symbol="NON_FNO_STOCK_XYZ",
+            underlying_ltp=150.0,
+            current_date=dt.date(2026, 9, 17),
+        )
+        self.assertIsNone(contract)
+
 
 if __name__ == "__main__":
     unittest.main()
+

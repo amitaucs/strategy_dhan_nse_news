@@ -297,8 +297,8 @@ class DhanUniverseManager:
             self._ensure_loaded("fno")
         return symbol.upper() in self._fno_symbols_set
 
-    def get_lot_size(self, symbol: str, default: int = 250) -> int:
-        """Get exact exchange lot size for a stock symbol."""
+    def get_lot_size(self, symbol: str, default: Optional[int] = None) -> Optional[int]:
+        """Get exact exchange lot size for a stock symbol from verified F&O master."""
         if not self._fno_lot_sizes:
             self._ensure_loaded("fno")
         return self._fno_lot_sizes.get(symbol.upper(), default)
@@ -380,6 +380,6 @@ def is_fno_stock(symbol: str) -> bool:
     return get_universe_manager().is_fno_stock(symbol)
 
 
-def get_fno_lot_size(symbol: str, default: int = 250) -> int:
+def get_fno_lot_size(symbol: str, default: Optional[int] = None) -> Optional[int]:
     return get_universe_manager().get_lot_size(symbol, default=default)
 

@@ -984,9 +984,165 @@ class TestSt14Strategy(unittest.TestCase):
             self.assertFalse(success2)
             self.assertIn("already been executed", remarks2)
 
+    def test_deterministic_order_tag_passed_to_broker(self):
+        """When placing live Super Order, deterministic tag (<=20 alphanumeric chars) is supplied."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.margin_calculator.return_value = {
+            "status": "success",
+            "data": {"totalMargin": 15075.0},
+        }
+        mock_dhan.get_fund_limits.return_value = {
+            "status": "success",
+            "data": {"availabelBalance": 50000.0},
+        }
+        mock_dhan.place_super_order.return_value = {
+            "status": "success",
+            "data": {"orderId": "LIVE_SUP_2001"},
+        }
+        mock_dhan.get_order_list.return_value = {"status": "success", "data": []}
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="TCS 29OCT26 4000 CE",
+            underlying_symbol="TCS",
+            strike_price=4000.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="11536",
+            lot_size=175,
+            ltp=80.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=80.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_TCS_DET_TAG_01",
+            symbol="TCS",
+            underlying_sec_id="11536",
+            underlying_ltp=3980.0,
+            breakout_candle_high=3975.0,
+            daily_ema20=3900.0,
+            hourly_ema20=3950.0,
+            vwap=3960.0,
+            vwap_dist_pct=0.5,
+            vwap_angle_deg=45.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertTrue(success)
+        mock_dhan.place_super_order.assert_called_once()
+        _, kwargs = mock_dhan.place_super_order.call_args
+        order_tag = kwargs.get("tag")
+        self.assertIsNotNone(order_tag)
+        self.assertTrue(order_tag.startswith("ST14_"))
+        self.assertLessEqual(len(order_tag), 20)
+
+    def test_pre_order_broker_reconciliation_blocks_duplicate(self):
+        """If broker order book already contains a matching active/traded order today, order is blocked without placing a duplicate."""
+        self.strategy.config.mode = ExecutionMode.LIVE
+        mock_dhan = MagicMock()
+        mock_dhan.NSE_FNO = "NSE_FNO"
+        mock_dhan.BUY = "BUY"
+        mock_dhan.LIMIT = "LIMIT"
+        mock_dhan.INTRA = "INTRA"
+        mock_dhan.get_order_list.return_value = {
+            "status": "success",
+            "data": [
+                {
+                    "orderId": "DHAN_EXISTING_999",
+                    "orderStatus": "TRADED",
+                    "securityId": "11536",
+                    "tradingSymbol": "TCS 29OCT26 4000 CE",
+                    "tag": "ST14_SOMEHASH",
+                }
+            ],
+        }
+        self.strategy.provider.dhan = mock_dhan
+
+        opt = St14OptionContract(
+            symbol="TCS 29OCT26 4000 CE",
+            underlying_symbol="TCS",
+            strike_price=4000.0,
+            option_type="CE",
+            expiry_date="2026-10-29",
+            security_id="11536",
+            lot_size=175,
+            ltp=80.0,
+            is_synthetic=False,
+        )
+        levels = self.strategy.calculate_super_order_levels(option_ltp=80.0)
+        signal = St14TradeSignal(
+            signal_id="SIG_TCS_RECON_01",
+            symbol="TCS",
+            underlying_sec_id="11536",
+            underlying_ltp=3980.0,
+            breakout_candle_high=3975.0,
+            daily_ema20=3900.0,
+            hourly_ema20=3950.0,
+            vwap=3960.0,
+            vwap_dist_pct=0.5,
+            vwap_angle_deg=45.0,
+            status=OrderStatus.TRIGGERED,
+            nifty_green=True,
+            banknifty_green=True,
+            is_confirmed=True,
+            option_contract=opt,
+            order_levels=levels,
+        )
+
+        success, remarks, pos = self.strategy.execute_order(signal)
+        self.assertFalse(success)
+        self.assertIsNone(pos)
+        self.assertIn("Broker order already exists", remarks)
+        self.assertEqual(mock_dhan.place_super_order.call_count, 0)
+        self.assertIn("SIG_TCS_RECON_01", self.strategy._executed_signal_ids)
+
+    def test_corrupt_journal_backup_and_live_broker_recovery(self):
+        """Corrupt journal JSON file is backed up and re-populated via broker order reconciliation in LIVE mode."""
+        import json, os, tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = St14StrategyConfig(mode=ExecutionMode.LIVE)
+            setattr(cfg, "data_dir", tmp_dir)
+            journal_path = os.path.join(tmp_dir, "st14_executed_orders.json")
+
+            # Write broken / corrupted JSON to journal file
+            with open(journal_path, "w", encoding="utf-8") as f:
+                f.write("{ INVALID JSON DATA CORRUPTED !!!")
+
+            mock_dhan = MagicMock()
+            mock_dhan.get_order_list.return_value = {
+                "status": "success",
+                "data": [
+                    {
+                        "orderId": "BROKER_RECOVERED_1",
+                        "orderStatus": "TRADED",
+                        "securityId": "12345",
+                        "tradingSymbol": "INFY 29OCT26 1900 CE",
+                        "tag": "ST14_RECOVERED",
+                    }
+                ],
+            }
+            mock_provider = MagicMock()
+            mock_provider.dhan = mock_dhan
+
+            strat = St14BullishCeStrategy(config=cfg, provider=mock_provider)
+            # Reconciled from broker order book
+            self.assertIn("ST14_RECOVERED", strat._executed_order_keys)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

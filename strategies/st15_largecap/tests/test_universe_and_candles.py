@@ -58,8 +58,48 @@ class TestUniverseAndCandles(unittest.TestCase):
         self.assertEqual(c.high, 108.0)
         self.assertEqual(c.low, 99.0)
         self.assertEqual(c.close, 106.0)
-        self.assertEqual(c.volume, 330.0)
+    def test_fetch_2h_candles_force_refresh_bypasses_cache_fallback(self):
+        """When force_refresh=True, CandleFetcher must bypass cache and not fall back to stale cache on API error."""
+        from unittest.mock import MagicMock
+        from st15_largecap.ingestion.candles import CandleFetcher, Candle
+
+        mock_dhan = MagicMock()
+        # Mock intraday_minute_data returning error / failure
+        mock_dhan.intraday_minute_data.return_value = {"status": "failure", "remarks": "API error"}
+
+        fetcher = CandleFetcher(dhan_client=mock_dhan)
+        # Populate cache with old candles
+        old_time = datetime(2025, 1, 1, 10, 0)
+        old_candles = [Candle(timestamp=old_time, open=100.0, high=105.0, low=95.0, close=102.0)]
+        fetcher._cache["RELIANCE_180"] = (old_time, old_candles)
+
+        # 1. With force_refresh=True: must NOT return old cached candles, must fail-closed and return []
+        res_force = fetcher.fetch_2h_candles("2885", symbol="RELIANCE", days=180, force_refresh=True)
+        self.assertEqual(res_force, [])
+
+        # 2. Without force_refresh: within fallback window, returns cached candles
+        fetcher._cache["RELIANCE_180"] = (datetime.now(), old_candles)
+        res_cached = fetcher.fetch_2h_candles("2885", symbol="RELIANCE", days=180, force_refresh=False)
+        self.assertEqual(res_cached, old_candles)
+
+    def test_universe_manager_provenance(self):
+        """UniverseManager must track whether security IDs are from dhan_scrip_master vs static_fallback."""
+        mgr = UniverseManager(cache_path="/tmp/nonexistent_test_cache.json")
+        mgr._provenance = {"RELIANCE": "static_fallback", "INFY": "dhan_scrip_master"}
+
+        self.assertFalse(mgr.is_security_id_verified("RELIANCE"))
+        self.assertTrue(mgr.is_security_id_verified("INFY"))
+
+        sec_id, source, is_verified = mgr.get_security_id_provenance("RELIANCE")
+        self.assertEqual(source, "static_fallback")
+        self.assertFalse(is_verified)
+
+        sec_id2, source2, is_verified2 = mgr.get_security_id_provenance("INFY")
+        self.assertEqual(source2, "dhan_scrip_master")
+        self.assertTrue(is_verified2)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

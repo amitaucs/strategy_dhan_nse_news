@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -10,6 +11,12 @@ import uuid
 from datetime import datetime, time as dtime
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+try:
+    import fcntl
+    _HAS_FCNTL = True
+except ImportError:
+    _HAS_FCNTL = False
 
 from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.scanner.st14_scanner import BullishCeIntradayScanner, St14Status
@@ -62,45 +69,189 @@ class St14BullishCeStrategy:
         except Exception:
             self._last_breadth_status = {}
 
+    @staticmethod
+    def _generate_order_tag(idempotency_key: str) -> str:
+        """Generate a deterministic Dhan-compatible order tag (<= 20 chars) from an idempotency key."""
+        h = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:12].upper()
+        return f"ST14_{h}"
+
+    def _find_matching_broker_order(
+        self,
+        order_tag: Optional[str] = None,
+        security_id: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Query DhanHQ order book to check if an active/traded order matching tag or security_id already exists today."""
+        if not self.provider or not self.provider.dhan:
+            return None
+        dhan = self.provider.dhan
+        if not hasattr(dhan, "get_order_list"):
+            return None
+        try:
+            resp = dhan.get_order_list()
+            if not (isinstance(resp, dict) and resp.get("status") == "success"):
+                return None
+            data = resp.get("data", [])
+            if not isinstance(data, list):
+                return None
+            active_statuses = {"TRADED", "PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN", "CONFIRMED"}
+            for ord_info in data:
+                if not isinstance(ord_info, dict):
+                    continue
+                ord_status = str(ord_info.get("orderStatus", "")).upper()
+                if ord_status not in active_statuses:
+                    continue
+                cur_tag = str(ord_info.get("tag", ""))
+                cur_sec_id = str(ord_info.get("securityId", ""))
+                cur_symbol = str(ord_info.get("tradingSymbol", ""))
+                if order_tag and cur_tag and cur_tag == order_tag:
+                    return ord_info
+                if security_id and cur_sec_id and cur_sec_id == str(security_id):
+                    return ord_info
+                if symbol and cur_symbol and cur_symbol == symbol:
+                    return ord_info
+        except Exception as e:
+            logger.warning("Error querying Dhan broker order list for reconciliation: %s", e)
+        return None
+
+    def _reconcile_from_broker_orders(self) -> None:
+        """Reconcile executed order keys directly from Dhan broker order book."""
+        if not self.provider or not self.provider.dhan:
+            return
+        dhan = self.provider.dhan
+        if not hasattr(dhan, "get_order_list"):
+            return
+        try:
+            resp = dhan.get_order_list()
+            if not (isinstance(resp, dict) and resp.get("status") == "success"):
+                return
+            data = resp.get("data", [])
+            if not isinstance(data, list):
+                return
+            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            active_statuses = {"TRADED", "PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN", "CONFIRMED"}
+            for ord_info in data:
+                if not isinstance(ord_info, dict):
+                    continue
+                ord_status = str(ord_info.get("orderStatus", "")).upper()
+                if ord_status not in active_statuses:
+                    continue
+                cur_tag = str(ord_info.get("tag", ""))
+                cur_sec_id = str(ord_info.get("securityId", ""))
+                cur_symbol = str(ord_info.get("tradingSymbol", ""))
+                if cur_tag.startswith("ST14_"):
+                    self._executed_order_keys.add(cur_tag)
+                if cur_sec_id:
+                    self._executed_order_keys.add(f"{cur_symbol}_{cur_sec_id}_{today_str}")
+        except Exception as e:
+            logger.warning("Failed to reconcile from Dhan broker order book: %s", e)
+
     def _load_executed_journal(self) -> None:
         """Load executed order idempotency keys from disk for today to survive process restarts."""
+        if not os.path.exists(self._journal_file):
+            return
         try:
-            if os.path.exists(self._journal_file):
-                with open(self._journal_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
-                for item in data.get("executed_orders", []):
-                    if item.get("date") == today_str:
-                        if "key" in item:
-                            self._executed_order_keys.add(item["key"])
-                        if "signal_id" in item:
-                            self._executed_signal_ids.add(item["signal_id"])
-        except Exception as e:
-            logger.warning("Could not load ST14 executed orders journal from %s: %s", self._journal_file, e)
-
-    def _persist_executed_order(self, key: str, signal_id: str, order_id: str, symbol: str) -> None:
-        """Durable append of executed order to disk journal."""
-        try:
-            os.makedirs(os.path.dirname(os.path.abspath(self._journal_file)), exist_ok=True)
-            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
-            data: Dict[str, Any] = {"executed_orders": []}
-            if os.path.exists(self._journal_file):
+            lock_file = f"{self._journal_file}.lock"
+            os.makedirs(os.path.dirname(os.path.abspath(lock_file)), exist_ok=True)
+            with open(lock_file, "w", encoding="utf-8") as lf:
+                if _HAS_FCNTL:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_SH)
                 try:
                     with open(self._journal_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                except Exception:
-                    data = {"executed_orders": []}
+                finally:
+                    if _HAS_FCNTL:
+                        fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
-            data.setdefault("executed_orders", []).append({
-                "date": today_str,
-                "timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
-                "key": key,
-                "signal_id": signal_id,
-                "order_id": order_id,
-                "symbol": symbol,
-            })
-            with open(self._journal_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+            for item in data.get("executed_orders", []):
+                if item.get("date") == today_str:
+                    if "key" in item:
+                        self._executed_order_keys.add(item["key"])
+                    if "signal_id" in item:
+                        self._executed_signal_ids.add(item["signal_id"])
+                    if "order_tag" in item and item["order_tag"]:
+                        self._executed_order_keys.add(item["order_tag"])
+        except Exception as e:
+            logger.warning(
+                "ST14 journal corrupted or unreadable at %s (%s). Attempting broker recovery.",
+                self._journal_file,
+                e,
+            )
+            try:
+                corrupt_backup = f"{self._journal_file}.corrupt.{int(datetime.now().timestamp())}"
+                if os.path.exists(self._journal_file):
+                    os.replace(self._journal_file, corrupt_backup)
+            except Exception:
+                pass
+            if self.config.mode == ExecutionMode.LIVE:
+                self._reconcile_from_broker_orders()
+
+    def _persist_executed_order(
+        self,
+        key: str,
+        signal_id: str,
+        order_id: str,
+        symbol: str,
+        order_tag: Optional[str] = None,
+        status: str = "CONFIRMED",
+    ) -> None:
+        """Durable, atomic, and process-locked append/update of executed order to disk journal."""
+        try:
+            journal_dir = os.path.dirname(os.path.abspath(self._journal_file))
+            os.makedirs(journal_dir, exist_ok=True)
+            lock_file = f"{self._journal_file}.lock"
+            today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+
+            with open(lock_file, "w", encoding="utf-8") as lf:
+                if _HAS_FCNTL:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                try:
+                    data: Dict[str, Any] = {"executed_orders": []}
+                    if os.path.exists(self._journal_file):
+                        try:
+                            with open(self._journal_file, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                        except Exception:
+                            data = {"executed_orders": []}
+
+                    orders = data.setdefault("executed_orders", [])
+                    existing_entry = None
+                    for entry in orders:
+                        if entry.get("key") == key and entry.get("date") == today_str:
+                            existing_entry = entry
+                            break
+
+                    if existing_entry:
+                        existing_entry["order_id"] = order_id
+                        existing_entry["status"] = status
+                        existing_entry["updated_at"] = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+                        if order_tag:
+                            existing_entry["order_tag"] = order_tag
+                    else:
+                        orders.append({
+                            "date": today_str,
+                            "timestamp": datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(),
+                            "key": key,
+                            "signal_id": signal_id,
+                            "order_id": order_id,
+                            "symbol": symbol,
+                            "order_tag": order_tag or "",
+                            "status": status,
+                        })
+
+                    temp_file = os.path.join(
+                        journal_dir,
+                        f".{os.path.basename(self._journal_file)}.tmp.{os.getpid()}_{uuid.uuid4().hex}",
+                    )
+                    with open(temp_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(temp_file, self._journal_file)
+                finally:
+                    if _HAS_FCNTL:
+                        fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
         except Exception as e:
             logger.error("Failed to persist ST14 executed order to journal %s: %s", self._journal_file, e)
 
@@ -442,13 +593,14 @@ class St14BullishCeStrategy:
             opt = signal.option_contract
             today_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
             idempotency_key = f"{opt.underlying_symbol}_{opt.security_id}_{today_str}"
+            order_tag = self._generate_order_tag(idempotency_key)
 
             # Broker-level / active position duplicate prevention
             for pos in self.active_positions.values():
                 if pos.symbol == opt.underlying_symbol or pos.security_id == opt.security_id:
                     return False, f"Active position already open for {opt.underlying_symbol} ({pos.position_id})", None
 
-            if idempotency_key in self._executed_order_keys:
+            if idempotency_key in self._executed_order_keys or order_tag in self._executed_order_keys:
                 return False, f"Order key {idempotency_key} has already been submitted today.", None
 
             levels = signal.order_levels
@@ -496,7 +648,15 @@ class St14BullishCeStrategy:
                 self.active_positions[sim_order_id] = position
                 self._executed_signal_ids.add(signal.signal_id)
                 self._executed_order_keys.add(idempotency_key)
-                self._persist_executed_order(idempotency_key, signal.signal_id, sim_order_id, opt.underlying_symbol)
+                self._executed_order_keys.add(order_tag)
+                self._persist_executed_order(
+                    key=idempotency_key,
+                    signal_id=signal.signal_id,
+                    order_id=sim_order_id,
+                    symbol=opt.underlying_symbol,
+                    order_tag=order_tag,
+                    status="CONFIRMED",
+                )
                 signal.status = OrderStatus.ORDER_PLACED
                 signal.order_id = sim_order_id
                 return True, remarks, position
@@ -514,6 +674,40 @@ class St14BullishCeStrategy:
                     remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: Invalid non-numeric security ID '{opt.security_id}' for live broker execution."
                     logger.error(remarks)
                     signal.status = OrderStatus.ORDER_REJECTED
+                    signal.remarks = remarks
+                    return False, remarks, None
+
+                # Pre-order broker reconciliation check (Check broker order book before placement)
+                existing_broker_order = self._find_matching_broker_order(
+                    order_tag=order_tag,
+                    security_id=opt.security_id,
+                    symbol=opt.symbol,
+                )
+                if existing_broker_order:
+                    matched_order_id = str(existing_broker_order.get("orderId", "EXISTING_ORDER"))
+                    matched_status = str(existing_broker_order.get("orderStatus", "UNKNOWN"))
+                    remarks = (
+                        f"❌ [LIVE DUPLICATE BLOCKED] Broker order already exists: {matched_order_id} "
+                        f"(Status: {matched_status}, Tag: {order_tag})."
+                    )
+                    logger.warning(remarks)
+                    self._executed_signal_ids.add(signal.signal_id)
+                    self._executed_order_keys.add(idempotency_key)
+                    self._executed_order_keys.add(order_tag)
+                    self._persist_executed_order(
+                        key=idempotency_key,
+                        signal_id=signal.signal_id,
+                        order_id=matched_order_id,
+                        symbol=opt.underlying_symbol,
+                        order_tag=order_tag,
+                        status=matched_status,
+                    )
+                    signal.status = (
+                        OrderStatus.ORDER_PLACED
+                        if matched_status in ("TRADED", "PENDING", "TRANSIT", "TRIGGER_PENDING", "OPEN", "CONFIRMED")
+                        else OrderStatus.ORDER_REJECTED
+                    )
+                    signal.order_id = matched_order_id
                     signal.remarks = remarks
                     return False, remarks, None
 
@@ -597,6 +791,20 @@ class St14BullishCeStrategy:
                     signal.status = OrderStatus.ORDER_REJECTED
                     signal.remarks = remarks
                     return False, remarks, None
+
+                # Record intent to journal before dispatch to close the crash window
+                self._persist_executed_order(
+                    key=idempotency_key,
+                    signal_id=signal.signal_id,
+                    order_id="SUBMITTING",
+                    symbol=opt.underlying_symbol,
+                    order_tag=order_tag,
+                    status="SUBMITTING",
+                )
+                self._executed_signal_ids.add(signal.signal_id)
+                self._executed_order_keys.add(idempotency_key)
+                self._executed_order_keys.add(order_tag)
+
                 order_resp = dhan.place_super_order(
                     security_id=opt.security_id,
                     exchange_segment=dhan.NSE_FNO,
@@ -608,14 +816,14 @@ class St14BullishCeStrategy:
                     targetPrice=levels.target_price,
                     stopLossPrice=levels.stop_loss_price,
                     trailingJump=levels.trailing_jump,
-                    tag="st14_bull_ce",
+                    tag=order_tag,
                 )
 
                 if isinstance(order_resp, dict) and order_resp.get("status") == "success":
                     live_order_id = str(order_resp.get("data", {}).get("orderId", "LIVE_ORDER"))
                     remarks = (
                         f"🚀 [LIVE SUPER ORDER PLACED] {qty} qty {opt.symbol} @ ₹{levels.entry_price:.2f} "
-                        f"(Order ID: {live_order_id})"
+                        f"(Order ID: {live_order_id}, Tag: {order_tag})"
                     )
                     logger.info(remarks)
                     position = St14Position(
@@ -633,9 +841,14 @@ class St14BullishCeStrategy:
                         entry_time_ist=now_ist_str,
                     )
                     self.active_positions[live_order_id] = position
-                    self._executed_signal_ids.add(signal.signal_id)
-                    self._executed_order_keys.add(idempotency_key)
-                    self._persist_executed_order(idempotency_key, signal.signal_id, live_order_id, opt.underlying_symbol)
+                    self._persist_executed_order(
+                        key=idempotency_key,
+                        signal_id=signal.signal_id,
+                        order_id=live_order_id,
+                        symbol=opt.underlying_symbol,
+                        order_tag=order_tag,
+                        status="CONFIRMED",
+                    )
                     signal.status = OrderStatus.ORDER_PLACED
                     signal.order_id = live_order_id
                     return True, remarks, position
@@ -643,12 +856,32 @@ class St14BullishCeStrategy:
                     err_msg = order_resp.get("remarks") if isinstance(order_resp, dict) else str(order_resp)
                     remarks = f"❌ [LIVE ORDER REJECTED] {opt.symbol}: {err_msg}"
                     logger.error(remarks)
+                    self._persist_executed_order(
+                        key=idempotency_key,
+                        signal_id=signal.signal_id,
+                        order_id="REJECTED",
+                        symbol=opt.underlying_symbol,
+                        order_tag=order_tag,
+                        status="REJECTED",
+                    )
+                    self._executed_order_keys.discard(idempotency_key)
+                    self._executed_order_keys.discard(order_tag)
                     signal.status = OrderStatus.ORDER_REJECTED
                     signal.remarks = remarks
                     return False, remarks, None
             except Exception as exc:
                 remarks = f"❌ [LIVE ORDER EXCEPTION] {opt.symbol}: {exc}"
                 logger.error(remarks)
+                self._persist_executed_order(
+                    key=idempotency_key,
+                    signal_id=signal.signal_id,
+                    order_id="EXCEPTION",
+                    symbol=opt.underlying_symbol,
+                    order_tag=order_tag,
+                    status="EXCEPTION",
+                )
+                self._executed_order_keys.discard(idempotency_key)
+                self._executed_order_keys.discard(order_tag)
                 signal.status = OrderStatus.ORDER_REJECTED
                 signal.remarks = remarks
                 return False, remarks, None

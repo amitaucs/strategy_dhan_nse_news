@@ -262,10 +262,10 @@ class CandleFetcher:
                 self._cache[cache_key] = (now, candles)
                 return candles
 
-        # Fallback to cache only if age is within reasonable bounds (<= 24h)
-        if cache_key in self._cache:
+        # Fallback to cache only if NOT force_refresh and age is within reasonable bounds (<= 24h)
+        if not force_refresh and cache_key in self._cache:
             cached_time, cached_candles = self._cache[cache_key]
-            fallback_max_seconds = 86400  # 24 hours max fallback
+            fallback_max_seconds = 86400  # 24 hours max fallback for non-force-refresh requests
             if (now - cached_time).total_seconds() <= fallback_max_seconds and cached_candles:
                 logger.info("Using cached candles fallback (age: %.0fs) for %s", (now - cached_time).total_seconds(), symbol or security_id)
                 return cached_candles

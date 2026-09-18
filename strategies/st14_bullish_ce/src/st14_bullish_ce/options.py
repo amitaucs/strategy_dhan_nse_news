@@ -224,9 +224,9 @@ def resolve_1otm_ce_contract(
     option_symbol = f"{symbol} {expiry_label} {int(otm1_strike) if otm1_strike.is_integer() else otm1_strike} CE"
 
     # Fetch exact exchange lot size from universe manager
-    lot_size = mock_lot_size if mock_lot_size is not None else get_fno_lot_size(symbol, default=250)
-    if lot_size <= 0:
-        logger.warning("⛔ [Option Resolver] Invalid lot size (%s) for %s. Disqualifying contract.", lot_size, symbol)
+    lot_size = mock_lot_size if mock_lot_size is not None else get_fno_lot_size(symbol, default=None)
+    if not lot_size or lot_size <= 0:
+        logger.warning("⛔ [Option Resolver] Unverified or missing lot size for %s in F&O master. Disqualifying contract.", symbol)
         return None
 
     # Resolve Security ID and Real-Time Premium

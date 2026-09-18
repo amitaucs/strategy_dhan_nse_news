@@ -43,8 +43,22 @@ def generate_mock_2h_candles(
         # ~20% currently triggering a qualified bounce after dip
         pullback_at_end = bullish_trend and ((hash_val % 10) in (0, 1))
 
-    current_price = base_price
+    # Determine the target end date (today, or Friday if today is weekend)
+    target_end_date = datetime.now().date()
+    while target_end_date.weekday() >= 5:
+        target_end_date -= timedelta(days=1)
+
     slots = [time(9, 15), time(11, 15), time(13, 15)]
+    num_days = (num_candles + len(slots) - 1) // len(slots)
+    start_date = target_end_date
+    days_counted = 0
+    while days_counted < num_days:
+        start_date -= timedelta(days=1)
+        if start_date.weekday() < 5:
+            days_counted += 1
+
+    current_time = datetime.combine(start_date, time(0, 0))
+    current_price = base_price
     slot_idx = 0
 
     for i in range(num_candles):
