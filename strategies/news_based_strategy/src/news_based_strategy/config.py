@@ -43,6 +43,7 @@ DEFAULT_HEADERS: Dict[str, str] = {
 class Settings:
     """Application settings loaded from environment variables."""
 
+    app_version: str = os.getenv("APP_VERSION", "1.0.0")
     app_env: str = os.getenv("APP_ENV", "development")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 

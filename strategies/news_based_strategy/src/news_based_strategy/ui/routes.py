@@ -183,6 +183,7 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         db_client_name = state.storage.get_setting("dhan_client_name") or state.storage.get_setting("client_name")
         client_name = db_client_name or (auth_user.capitalize() if (auth_user and not auth_user.isdigit()) else None)
         return {
+            "app_version": settings.app_version,
             "strategy_status": getattr(state, "strategy_status", "ACTIVE"),
             "dry_run": state.executor.dry_run,
             "auto_order": state.auto_order,

@@ -92,7 +92,7 @@ def get_login_html() -> str:
 
     <!-- Sub-footer -->
     <div class="text-center mt-6 text-[11px] text-gray-500 font-mono">
-      <span>Protected by NSE Quantitative Strategy Engine • v0.3.0</span>
+      <span>Protected by NSE Quantitative Strategy Engine • v1.0.0</span>
     </div>
 
   </div>
@@ -263,6 +263,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         <div>
           <div class="flex items-center gap-2">
             <h1 class="text-xs font-bold text-white tracking-wider uppercase">NSE TERMINAL</h1>
+            <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-blue-950/80 text-blue-400 border border-blue-800/60 rounded shadow-sm" title="Application Version 1.0.0">v1.0.0</span>
             <!-- Dynamic Market Status Badge -->
             <span id="market-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full flex items-center gap-1 shadow-sm transition-all" title="NSE Trading Hours (Mon-Fri 09:15 - 15:30 IST)">
               <span id="market-status-dot" class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
