@@ -77,7 +77,11 @@ def detect_fair_value_gaps(
         if atr_val <= 0 or vol_sma <= 0:
             continue
 
+        c2_high = float(df["high"].iloc[i - 1])
+        c2_low = float(df["low"].iloc[i - 1])
+        c2_range = max(c2_high - c2_low, 1e-4)
         c2_body = abs(c2_close - c2_open)
+        body_to_range_ratio = c2_body / c2_range
         body_atr_ratio = c2_body / atr_val
         volume_ratio = c2_vol / vol_sma
 
@@ -85,8 +89,17 @@ def detect_fair_value_gaps(
         if c2_close > c2_open and c1_high < c3_low:
             gap_size = c3_low - c1_high
             gap_size_pct = (gap_size / c1_high) * 100.0
+            upper_wick = c2_high - c2_close
+            upper_wick_ratio = upper_wick / c2_range
 
-            if gap_size_pct >= min_gap_pct and body_atr_ratio >= body_atr_mult and volume_ratio >= vol_mult:
+            # Clean Candle Filter: Solid body >= 50% of range and upper selling wick <= 30% of range
+            if (
+                gap_size_pct >= min_gap_pct
+                and body_atr_ratio >= body_atr_mult
+                and volume_ratio >= vol_mult
+                and body_to_range_ratio >= 0.50
+                and upper_wick_ratio <= 0.30
+            ):
                 ce_price = (c1_high + c3_low) / 2.0
                 gaps.append(
                     FairValueGap(
@@ -113,8 +126,17 @@ def detect_fair_value_gaps(
         elif c2_close < c2_open and c1_low > c3_high:
             gap_size = c1_low - c3_high
             gap_size_pct = (gap_size / c3_high) * 100.0
+            lower_wick = c2_close - c2_low
+            lower_wick_ratio = lower_wick / c2_range
 
-            if gap_size_pct >= min_gap_pct and body_atr_ratio >= body_atr_mult and volume_ratio >= vol_mult:
+            # Clean Candle Filter: Solid body >= 50% of range and lower buying wick <= 30% of range
+            if (
+                gap_size_pct >= min_gap_pct
+                and body_atr_ratio >= body_atr_mult
+                and volume_ratio >= vol_mult
+                and body_to_range_ratio >= 0.50
+                and lower_wick_ratio <= 0.30
+            ):
                 ce_price = (c3_high + c1_low) / 2.0
                 gaps.append(
                     FairValueGap(
@@ -188,6 +210,38 @@ def calculate_fibonacci_retracement(
     )
 
 
+def _has_freak_wicks_or_noise(
+    df: pd.DataFrame,
+    start_idx: int,
+    end_idx: int,
+    atr_series: pd.Series,
+) -> bool:
+    """Check if any candle in slice [start_idx, end_idx) contains freak outlier wicks or erratic wide-range spinning tops."""
+    for i in range(start_idx, end_idx):
+        o = float(df["open"].iloc[i])
+        h = float(df["high"].iloc[i])
+        l = float(df["low"].iloc[i])
+        c = float(df["close"].iloc[i])
+        rng = max(h - l, 1e-4)
+        body = abs(c - o)
+        upper_wick = h - max(o, c)
+        lower_wick = min(o, c) - l
+
+        bar_atr = float(atr_series.iloc[i]) if (i < len(atr_series) and not pd.isna(atr_series.iloc[i]) and atr_series.iloc[i] > 0) else 0.0
+        if bar_atr <= 0:
+            continue
+
+        # 1. Extreme Freak Wick: single-sided wick > 2.0 * ATR
+        if upper_wick > 2.0 * bar_atr or lower_wick > 2.0 * bar_atr:
+            return True
+
+        # 2. Erratic Wide-Range Spinning Top / High Noise Doji: Range > 1.3 * ATR with body < 22% of range
+        if rng > 1.3 * bar_atr and (body / rng) < 0.22:
+            return True
+
+    return False
+
+
 def detect_fvg_fib_confluences(
     df: pd.DataFrame,
     min_gap_pct: float = 0.2,
@@ -203,10 +257,13 @@ def detect_fvg_fib_confluences(
     2. Freshness: The impulse extreme (Peak / Trough) must be recent (within last 20 bars).
     3. Approach Direction: Price must be pulling back DOWN from peak into Bullish FVG (never rising from below).
     4. Single Mitigation / Strict Invalidation: FVG must never have been previously closed below/above or breached.
-    5. Price Action Confirmation: Requires a green bounce bar, rejection wick (>= 35%), or reversal candle pattern.
+    5. Clean Candle Filter: Disqualifies freak outlier wicks (> 2.0x ATR) and erratic spinning top noise.
+    6. Price Action Confirmation: Requires a clean bounce/rejection bar without heavy opposing shadow.
     """
     if df.empty or len(df) < 25:
         return []
+
+    atr_series = calculate_atr(df, period=14)
 
     gaps = detect_fair_value_gaps(
         df,
@@ -290,6 +347,11 @@ def detect_fvg_fib_confluences(
             if lowest_low_since_peak < fvg.bottom_price * 0.985:
                 continue
 
+            # Rule 5b: Anti-Wick & Noise Filter across cycle
+            start_noise_check = max(0, fvg_idx - 2)
+            if _has_freak_wicks_or_noise(df, start_noise_check, n - 1, atr_series):
+                continue  # Disqualify setups with freak shadows or spinning-top noise
+
             # Check Zone Alignment
             dist_to_618_pct = ((current_price - fib.fib_618) / fib.fib_618) * 100.0
             in_zone = (
@@ -300,16 +362,24 @@ def detect_fvg_fib_confluences(
             if not in_zone:
                 continue
 
-            # Rule 6: Price Action Confirmation (No Falling Knives)
+            # Rule 6: Price Action Confirmation (No Falling Knives & No Heavy Upper Wicks)
             curr_bar = df.iloc[-1]
+            curr_atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) and atr_series.iloc[-1] > 0 else 1.0
             c_open = float(curr_bar["open"])
             c_high = float(curr_bar["high"])
             c_low = float(curr_bar["low"])
             c_close = float(curr_bar["close"])
             c_range = max(c_high - c_low, 0.01)
 
-            lower_wick = min(c_open, c_close) - c_low
-            lower_wick_ratio = lower_wick / c_range
+            c_upper_wick = c_high - max(c_open, c_close)
+            c_lower_wick = min(c_open, c_close) - c_low
+            c_upper_wick_ratio = c_upper_wick / c_range
+            c_lower_wick_ratio = c_lower_wick / c_range
+
+            # Freak wick on trigger bar rejection
+            if c_upper_wick > 2.0 * curr_atr or c_lower_wick > 2.0 * curr_atr:
+                continue
+
             is_green = c_close >= c_open
 
             candle_patterns = identify_candlestick_patterns(df.iloc[-2:]) if len(df) >= 2 else ""
@@ -317,15 +387,21 @@ def detect_fvg_fib_confluences(
                 p in candle_patterns for p in ["Hammer", "Bullish Engulfing", "Bullish Green", "Piercing", "Morning Star", "Reversal"]
             )
 
-            has_bounce_confirmation = is_green or (lower_wick_ratio >= 0.35) or has_bullish_pattern
-            is_waterfall = (c_close < c_open) and (lower_wick_ratio < 0.25) and not has_bullish_pattern
+            # Heavy selling rejection at top of bounce candle invalidates clean trigger
+            has_heavy_upper_selling = (c_upper_wick_ratio > 0.40) and (c_upper_wick > 0.4 * curr_atr)
+
+            has_bounce_confirmation = (
+                (is_green or (c_lower_wick_ratio >= 0.35) or has_bullish_pattern)
+                and not has_heavy_upper_selling
+            )
+            is_waterfall = (c_close < c_open) and (c_lower_wick_ratio < 0.25) and not has_bullish_pattern
 
             if has_bounce_confirmation:
                 is_at_confluence = True
                 status = FvgStatus.PULLBACK_AT_618
                 if has_bullish_pattern:
                     candle_signal = "🟢 Reversal Candle"
-                elif lower_wick_ratio >= 0.35:
+                elif c_lower_wick_ratio >= 0.35:
                     candle_signal = "🟢 Lower Wick Rejection"
                 else:
                     candle_signal = "🟢 Green Bounce Bar"
@@ -429,6 +505,11 @@ def detect_fvg_fib_confluences(
             if highest_high_since_trough > fvg.top_price * 1.015:
                 continue
 
+            # Rule 5b: Anti-Wick & Noise Filter across cycle
+            start_noise_check = max(0, fvg_idx - 2)
+            if _has_freak_wicks_or_noise(df, start_noise_check, n - 1, atr_series):
+                continue  # Disqualify setups with freak shadows or spinning-top noise
+
             # Check Zone Alignment
             dist_to_618_pct = ((current_price - fib.fib_618) / fib.fib_618) * 100.0
             in_zone = (
@@ -439,16 +520,24 @@ def detect_fvg_fib_confluences(
             if not in_zone:
                 continue
 
-            # Rule 6: Price Action Confirmation (No Bullish Runaways)
+            # Rule 6: Price Action Confirmation (No Bullish Runaways & No Heavy Lower Wicks)
             curr_bar = df.iloc[-1]
+            curr_atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) and atr_series.iloc[-1] > 0 else 1.0
             c_open = float(curr_bar["open"])
             c_high = float(curr_bar["high"])
             c_low = float(curr_bar["low"])
             c_close = float(curr_bar["close"])
             c_range = max(c_high - c_low, 0.01)
 
-            upper_wick = c_high - max(c_open, c_close)
-            upper_wick_ratio = upper_wick / c_range
+            c_upper_wick = c_high - max(c_open, c_close)
+            c_lower_wick = min(c_open, c_close) - c_low
+            c_upper_wick_ratio = c_upper_wick / c_range
+            c_lower_wick_ratio = c_lower_wick / c_range
+
+            # Freak wick on trigger bar rejection
+            if c_upper_wick > 2.0 * curr_atr or c_lower_wick > 2.0 * curr_atr:
+                continue
+
             is_red = c_close <= c_open
 
             candle_patterns = identify_candlestick_patterns(df.iloc[-2:]) if len(df) >= 2 else ""
@@ -456,15 +545,21 @@ def detect_fvg_fib_confluences(
                 p in candle_patterns for p in ["Shooting Star", "Bearish Engulfing", "Hanging Man", "Dark Cloud", "Reversal"]
             )
 
-            has_rejection_confirmation = is_red or (upper_wick_ratio >= 0.35) or has_bearish_pattern
-            is_bullish_surge = (c_close > c_open) and (upper_wick_ratio < 0.25) and not has_bearish_pattern
+            # Heavy buying absorption at bottom of rejection candle invalidates clean trigger
+            has_heavy_lower_buying = (c_lower_wick_ratio > 0.40) and (c_lower_wick > 0.4 * curr_atr)
+
+            has_rejection_confirmation = (
+                (is_red or (c_upper_wick_ratio >= 0.35) or has_bearish_pattern)
+                and not has_heavy_lower_buying
+            )
+            is_bullish_surge = (c_close > c_open) and (c_upper_wick_ratio < 0.25) and not has_bearish_pattern
 
             if has_rejection_confirmation:
                 is_at_confluence = True
                 status = FvgStatus.PULLBACK_AT_618
                 if has_bearish_pattern:
                     candle_signal = "🔴 Reversal Candle"
-                elif upper_wick_ratio >= 0.35:
+                elif c_upper_wick_ratio >= 0.35:
                     candle_signal = "🔴 Upper Wick Rejection"
                 else:
                     candle_signal = "🔴 Red Rejection Bar"

@@ -354,6 +354,53 @@ class TestFvgFibonacciScanner(unittest.TestCase):
         setups = detect_fvg_fib_confluences(df, confluence_tolerance_pct=2.0)
         self.assertEqual(len(setups), 0)
 
+    def test_disqualified_by_freak_wick_in_cycle(self) -> None:
+        """Test that a setup containing a freak outlier wick (>2.0x ATR) is disqualified."""
+        df = _generate_synthetic_bullish_fvg_df()
+        # Insert a freak 15pt wick on bar 26 (ATR is ~4.5pt)
+        df.iloc[26, df.columns.get_loc("high")] = 135.0  # Freak 20pt upper shadow
+        setups = detect_fvg_fib_confluences(df, confluence_tolerance_pct=2.0)
+        self.assertEqual(len(setups), 0)
+
+    def test_disqualified_by_spinning_top_noise_in_cycle(self) -> None:
+        """Test that erratic wide-range spinning tops with tiny bodies in cycle are disqualified."""
+        df = _generate_synthetic_bullish_fvg_df()
+        # Bar 25 has large range (8.0pt) but only 0.5pt body (<22% body ratio)
+        df.iloc[25, df.columns.get_loc("open")] = 115.0
+        df.iloc[25, df.columns.get_loc("high")] = 119.0
+        df.iloc[25, df.columns.get_loc("low")] = 111.0
+        df.iloc[25, df.columns.get_loc("close")] = 115.2
+        setups = detect_fvg_fib_confluences(df, confluence_tolerance_pct=2.0)
+        self.assertEqual(len(setups), 0)
+
+    def test_bullish_trigger_disqualified_by_heavy_upper_selling_wick(self) -> None:
+        """Test that a bullish trigger bar with a heavy upper selling shadow is rejected."""
+        df = _generate_synthetic_bullish_fvg_df()
+        # Modify trigger bar (Bar 28) to have large upper wick (e.g. open=109.5, high=114.0, low=109.0, close=110.0)
+        # Range = 5.0, upper wick = 4.0 (80% of range)
+        df.iloc[28, df.columns.get_loc("open")] = 109.5
+        df.iloc[28, df.columns.get_loc("high")] = 114.0
+        df.iloc[28, df.columns.get_loc("low")] = 109.0
+        df.iloc[28, df.columns.get_loc("close")] = 110.0
+        setups = detect_fvg_fib_confluences(df, confluence_tolerance_pct=2.0)
+        self.assertGreaterEqual(len(setups), 1)
+        self.assertFalse(setups[0].is_at_confluence)
+        self.assertEqual(setups[0].status, FvgStatus.WATCHLIST_UNMITIGATED)
+
+    def test_bearish_trigger_disqualified_by_heavy_lower_buying_wick(self) -> None:
+        """Test that a bearish trigger bar with a heavy lower buying shadow is rejected."""
+        df = _generate_synthetic_bearish_fvg_df()
+        # Modify trigger bar (Bar 28) to have large lower wick (e.g. open=190.5, high=191.0, low=186.0, close=190.0)
+        # Range = 5.0, lower wick = 4.0 (80% of range)
+        df.iloc[28, df.columns.get_loc("open")] = 190.5
+        df.iloc[28, df.columns.get_loc("high")] = 191.0
+        df.iloc[28, df.columns.get_loc("low")] = 186.0
+        df.iloc[28, df.columns.get_loc("close")] = 190.0
+        setups = detect_fvg_fib_confluences(df, confluence_tolerance_pct=2.0)
+        self.assertGreaterEqual(len(setups), 1)
+        self.assertFalse(setups[0].is_at_confluence)
+        self.assertEqual(setups[0].status, FvgStatus.WATCHLIST_UNMITIGATED)
+
     def test_format_fvg_fib_dataframe(self) -> None:
         """Verify DataFrame formatting output."""
         df_raw = _generate_synthetic_bullish_fvg_df()
