@@ -12,6 +12,7 @@ import pandas as pd
 from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
 from scanner_dhan.scanner.vcp_scanner.engine import scan_stock_for_vcp
 from scanner_dhan.scanner.vcp_scanner.models import (
@@ -171,6 +172,7 @@ class VcpScanner(BaseScanner):
                 {"value": "3", "label": "3 Waves (3T+ High Quality)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
     ]
 
     def scan_symbol(
@@ -189,6 +191,7 @@ class VcpScanner(BaseScanner):
         max_final_depth_pct = float(params.get("max_final_depth_pct", 6.5))
         vdu_threshold = float(params.get("vdu_threshold", 0.75))
         min_contractions = int(params.get("min_contractions", 2))
+        max_wick_pct = params.get("max_wick_pct", "NA")
 
         return scan_stock_for_vcp(
             provider=provider,
@@ -199,6 +202,7 @@ class VcpScanner(BaseScanner):
             max_final_depth_pct=max_final_depth_pct,
             vdu_threshold=vdu_threshold,
             min_contractions=min_contractions,
+            max_wick_pct=max_wick_pct,
         )
 
     def run(

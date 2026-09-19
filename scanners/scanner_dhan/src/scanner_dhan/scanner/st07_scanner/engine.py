@@ -12,6 +12,7 @@ from scanner_dhan.indicators import (
     calculate_rsi,
 )
 from scanner_dhan.scanner.st07_scanner.models import St07Category, St07ScanResult
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ def analyze_st07_stock(
     is_already_monthly: bool = False,
     min_monthly_bars: int = 90,
     ltp_override: float | None = None,
+    max_wick_pct: Any = "NA",
 ) -> St07ScanResult | None:
     """Analyze a single stock against ST07 Monthly Heikin Ashi + 89 EMA Crossover rules.
 
@@ -156,6 +158,19 @@ def analyze_st07_stock(
     is_accumulation_pullback = bool(
         is_ema_89_rising and (ha_low <= ema_89) and (ha_close >= ema_89) and not is_fresh_crossover
     )
+
+    # Opposing wick rejection check (Upper rejection wick on bullish candle)
+    is_wick_passed, _ = check_candle_wick(
+        open_price=float(curr["open"]),
+        high_price=raw_high,
+        low_price=raw_low,
+        close_price=float(curr["close"]),
+        is_bullish_setup=True,
+        max_wick_pct_param=max_wick_pct,
+    )
+    if not is_wick_passed:
+        is_fresh_crossover = False
+        is_accumulation_pullback = False
 
     # Determine Scan Category
     scan_category: St07Category | None = None

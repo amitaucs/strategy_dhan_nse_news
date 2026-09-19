@@ -19,6 +19,7 @@ from scanner_dhan.scanner.head_and_shoulders.models import (
     PatternType,
 )
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
 from scanner_dhan.universe import get_active_universe
 
@@ -39,15 +40,14 @@ def format_head_and_shoulders_dataframe(
         "Status",
         "Neckline (₹)",
         "Head (₹)",
-        "Right Shoulder (₹)",
-        "Symmetry (%)",
         "Entry (₹)",
         "Stop Loss (₹)",
         "Target 1 (₹)",
         "Target 2 (₹)",
         "R:R",
+        "Symmetry",
+        "Signal",
         "RSI (14)",
-        "Bars Ago",
     ]
     rows = []
     for r in results:
@@ -57,20 +57,19 @@ def format_head_and_shoulders_dataframe(
                 rows.append(
                     {
                         "Symbol": r.symbol,
-                        "LTP (₹)": r.ltp,
+                        "LTP (₹)": f"₹{r.ltp:,.2f}",
                         "Pattern": "-",
                         "Status": "NO_PATTERN",
                         "Neckline (₹)": "-",
                         "Head (₹)": "-",
-                        "Right Shoulder (₹)": "-",
-                        "Symmetry (%)": "-",
                         "Entry (₹)": "-",
                         "Stop Loss (₹)": "-",
                         "Target 1 (₹)": "-",
                         "Target 2 (₹)": "-",
                         "R:R": "-",
+                        "Symmetry": "-",
+                        "Signal": "No Pattern",
                         "RSI (14)": f"{r.rsi:.1f}" if r.rsi is not None else "-",
-                        "Bars Ago": "-",
                     }
                 )
             continue
@@ -79,27 +78,28 @@ def format_head_and_shoulders_dataframe(
             continue
 
         pattern_label = (
-            "🔴 Bearish H&S" if p.pattern_type == PatternType.REGULAR_HS else "🟢 Bullish Inv H&S"
+            "🟢 Inverse H&S" if p.pattern_type == PatternType.INVERSE_HS else "🔴 Regular H&S"
         )
-        status_label = "✅ CONFIRMED" if p.status == ConfirmationStatus.CONFIRMED else "⏳ FORMING"
+        status_label = (
+            "✅ CONFIRMED" if p.status == ConfirmationStatus.CONFIRMED else "⏳ FORMING"
+        )
 
         rows.append(
             {
                 "Symbol": r.symbol,
-                "LTP (₹)": r.ltp,
+                "LTP (₹)": f"₹{r.ltp:,.2f}",
                 "Pattern": pattern_label,
                 "Status": status_label,
-                "Neckline (₹)": p.neckline_price,
-                "Head (₹)": p.head.price,
-                "Right Shoulder (₹)": p.right_shoulder.price,
-                "Symmetry (%)": f"{p.shoulder_symmetry_pct:.1f}%",
-                "Entry (₹)": p.entry_price,
-                "Stop Loss (₹)": p.stop_loss,
-                "Target 1 (₹)": p.target_1,
-                "Target 2 (₹)": p.target_2,
+                "Neckline (₹)": f"₹{p.neckline_price:,.2f}",
+                "Head (₹)": f"₹{p.head.price:,.2f}",
+                "Entry (₹)": f"₹{p.entry_price:,.2f}" if p.entry_price else "-",
+                "Stop Loss (₹)": f"₹{p.stop_loss:,.2f}" if p.stop_loss else "-",
+                "Target 1 (₹)": f"₹{p.target_1:,.2f}" if p.target_1 else "-",
+                "Target 2 (₹)": f"₹{p.target_2:,.2f}" if p.target_2 else "-",
                 "R:R": f"1:{p.risk_reward_ratio:.1f}" if p.risk_reward_ratio > 0 else "-",
+                "Symmetry": f"{p.shoulder_symmetry_pct:.1f}%",
+                "Signal": r.candle_signal,
                 "RSI (14)": f"{r.rsi:.1f}" if r.rsi is not None else "-",
-                "Bars Ago": p.bars_since_formation,
             }
         )
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
@@ -107,16 +107,17 @@ def format_head_and_shoulders_dataframe(
 
 @register_scanner
 class HeadAndShouldersScanner(BaseScanner):
-    """Scans for regular Head & Shoulders and Inverse Head & Shoulders chart patterns."""
+    """Detects Head & Shoulders and Inverse Head & Shoulders chart patterns."""
 
     id = "head_and_shoulders"
-    name = "Head & Shoulders Pattern Scanner"
+    name = "Head & Shoulders Scanner - Stockwiz"
     description = (
-        "Detects classic Bearish Head & Shoulders breakdowns and Bullish Inverse Head & Shoulders "
-        "breakouts across NSE equities with multi-point geometric symmetry and neckline confirmation."
+        "Screens for Regular (Bearish) and Inverse (Bullish) Head & Shoulders patterns "
+        "using geometric extrema detection, neckline regression, shoulder symmetry, "
+        "and breakout/breakdown confirmation."
     )
-    category = "Chart Patterns"
-    icon = "trending-up"
+    category = "Pattern Recognition"
+    icon = "activity"
     parameters = [
         ScannerParameter(
             name="universe",
@@ -157,6 +158,7 @@ class HeadAndShouldersScanner(BaseScanner):
                 {"value": "FORMING_ONLY", "label": "⏳ Forming Only (Watchlist)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="timeframe",
             label="Candle Timeframe",
@@ -227,6 +229,7 @@ class HeadAndShouldersScanner(BaseScanner):
         tolerance = raw_tol / 100.0 if raw_tol > 1.0 else raw_tol
         history_days = int(p.get("history_days", p.get("lookback_days", 500)))
         max_workers = int(p.get("max_workers", 4))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         scan_time = datetime.now()
         logger.info(
@@ -282,6 +285,7 @@ class HeadAndShouldersScanner(BaseScanner):
                     pattern_filter=pattern_filter,
                     order=extrema_order,
                     symmetry_tolerance=tolerance,
+                    max_wick_pct=max_wick_pct,
                 )
                 return res
             except Exception as e:

@@ -14,6 +14,7 @@ from scanner_dhan.scanner.order_block.models import (
     OrderBlockType,
 )
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.universe import get_active_universe
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class OrderBlockScanner(BaseScanner):
                 {"value": "ALL", "label": "All Order Blocks (Demand & Supply)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="impulse_multiplier",
             label="Displacement / ATR Multiplier",
@@ -110,7 +112,7 @@ class OrderBlockScanner(BaseScanner):
             min_value=0.0,
             max_value=5.0,
             step=0.1,
-            description="Max distance (%) from Order Block zone to qualify as 'Testing OB'.",
+            description="Max distance (%) from Order Block zone to trigger alert.",
         ),
         ScannerParameter(
             name="lookback_days",
@@ -137,6 +139,7 @@ class OrderBlockScanner(BaseScanner):
         vol_mult = float(p.get("volume_multiplier", 1.5))
         threshold_pct = float(p.get("threshold_pct", 2.0))
         lookback_days = int(p.get("lookback_days", 100))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         prov = provider or DhanDataProvider()
         universe_name, symbols, sec_map = get_active_universe(universe_choice)
@@ -162,6 +165,7 @@ class OrderBlockScanner(BaseScanner):
                 threshold_pct=threshold_pct,
                 impulse_multiplier=impulse_mult,
                 volume_multiplier=vol_mult,
+                max_wick_pct=max_wick_pct,
             )
 
             # Check block type filter

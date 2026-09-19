@@ -9,12 +9,13 @@ from typing import Any
 
 from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
+from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.nifty50_support_resistance.level_detector import (
     analyze_stock_resistance,
     analyze_stock_support,
 )
 from scanner_dhan.scanner.nifty50_support_resistance.models import StockSupportScan
-from scanner_dhan.scanner.registry import register_scanner
 from scanner_dhan.universe import get_active_universe
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class Nifty50SupportScanner(BaseScanner):
                 {"value": "15M", "label": "15 Minutes"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="target_level",
             label="Target Support / EMA",
@@ -127,6 +129,7 @@ class Nifty50SupportScanner(BaseScanner):
         universe_choice = str(p.get("universe", "NIFTY_50"))
         timeframe = str(p.get("timeframe", "1D")).upper()
         target_level = str(p.get("target_level", "ALL"))
+        max_wick_pct = p.get("max_wick_pct", "NA")
         prov = provider or DhanDataProvider()
 
         universe_name, symbols, sec_map = get_active_universe(universe_choice)
@@ -147,6 +150,7 @@ class Nifty50SupportScanner(BaseScanner):
                 ltp=ltp,
                 threshold_pct=threshold_pct,
                 target_level=target_level,
+                max_wick_pct=max_wick_pct,
             )
             scan_results.append(scan)
 
@@ -210,6 +214,7 @@ class Nifty50ResistanceScanner(BaseScanner):
                 {"value": "15M", "label": "15 Minutes"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="target_level",
             label="Target Resistance",
@@ -264,6 +269,7 @@ class Nifty50ResistanceScanner(BaseScanner):
         universe_choice = str(p.get("universe", "NIFTY_50"))
         timeframe = str(p.get("timeframe", "1D")).upper()
         target_level = str(p.get("target_level", "ALL"))
+        max_wick_pct = p.get("max_wick_pct", "NA")
         prov = provider or DhanDataProvider()
 
         universe_name, symbols, sec_map = get_active_universe(universe_choice)
@@ -284,6 +290,7 @@ class Nifty50ResistanceScanner(BaseScanner):
                 ltp=ltp,
                 threshold_pct=threshold_pct,
                 target_level=target_level,
+                max_wick_pct=max_wick_pct,
             )
             scan_results.append(scan)
 

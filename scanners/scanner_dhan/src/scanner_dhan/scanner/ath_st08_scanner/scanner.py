@@ -15,6 +15,7 @@ from scanner_dhan.scanner.ath_st08_scanner.engine import analyze_ath_stock
 from scanner_dhan.scanner.ath_st08_scanner.models import AthBreakoutScanResult, AthClass
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
 from scanner_dhan.universe import get_active_universe
 
@@ -73,6 +74,7 @@ class MonthlyAthBreakoutScanner(BaseScanner):
                 },
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="max_exhaustion_ratio",
             label="Max Exhaustion Ratio (x)",
@@ -116,6 +118,7 @@ class MonthlyAthBreakoutScanner(BaseScanner):
         max_exhaustion_ratio = float(p.get("max_exhaustion_ratio", 2.5))
         history_days = int(p.get("history_days", 7500))
         max_workers = int(p.get("max_workers", 4))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         # 1. Resolve Universe & Security IDs
         univ_name, symbols, sec_id_map = get_active_universe(universe_choice)
@@ -158,6 +161,7 @@ class MonthlyAthBreakoutScanner(BaseScanner):
                     ltp_override=ltp_override,
                     min_monthly_bars=12,
                     max_exhaustion_ratio=max_exhaustion_ratio,
+                    max_wick_pct=max_wick_pct,
                 )
             except Exception as exc:
                 logger.error("Error scanning %s for ATH-ST08: %s", sym, exc)
@@ -246,6 +250,13 @@ def main() -> None:
         default="ALL",
         choices=["ALL", "A_CLASS_ONLY", "B_CLASS_ONLY"],
         help="Filter by setup class (Default: ALL)",
+    )
+    parser.add_argument(
+        "--max-wick-pct",
+        type=str,
+        default="NA",
+        choices=["NA", "20", "30", "40", "50"],
+        help="Max allowed opposing rejection wick percentage (Default: NA)",
     )
     parser.add_argument(
         "--workers",

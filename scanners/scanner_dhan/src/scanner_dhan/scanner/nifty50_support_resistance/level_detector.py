@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import pandas as pd
 
@@ -18,6 +19,7 @@ from scanner_dhan.scanner.nifty50_support_resistance.models import (
     SupportLevel,
     SupportType,
 )
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 __all__ = [
     "get_configured_ema_periods",
@@ -458,6 +460,7 @@ def analyze_stock_support(
     target_level: str = "ALL",
     ema_periods: list[int] | None = None,
     sma_periods: list[int] | None = None,
+    max_wick_pct: Any = "NA",
 ) -> StockSupportScan:
     """Run full technical support scan on historical OHLCV data."""
     if df.empty or len(df) < 5:
@@ -569,7 +572,20 @@ def analyze_stock_support(
         all_candidates.sort(key=lambda x: x[0])
         _, best_dist_pct, nearest_support = all_candidates[0]
 
-    is_at_support = abs(best_dist_pct) <= threshold_pct
+    last_o = float(df["open"].iloc[-1])
+    last_h = float(df["high"].iloc[-1])
+    last_l = float(df["low"].iloc[-1])
+    last_c = float(df["close"].iloc[-1])
+    wick_ok, _ = check_candle_wick(
+        open_price=last_o,
+        high_price=last_h,
+        low_price=last_l,
+        close_price=last_c,
+        is_bullish_setup=True,
+        max_wick_pct_param=max_wick_pct,
+    )
+
+    is_at_support = (abs(best_dist_pct) <= threshold_pct) and wick_ok
 
     return StockSupportScan(
         symbol=symbol,
@@ -592,6 +608,7 @@ def analyze_stock_resistance(
     ltp: float | None = None,
     threshold_pct: float = 2.0,
     target_level: str = "ALL",
+    max_wick_pct: Any = "NA",
 ) -> StockSupportScan:
     """Run full technical resistance scan on historical OHLCV data."""
     if df.empty or len(df) < 5:
@@ -707,7 +724,20 @@ def analyze_stock_resistance(
         all_candidates.sort(key=lambda x: x[0])
         _, best_dist_pct, nearest_res = all_candidates[0]
 
-    is_at_res = abs(best_dist_pct) <= threshold_pct
+    last_o = float(df["open"].iloc[-1])
+    last_h = float(df["high"].iloc[-1])
+    last_l = float(df["low"].iloc[-1])
+    last_c = float(df["close"].iloc[-1])
+    wick_ok, _ = check_candle_wick(
+        open_price=last_o,
+        high_price=last_h,
+        low_price=last_l,
+        close_price=last_c,
+        is_bullish_setup=False,
+        max_wick_pct_param=max_wick_pct,
+    )
+
+    is_at_res = (abs(best_dist_pct) <= threshold_pct) and wick_ok
 
     return StockSupportScan(
         symbol=symbol,

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pandas as pd
 
 from scanner_dhan.indicators import calculate_rsi, calculate_sma
 from scanner_dhan.scanner.ath_st08_scanner.models import AthBreakoutScanResult, AthClass
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,7 @@ def analyze_ath_stock(
     ltp_override: float | None = None,
     min_monthly_bars: int = 12,
     max_exhaustion_ratio: float = 2.5,
+    max_wick_pct: Any = "NA",
 ) -> AthBreakoutScanResult | None:
     """Analyze a single stock against ATH-ST08 Monthly Breakout rules.
 
@@ -115,6 +118,7 @@ def analyze_ath_stock(
     - Green candle condition (Close > Open).
     - Breakout close (Close > Prior ATH High).
     - Exhaustion filter (Current candle range <= 2.5x 12-month avg range).
+    - Opposing wick filter (Upper rejection wick <= max_wick_pct).
     - Consolidation duration (A-Class >30m vs B-Class <=30m).
     - Trigger Entry (High + 1%) and 30-Week SMA trailing level.
     """
@@ -137,47 +141,52 @@ def analyze_ath_stock(
     prior_highs = prior_df["high"]
     prior_ath_price = float(prior_highs.max())
     prior_ath_idx = int(prior_highs.idxmax())
+    prior_ath_date = str(m_df.loc[prior_ath_idx, "timestamp"].strftime("%Y-%m"))
 
-    prior_ath_timestamp = prior_df.loc[prior_ath_idx, "timestamp"]
-    if isinstance(prior_ath_timestamp, pd.Timestamp):
-        prior_ath_date = prior_ath_timestamp.strftime("%Y-%m-%d")
-    else:
-        prior_ath_date = str(prior_ath_timestamp)[:10]
-
-    # 3. Current Monthly Candle
+    # 3. Current In-Progress / Latest Monthly Bar
     curr = m_df.iloc[-1]
     curr_open = float(curr["open"])
     curr_high = float(curr["high"])
     curr_low = float(curr["low"])
     curr_close = float(curr["close"])
-    ltp = float(ltp_override if ltp_override is not None else curr_close)
+    ltp = float(ltp_override) if ltp_override is not None else curr_close
 
-    # 4. Breakout & Green Candle Conditions
+    # 4. Core Breakout Conditions
     is_green = curr_close > curr_open
     is_above_prior_ath = curr_close > prior_ath_price
 
-    # 5. Exhaustion Filter Calculation
+    # 5. Exhaustion Filter (Expansion vs 12-Month Rolling Range)
     curr_range_pct = ((curr_high - curr_low) / curr_open) * 100.0 if curr_open > 0 else 0.0
-
-    # 12-Month Average Candle Range of prior bars
-    lookback_12 = min(12, len(prior_df))
-    prior_12_df = prior_df.iloc[-lookback_12:]
-    prior_12_ranges = ((prior_12_df["high"] - prior_12_df["low"]) / prior_12_df["open"]) * 100.0
-    avg_range_12m_pct = (
-        float(prior_12_ranges.mean()) if not prior_12_ranges.empty else curr_range_pct
-    )
+    rolling_12m = m_df.iloc[-13:-1] if len(m_df) >= 13 else prior_df
+    if len(rolling_12m) > 0:
+        hist_ranges = (
+            (rolling_12m["high"] - rolling_12m["low"]) / rolling_12m["open"]
+        ) * 100.0
+        avg_range_12m_pct = float(hist_ranges.mean())
+    else:
+        avg_range_12m_pct = curr_range_pct
 
     range_expansion_ratio = (
         round(curr_range_pct / avg_range_12m_pct, 2) if avg_range_12m_pct > 0 else 1.0
     )
     is_exhaustion_passed = range_expansion_ratio <= max_exhaustion_ratio
 
-    # 6. Consolidation Duration (in Monthly bars)
+    # 6. Opposing Wick Filter (Upper rejection wick check)
+    wick_ok, wick_pct = check_candle_wick(
+        open_price=curr_open,
+        high_price=curr_high,
+        low_price=curr_low,
+        close_price=curr_close,
+        is_bullish_setup=True,
+        max_wick_pct_param=max_wick_pct,
+    )
+
+    # 7. Consolidation Duration (in Monthly bars)
     curr_idx = len(m_df) - 1
     months_in_consolidation = int(curr_idx - prior_ath_idx)
 
-    # 7. Setup Classification
-    is_ath_breakout = bool(is_green and is_above_prior_ath and is_exhaustion_passed)
+    # 8. Setup Classification
+    is_ath_breakout = bool(is_green and is_above_prior_ath and is_exhaustion_passed and wick_ok)
     ath_class: AthClass | None = None
     if is_ath_breakout:
         if months_in_consolidation > 30:

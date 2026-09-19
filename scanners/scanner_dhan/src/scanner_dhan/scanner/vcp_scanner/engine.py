@@ -17,6 +17,7 @@ except ImportError:
 
 from scanner_dhan.indicators.atr import calculate_atr
 from scanner_dhan.indicators.rsi import calculate_rsi_series
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 from scanner_dhan.scanner.vcp_scanner.models import (
     Stage2Metrics,
     VcpPattern,
@@ -382,6 +383,7 @@ def scan_stock_for_vcp(
     max_final_depth_pct: float = 6.5,
     vdu_threshold: float = 0.75,
     min_contractions: int = 2,
+    max_wick_pct: Any = "NA",
 ) -> VcpScanResult:
     """Scan a single stock for Volatility Contraction Pattern (VCP)."""
     try:
@@ -433,6 +435,23 @@ def scan_stock_for_vcp(
 
         # Active setups are either Primed or Active Breakout
         is_ready = pattern.status in (VcpStatus.PRIMED_TIGHT, VcpStatus.BREAKOUT_ACTIVE)
+
+        # Optional opposing wick check on trigger/latest candle
+        last_o = float(df["open"].iloc[-1])
+        last_h = float(df["high"].iloc[-1])
+        last_l = float(df["low"].iloc[-1])
+        last_c = float(df["close"].iloc[-1])
+        wick_ok, wick_pct = check_candle_wick(
+            open_price=last_o,
+            high_price=last_h,
+            low_price=last_l,
+            close_price=last_c,
+            is_bullish_setup=True,
+            max_wick_pct_param=max_wick_pct,
+        )
+        if not wick_ok:
+            is_ready = False
+
         seq_str = " → ".join(f"{d:.1f}%" for d in pattern.depth_sequence_pct)
         support_desc = f"VCP {pattern.contractions_count}T [{seq_str}] • Pivot: ₹{pattern.pivot_level:.1f}"
 

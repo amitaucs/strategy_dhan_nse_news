@@ -15,6 +15,7 @@ from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.ha_st01_scanner.engine import analyze_ha_st01_stock
 from scanner_dhan.scanner.ha_st01_scanner.models import HaSt01ScanResult
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
 from scanner_dhan.universe import get_active_universe
 
@@ -67,6 +68,7 @@ class HaSt01ReversalScanner(BaseScanner):
                 {"value": "1H", "label": "1H (60m Intraday)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="setup_filter",
             label="Reversal Setup Filter",
@@ -119,6 +121,7 @@ class HaSt01ReversalScanner(BaseScanner):
         p = params or {}
         universe_choice = str(p.get("universe", "NIFTY_100"))
         timeframe = str(p.get("timeframe", "1D")).strip().upper()
+        max_wick_pct = p.get("max_wick_pct", "NA")
         setup_filter = str(p.get("setup_filter", "ALL")).upper().strip()
         oversold_threshold = float(p.get("oversold_threshold", 35.0))
         min_prior_red = int(p.get("min_prior_red", 2))
@@ -170,6 +173,7 @@ class HaSt01ReversalScanner(BaseScanner):
                     oversold_threshold=oversold_threshold,
                     min_prior_red_bars=min_prior_red,
                     min_bars_required=30,
+                    max_wick_pct=max_wick_pct,
                 )
 
                 if res is not None:

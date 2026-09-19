@@ -13,6 +13,7 @@ import pandas as pd
 from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.st14_scanner.engine import analyze_st14_stock
 from scanner_dhan.scanner.st14_scanner.models import St14ScanResult, St14Status
 from scanner_dhan.universe import get_active_universe
@@ -83,6 +84,7 @@ class BullishCeIntradayScanner(BaseScanner):
                 {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Small-Caps) 🎯"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="vwap_min_dist_pct",
             label="Min VWAP Distance (%)",
@@ -137,6 +139,7 @@ class BullishCeIntradayScanner(BaseScanner):
         daily_days = int(p.get("daily_history_days", 90))
         hourly_days = int(p.get("hourly_history_days", 20))
         max_workers = int(p.get("max_workers", 4))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         dhan_prov = provider or DhanDataProvider()
         _, symbols, sec_id_map = get_active_universe(universe_name)
@@ -204,6 +207,7 @@ class BullishCeIntradayScanner(BaseScanner):
                     require_rising_vwap=require_rising_vwap,
                     enforce_timing=enforce_timing,
                     ltp_override=live_ltp,
+                    max_wick_pct=max_wick_pct,
                 )
                 return res
             except Exception as exc:
@@ -246,6 +250,13 @@ def main() -> None:
         choices=["ALL_F_AND_O", "NIFTY_100", "NIFTY_50", "NIFTY_500", "NIFTY_MIDCAP_100", "NIFTY_SMALLCAP_100"],
         help="Target stock universe (default: ALL_F_AND_O)",
     )
+    parser.add_argument(
+        "--max-wick-pct",
+        type=str,
+        default="NA",
+        choices=["NA", "20", "30", "40", "50"],
+        help="Max opposing rejection wick % (default: NA)",
+    )
     parser.add_argument("--vwap-min", type=float, default=-1.0, help="Min VWAP Distance % (default: -1.0)")
     parser.add_argument("--vwap-max", type=float, default=5.0, help="Max VWAP Distance % (default: 5.0)")
     parser.add_argument("--bypass-timing", action="store_true", help="Bypass 10:15 AM IST timing cutoff")
@@ -257,6 +268,7 @@ def main() -> None:
     report = scanner.run(
         params={
             "universe": args.universe,
+            "max_wick_pct": args.max_wick_pct,
             "vwap_min_dist_pct": args.vwap_min,
             "vwap_max_dist_pct": args.vwap_max,
             "enforce_timing": not args.bypass_timing,

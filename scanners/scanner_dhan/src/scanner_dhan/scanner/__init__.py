@@ -102,6 +102,11 @@ from scanner_dhan.scanner.vcp_scanner import (
     format_vcp_dataframe,
     scan_stock_for_vcp,
 )
+from scanner_dhan.scanner.wick_filter import (
+    calculate_wick_percentages,
+    check_candle_wick,
+    get_wick_parameter,
+)
 
 __all__ = [
     "BaseScanner",
@@ -109,6 +114,9 @@ __all__ = [
     "ScanReport",
     "ScannerRegistry",
     "register_scanner",
+    "get_wick_parameter",
+    "check_candle_wick",
+    "calculate_wick_percentages",
     "Nifty50Scanner",
     "Nifty50SupportScanner",
     "Nifty50ResistanceScanner",

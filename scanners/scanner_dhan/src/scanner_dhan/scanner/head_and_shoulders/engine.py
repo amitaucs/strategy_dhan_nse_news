@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,7 @@ except ImportError:
         return (np.array(results, dtype=int),)
 
 from scanner_dhan.indicators.rsi import calculate_rsi
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 from scanner_dhan.scanner.head_and_shoulders.models import (
     ConfirmationStatus,
     ExtremaPoint,
@@ -419,6 +420,7 @@ def scan_stock_for_head_and_shoulders(
     shoulder_tolerance: Optional[float] = None,
     max_pattern_bars: int = 120,
     max_confirmation_bars: int = 30,
+    max_wick_pct: Any = "NA",
 ) -> HeadAndShouldersScanResult:
     """Analyze a single stock dataframe and return a HeadAndShouldersScanResult."""
     tol = shoulder_tolerance if shoulder_tolerance is not None else symmetry_tolerance
@@ -458,8 +460,8 @@ def scan_stock_for_head_and_shoulders(
             symbol=symbol,
             timeframe=timeframe,
             extrema=extrema,
-            order=order,
             symmetry_tolerance=tol,
+            shoulder_tolerance=tol,
             max_pattern_bars=max_pattern_bars,
             max_confirmation_bars=max_confirmation_bars,
         )
@@ -471,8 +473,8 @@ def scan_stock_for_head_and_shoulders(
             symbol=symbol,
             timeframe=timeframe,
             extrema=extrema,
-            order=order,
             symmetry_tolerance=tol,
+            shoulder_tolerance=tol,
             max_pattern_bars=max_pattern_bars,
             max_confirmation_bars=max_confirmation_bars,
         )
@@ -507,13 +509,35 @@ def scan_stock_for_head_and_shoulders(
     )
     selected_pattern = all_patterns[0]
 
+    # Opposing wick check on trigger / latest candle
+    is_bullish = selected_pattern.pattern_type == PatternType.INVERSE_HS
+    open_series = _get_column(df, "open")
+    high_series = _get_column(df, "high")
+    low_series = _get_column(df, "low")
+
+    last_o = float(open_series.iloc[-1]) if not open_series.empty else ltp
+    last_h = float(high_series.iloc[-1]) if not high_series.empty else ltp
+    last_l = float(low_series.iloc[-1]) if not low_series.empty else ltp
+    last_c = ltp
+
+    wick_ok, _ = check_candle_wick(
+        open_price=last_o,
+        high_price=last_h,
+        low_price=last_l,
+        close_price=last_c,
+        is_bullish_setup=is_bullish,
+        max_wick_pct_param=max_wick_pct,
+    )
+
+    has_pattern = bool(wick_ok)
+
     return HeadAndShouldersScanResult(
         symbol=symbol,
         security_id=security_id,
         ltp=ltp,
         timeframe=timeframe,
         scanned_at=now,
-        has_pattern=True,
+        has_pattern=has_pattern,
         pattern=selected_pattern,
         rsi=latest_rsi,
         volume=vol,

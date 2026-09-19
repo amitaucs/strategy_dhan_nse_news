@@ -317,9 +317,9 @@ class TestFvgFibonacciScanner(unittest.TestCase):
     def test_fvg_fibonacci_scanner_metadata(self) -> None:
         """Verify scanner metadata registration."""
         scanner = FvgFibonacciScanner()
-        self.assertEqual(scanner.id, "fvg_fib_0618")
-        self.assertEqual(scanner.name, "FVG + 0.618 Fib Confluence Scanner")
-        self.assertEqual(scanner.category, "Smart Money Concepts")
+        self.assertEqual(scanner.id, "fvg_0618_fibonacci")
+        self.assertEqual(scanner.name, "FVG + 0.618 Fibonacci Pullback")
+        self.assertIn("Smart Money", scanner.category)
 
         param_names = [p.name for p in scanner.parameters]
         self.assertIn("universe", param_names)
@@ -420,10 +420,10 @@ class TestFvgFibonacciScanner(unittest.TestCase):
         self.assertFalse(df_table.empty)
         self.assertIn("Symbol", df_table.columns)
         self.assertIn("0.618 Fib (₹)", df_table.columns)
-        self.assertIn("FVG Range (₹)", df_table.columns)
-        self.assertIn("50% CE (₹)", df_table.columns)
+        self.assertIn("FVG Zone", df_table.columns)
+        self.assertIn("0.705 OTE (₹)", df_table.columns)
         self.assertEqual(df_table.iloc[0]["Symbol"], "INFY")
-        self.assertIn("Bullish FVG", df_table.iloc[0]["Setup"])
+        self.assertIn("BULLISH_FVG", df_table.iloc[0]["Setup"])
 
 
 if __name__ == "__main__":

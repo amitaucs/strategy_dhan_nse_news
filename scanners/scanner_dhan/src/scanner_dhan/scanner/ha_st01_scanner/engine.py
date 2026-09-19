@@ -10,6 +10,7 @@ import pandas as pd
 from scanner_dhan.indicators.heikin_ashi import calculate_heikin_ashi
 from scanner_dhan.indicators.rsi import calculate_rsi_series
 from scanner_dhan.scanner.ha_st01_scanner.models import HaSt01ScanResult, HaSt01SetupType
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ def analyze_ha_st01_stock(
     oversold_threshold: float = 35.0,
     min_prior_red_bars: int = 2,
     min_bars_required: int = 40,
+    max_wick_pct: Any = "NA",
 ) -> HaSt01ScanResult | None:
     """Analyze a stock against HA_ST01 Heikin Ashi + RSI Reversal rules.
 
@@ -102,6 +104,7 @@ def analyze_ha_st01_stock(
     - Momentum Exhaustion / Reversal condition:
       * Condition A: RSI(14) <= oversold_threshold (35) in last 3 bars and turning up.
       * Condition B: Regular Bullish Divergence over prior 15-30 bars.
+    - Opposing Wick Rejection Filter (Upper rejection wick <= max_wick_pct).
     - Trade Levels:
       * Entry Price = Breakout above current bar High (High * 1.002)
       * Stop-Loss = Lowest Low of last 3-5 bars
@@ -163,8 +166,18 @@ def analyze_ha_st01_stock(
         min_pivot_distance=4,
     )
 
+    # Opposing wick check (Upper wick for bullish reversal)
+    is_wick_passed, _ = check_candle_wick(
+        open_price=float(curr_row["open"]),
+        high_price=float(curr_row["high"]),
+        low_price=float(curr_row["low"]),
+        close_price=float(curr_row["close"]),
+        is_bullish_setup=True,
+        max_wick_pct_param=max_wick_pct,
+    )
+
     # 5. Overall Reversal Qualification
-    is_reversal_setup = bool(is_color_flip and (is_oversold_recovery or has_bullish_div))
+    is_reversal_setup = bool(is_color_flip and (is_oversold_recovery or has_bullish_div) and is_wick_passed)
 
     # Setup Type Classification
     setup_type: HaSt01SetupType | None = None

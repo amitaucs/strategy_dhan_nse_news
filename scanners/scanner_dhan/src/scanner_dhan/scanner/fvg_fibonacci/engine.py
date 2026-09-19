@@ -13,6 +13,7 @@ from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.indicators.atr import calculate_atr, calculate_volume_sma
 from scanner_dhan.indicators.candlesticks import identify_candlestick_patterns
 from scanner_dhan.indicators.rsi import calculate_rsi, calculate_rsi_series
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 from scanner_dhan.scanner.fvg_fibonacci.models import (
     FairValueGap,
     FibonacciRetracement,
@@ -616,6 +617,7 @@ def scan_stock_for_fvg_fib(
     body_atr_mult: float = 1.1,
     vol_mult: float = 1.0,
     direction_filter: str = "ALL",
+    max_wick_pct: Any = "NA",
 ) -> FvgFibScanResult:
     """Scan a single stock for Fair Value Gap and 0.618 Fibonacci Retracement Confluence."""
     try:
@@ -668,6 +670,24 @@ def scan_stock_for_fvg_fib(
         # Prioritize active pullback setups over watchlist setups
         pullback_setups = [s for s in setups if s.is_at_confluence]
         best_setup = pullback_setups[0] if pullback_setups else setups[0]
+
+        # Apply directional rejection wick filter on trigger candle
+        is_bullish = best_setup.fvg.fvg_type == FvgType.BULLISH_FVG
+        last_o = float(df["open"].iloc[-1])
+        last_h = float(df["high"].iloc[-1])
+        last_l = float(df["low"].iloc[-1])
+        last_c = float(df["close"].iloc[-1])
+        wick_ok, _ = check_candle_wick(
+            open_price=last_o,
+            high_price=last_h,
+            low_price=last_l,
+            close_price=last_c,
+            is_bullish_setup=is_bullish,
+            max_wick_pct_param=max_wick_pct,
+        )
+
+        is_at_support = bool(best_setup.is_at_confluence and wick_ok)
+        best_setup.is_at_confluence = is_at_support
 
         return FvgFibScanResult(
             symbol=symbol,

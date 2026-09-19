@@ -260,7 +260,7 @@ def test_scanner_registration_and_parameters() -> None:
     scanner = HeadAndShouldersScanner()
     assert scanner.id == "head_and_shoulders"
     assert "Head" in scanner.name and "Shoulders" in scanner.name
-    assert "Patterns" in scanner.category
+    assert "Pattern" in scanner.category
     
     param_names = [p.name for p in scanner.parameters]
     assert "universe" in param_names

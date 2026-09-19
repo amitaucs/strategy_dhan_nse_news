@@ -17,6 +17,7 @@ from scanner_dhan.indicators import (
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.st15_largecap.models import HeikinAshiEmaScanResult
 from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import check_candle_wick, get_wick_parameter
 from scanner_dhan.universe import get_active_universe
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                 {"value": "15M", "label": "15 Minutes"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="target_ema",
             label="Target EMA Pullback",
@@ -140,6 +142,7 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
         threshold_pct = float(p.get("threshold_pct", 1.5))
         st_period = int(p.get("supertrend_period", 10))
         st_mult = float(p.get("supertrend_multiplier", 3.0))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         prov = provider or DhanDataProvider()
         universe_name, symbols, sec_map = get_active_universe(universe_choice)
@@ -260,11 +263,22 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
             )
             is_near_ema = is_holding_ema and is_pullback_near
 
+            # Opposing upper rejection wick check (Bullish continuation)
+            is_wick_passed, _ = check_candle_wick(
+                open_price=float(df_2h["open"].iloc[-1]),
+                high_price=float(df_2h["high"].iloc[-1]),
+                low_price=float(df_2h["low"].iloc[-1]),
+                close_price=float(df_2h["close"].iloc[-1]),
+                is_bullish_setup=True,
+                max_wick_pct_param=max_wick_pct,
+            )
+
             # Strategy Match Condition:
             # 1. Current candle MUST BE CLOSED GREEN (ha_close > ha_open)
             # 2. Supertrend is Green (Bullish) on 2H Heikin Ashi
             # 3. Pullback near 20, 50, or 200 EMA (within threshold %)
-            is_pullback = bool(is_ha_green and is_st_green and is_near_ema)
+            # 4. Passes maximum opposing wick filter
+            is_pullback = bool(is_ha_green and is_st_green and is_near_ema and is_wick_passed)
             is_matched = bool(is_pullback and (not first_candle_only or is_first_green))
 
             rsi = calculate_rsi(df_ha["close"], period=14)

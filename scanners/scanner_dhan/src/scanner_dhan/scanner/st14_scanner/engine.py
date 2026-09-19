@@ -16,6 +16,7 @@ from scanner_dhan.indicators.vwap import (
     calculate_vwap_slope_and_angle,
 )
 from scanner_dhan.scanner.st14_scanner.models import St14ScanResult, St14Status
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ def evaluate_bullish_conditions(
     require_rising_vwap: bool = True,
     enforce_timing: bool = True,
     current_time_ist: datetime | None = None,
+    max_wick_pct: Any = "NA",
 ) -> dict[str, Any]:
     """Core vectorized evaluation of ST-14 Bullish CE setup rules on Daily and Hourly data.
 
@@ -161,7 +163,9 @@ def evaluate_bullish_conditions(
     )
     last_hourly = hourly_ind.iloc[-1]
     hourly_close = float(last_hourly["close"])
+    hourly_open = float(last_hourly["open"]) if "open" in last_hourly else hourly_close
     hourly_high = float(last_hourly["high"]) if "high" in last_hourly else hourly_close
+    hourly_low = float(last_hourly["low"]) if "low" in last_hourly else hourly_close
     hourly_ema20 = float(last_hourly["ema20"]) if pd.notna(last_hourly.get("ema20")) else 0.0
     five_hour_hurdle = float(last_hourly["prior_window_high"]) if pd.notna(last_hourly.get("prior_window_high")) else 0.0
     vwap_val = float(last_hourly["vwap"]) if pd.notna(last_hourly.get("vwap")) else hourly_close
@@ -187,12 +191,22 @@ def evaluate_bullish_conditions(
     else:
         timing_valid, timing_msg = True, "Timing filter bypassed"
 
+    # 5. Opposing Upper Rejection Wick Check on Trigger Candle
+    wick_ok, _ = check_candle_wick(
+        open_price=hourly_open,
+        high_price=hourly_high,
+        low_price=hourly_low,
+        close_price=hourly_close,
+        is_bullish_setup=True,
+        max_wick_pct_param=max_wick_pct,
+    )
+
     # Distances
     dist_to_5d_high_pct = round(((daily_close - five_day_hurdle) / five_day_hurdle) * 100.0, 2) if five_day_hurdle > 0 else 0.0
     dist_to_5h_high_pct = round(((hourly_close - five_hour_hurdle) / five_hour_hurdle) * 100.0, 2) if five_hour_hurdle > 0 else 0.0
 
     # Setup Status Determination
-    if is_daily_bullish and is_hourly_bullish and is_vwap_valid and timing_valid:
+    if is_daily_bullish and is_hourly_bullish and is_vwap_valid and timing_valid and wick_ok:
         status = St14Status.QUALIFIED
     elif is_daily_bullish and (h_close_above_ema or is_vwap_near or dist_to_5h_high_pct >= -1.5):
         status = St14Status.WATCHLIST
@@ -241,6 +255,7 @@ def analyze_st14_stock(
     require_rising_vwap: bool = True,
     enforce_timing: bool = True,
     current_time_ist: datetime | None = None,
+    max_wick_pct: Any = "NA",
 ) -> St14ScanResult | None:
     """Evaluate a single stock against ST-14 Bullish CE Intraday rules and return St14ScanResult."""
     eval_res = evaluate_bullish_conditions(
@@ -253,6 +268,7 @@ def analyze_st14_stock(
         require_rising_vwap=require_rising_vwap,
         enforce_timing=enforce_timing,
         current_time_ist=current_time_ist,
+        max_wick_pct=max_wick_pct,
     )
 
     if not eval_res["is_valid"]:

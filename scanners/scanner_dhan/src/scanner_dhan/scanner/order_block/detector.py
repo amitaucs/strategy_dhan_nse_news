@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 import pandas as pd
 
 from scanner_dhan.indicators.atr import calculate_atr, calculate_volume_sma
@@ -11,6 +12,7 @@ from scanner_dhan.scanner.order_block.models import (
     OrderBlockScanResult,
     OrderBlockType,
 )
+from scanner_dhan.scanner.wick_filter import check_candle_wick
 
 __all__ = ["detect_order_blocks", "analyze_stock_order_block"]
 
@@ -134,6 +136,7 @@ def analyze_stock_order_block(
     volume_multiplier: float = 1.5,
     atr_period: int = 14,
     volume_sma_period: int = 20,
+    max_wick_pct: Any = "NA",
 ) -> OrderBlockScanResult:
     """Analyze a single stock for Order Blocks and current price retest status."""
     if df.empty or len(df) < 25:
@@ -176,13 +179,13 @@ def analyze_stock_order_block(
 
     is_fresh_impulse = False
     if latest_atr > 0 and latest_vol_sma > 0:
-        if (latest_body / latest_atr >= impulse_multiplier) and (
-            latest_vol / latest_vol_sma >= volume_multiplier
-        ):
-            is_fresh_impulse = True
+        is_fresh_impulse = (
+            latest_body >= impulse_multiplier * latest_atr
+            and latest_vol >= volume_multiplier * latest_vol_sma
+        )
 
     if not order_blocks:
-        candle_signal = "⚡ Fresh Impulse Expansion" if is_fresh_impulse else "No Active OB"
+        candle_signal = "⚡ Fresh Impulse (No Historical OB)" if is_fresh_impulse else "No Order Blocks"
         return OrderBlockScanResult(
             symbol=symbol,
             security_id=security_id,
@@ -223,7 +226,24 @@ def analyze_stock_order_block(
     best_ob, best_dist = candidates[0]
 
     # Proximity check: is price inside or within threshold% of zone
-    is_at_ob = abs(best_dist) <= threshold_pct or is_fresh_impulse
+    is_at_ob_raw = abs(best_dist) <= threshold_pct or is_fresh_impulse
+
+    # Opposing wick filter on latest candle
+    is_bullish = best_ob.block_type == OrderBlockType.BULLISH_DEMAND
+    last_o = float(df["open"].iloc[-1])
+    last_h = float(df["high"].iloc[-1])
+    last_l = float(df["low"].iloc[-1])
+    last_c = float(df["close"].iloc[-1])
+    wick_ok, _ = check_candle_wick(
+        open_price=last_o,
+        high_price=last_h,
+        low_price=last_l,
+        close_price=last_c,
+        is_bullish_setup=is_bullish,
+        max_wick_pct_param=max_wick_pct,
+    )
+
+    is_at_ob = is_at_ob_raw and wick_ok
 
     # Signal description
     if is_fresh_impulse and best_ob.block_type == OrderBlockType.BULLISH_DEMAND:

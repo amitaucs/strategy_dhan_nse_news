@@ -12,13 +12,14 @@ import pandas as pd
 
 from scanner_dhan.data.dhan_provider import DhanDataProvider
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
+from scanner_dhan.scanner.registry import register_scanner
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.scanner.fvg_fibonacci.engine import scan_stock_for_fvg_fib
 from scanner_dhan.scanner.fvg_fibonacci.models import (
     FvgFibScanResult,
     FvgStatus,
     FvgType,
 )
-from scanner_dhan.scanner.registry import register_scanner
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
 from scanner_dhan.universe import get_active_universe
 
@@ -31,89 +32,68 @@ def format_fvg_fib_dataframe(
     results: List[FvgFibScanResult],
     only_matched: bool = False,
 ) -> pd.DataFrame:
-    """Format scan results into a clean presentation DataFrame."""
+    """Format FVG + 0.618 Fib scan results into a presentation DataFrame."""
     columns = [
         "Symbol",
         "LTP (₹)",
         "Setup",
-        "Status",
+        "FVG Zone",
         "0.618 Fib (₹)",
-        "FVG Range (₹)",
-        "50% CE (₹)",
-        "0.618 Dist (%)",
-        "Entry (₹)",
+        "0.705 OTE (₹)",
         "Stop Loss (₹)",
         "Target 1 (₹)",
         "Target 2 (₹)",
         "R:R",
+        "Distance (%)",
+        "Signal",
         "RSI (14)",
     ]
+
     rows = []
     for r in results:
-        s = r.setup
-        if not s:
-            if not only_matched:
-                rows.append(
-                    {
-                        "Symbol": r.symbol,
-                        "LTP (₹)": r.ltp,
-                        "Setup": "-",
-                        "Status": "NO_SETUP",
-                        "0.618 Fib (₹)": "-",
-                        "FVG Range (₹)": "-",
-                        "50% CE (₹)": "-",
-                        "0.618 Dist (%)": "-",
-                        "Entry (₹)": "-",
-                        "Stop Loss (₹)": "-",
-                        "Target 1 (₹)": "-",
-                        "Target 2 (₹)": "-",
-                        "R:R": "-",
-                        "RSI (14)": f"{r.rsi:.1f}" if r.rsi is not None else "-",
-                    }
-                )
+        if not r.has_setup:
+            continue
+        if only_matched and not r.is_at_support:
             continue
 
-        if only_matched and not s.is_at_confluence:
+        setup = r.setup
+        if not setup:
             continue
-
-        setup_label = (
-            "⚡ Bullish FVG + 0.618" if s.fvg.fvg_type == FvgType.BULLISH_FVG else "⚡ Bearish FVG + 0.618"
-        )
-        status_label = "✅ PULLBACK READY" if s.is_at_confluence else "⏳ WATCHLIST"
 
         rows.append(
             {
                 "Symbol": r.symbol,
-                "LTP (₹)": r.ltp,
-                "Setup": setup_label,
-                "Status": status_label,
-                "0.618 Fib (₹)": s.fib.fib_618,
-                "FVG Range (₹)": f"₹{s.fvg.bottom_price:.1f} - ₹{s.fvg.top_price:.1f}",
-                "50% CE (₹)": s.fvg.ce_price,
-                "0.618 Dist (%)": f"{s.distance_pct:+.2f}%",
-                "Entry (₹)": s.entry_price,
-                "Stop Loss (₹)": s.stop_loss,
-                "Target 1 (₹)": s.target_1,
-                "Target 2 (₹)": s.target_2,
-                "R:R": f"1:{s.risk_reward_ratio:.1f}" if s.risk_reward_ratio > 0 else "-",
+                "LTP (₹)": f"₹{r.ltp:,.2f}",
+                "Setup": setup.fvg.fvg_type.value,
+                "FVG Zone": setup.fvg_overlap_desc,
+                "0.618 Fib (₹)": f"₹{setup.fib.fib_618:,.2f}",
+                "0.705 OTE (₹)": f"₹{setup.fib.fib_705:,.2f}",
+                "Stop Loss (₹)": f"₹{setup.stop_loss:,.2f}",
+                "Target 1 (₹)": f"₹{setup.target_1:,.2f}",
+                "Target 2 (₹)": f"₹{setup.target_2:,.2f}",
+                "R:R": f"1:{setup.risk_reward_ratio:.1f}",
+                "Distance (%)": f"{setup.distance_pct:+.2f}%",
+                "Signal": r.candle_signal,
                 "RSI (14)": f"{r.rsi:.1f}" if r.rsi is not None else "-",
             }
         )
+
     return pd.DataFrame(rows, columns=columns)
 
 
 @register_scanner
 class FvgFibonacciScanner(BaseScanner):
-    """Smart Money Concepts FVG + 0.618 Fibonacci Retracement Confluence Scanner."""
+    """Scans for Fair Value Gaps aligned with the 0.618 Golden Pocket & 0.705 OTE."""
 
-    id = "fvg_fib_0618"
-    name = "FVG + 0.618 Fib Confluence Scanner"
+    id = "fvg_0618_fibonacci"
+    name = "FVG + 0.618 Fibonacci Pullback"
     description = (
-        "Detects Smart Money Concept (SMC) Fair Value Gaps (FVG) aligned with 0.618 Fibonacci "
-        "Retracement levels for high-probability pullback entries."
+        "Screens for institutional displacement Fair Value Gaps (FVG) that align "
+        "with 0.618 Golden Ratio & 0.705 OTE Fibonacci retracements with multi-candle "
+        "confirmation and strict invalidation."
     )
-    category = "Smart Money Concepts"
-    icon = "zap"
+    category = "Smart Money / ICT"
+    icon = "layers"
     parameters = [
         ScannerParameter(
             name="universe",
@@ -154,6 +134,7 @@ class FvgFibonacciScanner(BaseScanner):
                 {"value": "BEARISH_ONLY", "label": "🔴 Bearish Only (Short Pullbacks)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="confluence_tolerance_pct",
             label="0.618 Fib Distance Tolerance (%)",
@@ -192,6 +173,7 @@ class FvgFibonacciScanner(BaseScanner):
         confluence_tolerance_pct = float(params.get("confluence_tolerance_pct", 1.5))
         min_gap_pct = float(params.get("min_gap_pct", 0.2))
         direction_filter = params.get("direction", "ALL")
+        max_wick_pct = params.get("max_wick_pct", "NA")
 
         return scan_stock_for_fvg_fib(
             provider=provider,
@@ -202,6 +184,7 @@ class FvgFibonacciScanner(BaseScanner):
             min_gap_pct=min_gap_pct,
             confluence_tolerance_pct=confluence_tolerance_pct,
             direction_filter=direction_filter,
+            max_wick_pct=max_wick_pct,
         )
 
     def run(

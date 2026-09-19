@@ -15,6 +15,7 @@ from scanner_dhan.scanner.registry import register_scanner
 from scanner_dhan.scanner.st07_scanner.engine import analyze_st07_stock
 from scanner_dhan.scanner.st07_scanner.models import St07ScanResult
 from scanner_dhan.scanner.st07_scanner.scrip_master import get_nse_equity_symbols_map
+from scanner_dhan.scanner.wick_filter import get_wick_parameter
 from scanner_dhan.universe import get_active_universe
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class MonthlyHeikinAshi89EmaScanner(BaseScanner):
                 {"value": "ALL_F_AND_O", "label": "All F&O Stocks (215 Stocks)"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="target_category",
             label="Scan Category Filter",
@@ -104,6 +106,7 @@ class MonthlyHeikinAshi89EmaScanner(BaseScanner):
         target_category = str(p.get("target_category", "ALL")).upper().strip()
         min_monthly_bars = int(p.get("min_monthly_bars", 90))
         history_days = int(p.get("history_days", 4500))
+        max_wick_pct = p.get("max_wick_pct", "NA")
 
         # 1. Resolve Universe & Security IDs
         univ_name, symbols, sec_id_map = get_active_universe(universe_choice)
@@ -149,6 +152,7 @@ class MonthlyHeikinAshi89EmaScanner(BaseScanner):
                     is_already_monthly=False,
                     min_monthly_bars=min_monthly_bars,
                     ltp_override=ltp_override,
+                    max_wick_pct=max_wick_pct,
                 )
 
                 if res is not None:

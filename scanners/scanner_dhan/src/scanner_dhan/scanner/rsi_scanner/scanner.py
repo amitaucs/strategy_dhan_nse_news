@@ -13,6 +13,7 @@ from scanner_dhan.indicators import calculate_rsi, identify_candlestick_patterns
 from scanner_dhan.scanner.base import BaseScanner, ScannerParameter, ScanReport
 from scanner_dhan.scanner.registry import register_scanner
 from scanner_dhan.scanner.rsi_scanner.models import RsiScanResult, RsiZone
+from scanner_dhan.scanner.wick_filter import check_candle_wick, get_wick_parameter
 from scanner_dhan.universe import get_active_universe
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class RsiExtremesScanner(BaseScanner):
                 {"value": "15M", "label": "15 Minutes"},
             ],
         ),
+        get_wick_parameter(default="NA"),
         ScannerParameter(
             name="oversold_threshold",
             label="Oversold RSI",
@@ -122,6 +124,7 @@ class RsiExtremesScanner(BaseScanner):
         scan_mode = str(p.get("scan_mode", "EXTREMES_ONLY")).upper().strip()
         universe_choice = str(p.get("universe", "NIFTY_50"))
         timeframe = str(p.get("timeframe", "1D")).upper()
+        max_wick_pct = p.get("max_wick_pct", "NA")
         prov = provider or DhanDataProvider()
 
         universe_name, symbols, sec_map = get_active_universe(universe_choice)
@@ -170,14 +173,31 @@ class RsiExtremesScanner(BaseScanner):
             # Match & Zone Evaluation
             is_matched = False
             zone = RsiZone.NEUTRAL
+            last_open = float(df["open"].iloc[-1])
+            last_high = float(df["high"].iloc[-1])
+            last_low = float(df["low"].iloc[-1])
+            last_close = float(df["close"].iloc[-1])
+
             if rsi_val is not None:
                 if rsi_val <= oversold:
                     zone = RsiZone.OVERSOLD
-                    if scan_mode in ("EXTREMES_ONLY", "OVERSOLD_ONLY", "ALL_STOCKS"):
+                    # Bullish bounce: opposing wick is upper rejection wick
+                    is_wick_ok, _ = check_candle_wick(
+                        last_open, last_high, last_low, last_close,
+                        is_bullish_setup=True,
+                        max_wick_pct_param=max_wick_pct,
+                    )
+                    if scan_mode in ("EXTREMES_ONLY", "OVERSOLD_ONLY", "ALL_STOCKS") and is_wick_ok:
                         is_matched = True
                 elif rsi_val >= overbought:
                     zone = RsiZone.OVERBOUGHT
-                    if scan_mode in ("EXTREMES_ONLY", "OVERBOUGHT_ONLY", "ALL_STOCKS"):
+                    # Bearish rejection: opposing wick is lower rejection wick
+                    is_wick_ok, _ = check_candle_wick(
+                        last_open, last_high, last_low, last_close,
+                        is_bullish_setup=False,
+                        max_wick_pct_param=max_wick_pct,
+                    )
+                    if scan_mode in ("EXTREMES_ONLY", "OVERBOUGHT_ONLY", "ALL_STOCKS") and is_wick_ok:
                         is_matched = True
 
 

@@ -182,6 +182,11 @@ class HeadAndShouldersScanResult:
         """Alias for BaseScanner report matching."""
         return self.has_pattern and self.pattern is not None
 
+    @property
+    def candle_signal(self) -> str:
+        """Alias for UI card and table rendering."""
+        return self.signal_desc or ("Pattern Confirmed" if self.has_pattern else "No Pattern")
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
