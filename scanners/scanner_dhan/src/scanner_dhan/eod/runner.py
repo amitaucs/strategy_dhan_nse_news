@@ -58,86 +58,190 @@ def _serialize_item(item: Any) -> dict[str, Any]:
     return {"symbol": str(sym)} if sym else {"raw": str(item)}
 
 
+EOD_TIGHT_PARAMS_MAP: dict[str, dict[str, Any]] = {
+    "nifty50_support": {
+        "threshold_pct": 0.5,
+        "target_level": "ALL",
+    },
+    "nifty50_resistance": {
+        "threshold_pct": 0.5,
+        "target_level": "ALL",
+    },
+    "heikin_ashi_ema_pullback": {
+        "threshold_pct": 0.75,
+        "first_candle_only": "yes",
+    },
+    "ha_ema_pullback": {
+        "threshold_pct": 0.75,
+        "first_candle_only": "yes",
+    },
+    "order_block": {
+        "impulse_multiplier": 1.8,
+        "volume_multiplier": 1.5,
+        "block_type": "BULLISH",
+    },
+    "vcp_contraction": {
+        "max_final_depth_pct": 5.0,
+        "vdu_threshold": 0.65,
+    },
+    "ha_st01_rsi_reversal": {
+        "oversold_threshold": 30.0,
+        "min_prior_red": 3,
+    },
+    "ha_st01_reversal": {
+        "oversold_threshold": 30.0,
+        "min_prior_red": 3,
+    },
+    "nifty50_rsi": {
+        "oversold_threshold": 30.0,
+        "overbought_threshold": 70.0,
+    },
+    "monthly_ath_breakout": {
+        "ath_proximity_pct": 1.5,
+    },
+    "st14_bullish_ce": {
+        "volume_multiplier": 1.3,
+    },
+}
+
+CORE_SCANNER_IDS = {
+    "vcp_contraction",
+    "order_block",
+    "monthly_ath_breakout",
+    "ha_st01_rsi_reversal",
+    "ha_st01_reversal",
+    "heikin_ashi_ema_pullback",
+    "ha_ema_pullback",
+    "st07_monthly_ha_89ema",
+    "st14_bullish_ce",
+    "fvg_fibonacci",
+    "head_and_shoulders",
+}
+
+
 def is_scanner_item_matched(item: Any, scanner_id: str) -> bool:
-    """Determine if a scanner result item is a valid triggered/matched setup."""
+    """Determine if a scanner result item is a strictly valid triggered/matched setup."""
     if item is None:
         return False
 
-    # 1. Direct explicit boolean match flags
+    sid = scanner_id.lower()
+
+    # 1. Support Scanner (strict support confirmation)
+    if "support" in sid and "resistance" not in sid:
+        is_supp = _extract_val(item, "is_at_support")
+        if is_supp is True or str(is_supp).lower() in ("true", "1"):
+            sig = str(_extract_val(item, "candle_signal", default="") or "").strip()
+            # Only count if genuine bounce/reaction candle is present
+            return bool(sig and sig.lower() not in ("none", "no signal", "n/a"))
+        return False
+
+    # 2. Resistance Scanner (strict resistance confirmation)
+    if "resistance" in sid:
+        is_res = _extract_val(item, "is_at_support", "is_at_resistance")
+        if is_res is True or str(is_res).lower() in ("true", "1"):
+            sig = str(_extract_val(item, "candle_signal", default="") or "").strip()
+            return bool(sig and sig.lower() not in ("none", "no signal", "n/a"))
+        return False
+
+    # 3. VCP Contraction (tight base or breakout active)
+    if "vcp" in sid:
+        setup_obj = _extract_val(item, "setup")
+        if isinstance(setup_obj, dict):
+            stat = str(setup_obj.get("status", "")).upper()
+            c_cnt = int(setup_obj.get("contractions_count", 0) or 0)
+            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED") or c_cnt >= 3:
+                return True
+        elif setup_obj is not None:
+            stat = str(getattr(setup_obj, "status", "")).upper()
+            c_cnt = int(getattr(setup_obj, "contractions_count", 0) or 0)
+            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED") or c_cnt >= 3:
+                return True
+        stat_item = str(_extract_val(item, "status", default="") or "").upper()
+        return stat_item in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED")
+
+    # 4. HA ST-01 Reversal (deep oversold turn)
+    if "ha_st01" in sid or "st01" in sid:
+        is_rev = _extract_val(item, "is_reversal_setup")
+        if is_rev is True or str(is_rev).lower() in ("true", "1"):
+            stat = str(_extract_val(item, "status", default="") or "").upper()
+            return stat not in ("NO_SETUP", "NONE", "")
+        return False
+
+    # 5. ST-14 Bullish CE (active 5H breakout)
+    if "st14" in sid or "bullish_ce" in sid:
+        is_m = _extract_val(item, "is_matched")
+        stat = str(_extract_val(item, "status", default="") or "").upper()
+        return (is_m is True or str(is_m).lower() in ("true", "1")) and stat != "NO_SETUP"
+
+    # 6. ST-15 HA EMA Pullback (active pullback touch/turn)
+    if "pullback" in sid or "st15" in sid:
+        is_pb = _extract_val(item, "is_pullback", "is_matched", "is_first_green")
+        if is_pb is True or str(is_pb).lower() in ("true", "1"):
+            return True
+        stat = str(_extract_val(item, "status", default="") or "").upper()
+        return stat in ("MATCHED", "PULLBACK", "PULLBACK_AT_20", "PULLBACK_AT_50", "PULLBACK_AT_200", "QUALIFIED")
+
+    # 7. Institutional Order Block (demand reaction)
+    if "order_block" in sid or "block" in sid:
+        is_ob = _extract_val(item, "is_at_order_block", "is_matched")
+        if is_ob is True or str(is_ob).lower() in ("true", "1"):
+            return True
+        stat = str(_extract_val(item, "status", default="") or "").upper()
+        return stat in ("MATCHED", "TRIGGERED", "BULLISH_DEMAND", "DEMAND")
+
+    # 8. Monthly ATH Breakout (A-Class/B-Class tight breakout)
+    if "ath" in sid or "st08" in sid:
+        is_ath = _extract_val(item, "is_ath_breakout", "is_breakout", "is_matched")
+        ath_cls = str(_extract_val(item, "ath_class", default="") or "").upper()
+        if (is_ath is True or str(is_ath).lower() in ("true", "1")) or ("A_CLASS" in ath_cls or "B_CLASS" in ath_cls):
+            return True
+        return False
+
+    # 9. Head & Shoulders Pattern
+    if "head" in sid or "hs" in sid:
+        has_pat = _extract_val(item, "has_pattern", "is_matched")
+        stat = str(_extract_val(item, "status", "pattern_status", default="") or "").upper()
+        return (has_pat is True or str(has_pat).lower() in ("true", "1")) and stat in ("CONFIRMED", "MATCHED", "TRIGGERED")
+
+    # 10. RSI Extremes
+    if "rsi" in sid:
+        stat = str(_extract_val(item, "status", default="") or "").upper()
+        is_m = _extract_val(item, "is_matched")
+        return (is_m is True or str(is_m).lower() in ("true", "1")) or stat in ("OVERSOLD", "OVERBOUGHT", "REVERSAL", "MATCHED")
+
+    # 11. ST-07 Monthly HA 89 EMA
+    if "st07" in sid or "89ema" in sid:
+        is_cross = _extract_val(item, "is_fresh_crossover", "is_accumulation_pullback", "is_matched")
+        if is_cross is True or str(is_cross).lower() in ("true", "1"):
+            return True
+        stat = str(_extract_val(item, "status", default="") or "").upper()
+        return stat in ("CROSSOVER", "ACCUMULATION", "MATCHED")
+
+    # 12. FVG 0.618 Fibonacci
+    if "fib" in sid or "fvg" in sid:
+        setup_obj = _extract_val(item, "setup")
+        is_fvg = _extract_val(item, "is_matched")
+        return setup_obj is not None or is_fvg is True or str(is_fvg).lower() in ("true", "1")
+
+    # Strict fallback: boolean match flag only
     for flag in (
-        "is_at_support",
         "is_matched",
         "is_reversal_setup",
         "is_ath_breakout",
         "is_breakout",
         "is_at_order_block",
-        "has_setup",
-        "has_pattern",
         "is_pullback",
         "is_first_green",
         "is_fresh_crossover",
         "is_accumulation_pullback",
-        "is_accumulation",
-        "is_vcp",
-        "is_reversal",
-        "is_fresh_impulse",
-        "is_at_resistance",
-        "is_bullish",
     ):
         val = _extract_val(item, flag)
-        if val is True:
-            return True
-        if isinstance(val, str) and val.lower() in ("true", "yes", "1"):
+        if val is True or (isinstance(val, str) and val.lower() in ("true", "yes", "1")):
             return True
 
-    # 2. Check setup status string
-    status_val = str(_extract_val(item, "status", "setup_status", "pattern_status", default="") or "").upper()
-    if status_val in (
-        "MATCHED", "BREAKOUT", "BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED", "FORMING",
-        "REVERSAL", "OVERSOLD", "OVERBOUGHT", "TRIGGERED", "TRIGGERED_ACTIVE",
-        "BREAKOUT_READY", "BREAKOUT_CONFIRMED", "QUALIFIED", "WATCHLIST",
-        "CONFIRMED", "PULLBACK_AT_618", "ACCUMULATION", "CROSSOVER"
-    ):
+    status_val = str(_extract_val(item, "status", "setup_status", default="") or "").upper()
+    if status_val in ("MATCHED", "BREAKOUT_ACTIVE", "PRIMED_TIGHT", "CONFIRMED", "QUALIFIED"):
         return True
-
-    # 3. Scanner-specific heuristics
-    sid = scanner_id.lower()
-    if "vcp" in sid:
-        setup_obj = _extract_val(item, "setup")
-        if setup_obj is not None:
-            return True
-        if _extract_val(item, "contractions_count", default=0) >= 2:
-            return True
-    elif "fib" in sid or "fvg" in sid:
-        if _extract_val(item, "setup") is not None or _extract_val(item, "confluence_price") is not None:
-            return True
-    elif "head" in sid or "hs" in sid:
-        if _extract_val(item, "pattern") is not None:
-            return True
-    elif "ath" in sid:
-        ath_class = str(_extract_val(item, "ath_class", "")).upper()
-        if "A_CLASS" in ath_class or "B_CLASS" in ath_class:
-            return True
-    elif "st14" in sid:
-        if _extract_val(item, "five_hour_high") is not None and status_val != "NO_SETUP":
-            return True
-
-    # 4. Proximity / score based match
-    dist = _extract_val(item, "distance_pct", "vwap_dist_pct")
-    if dist is not None:
-        try:
-            if abs(float(dist)) <= 2.5:
-                return True
-        except (ValueError, TypeError):
-            pass
-
-    score = _extract_val(item, "score", "confluence_score")
-    if score is not None:
-        try:
-            if float(score) >= 60.0:
-                return True
-        except (ValueError, TypeError):
-            pass
 
     return False
 
@@ -406,7 +510,8 @@ class EODScanRunner:
 
                 logger.info(f"[{idx}/{self.total_scanners_count}] Running scanner '{s_id}' ({s_name})...")
                 try:
-                    params = {"universe": universe}
+                    tight_overrides = EOD_TIGHT_PARAMS_MAP.get(s_id, {})
+                    params = {"universe": universe, **tight_overrides}
                     report = ScannerRegistry.run(s_id, params, provider=provider)
 
                     # Extract matched items using universal match detector
@@ -520,10 +625,20 @@ class EODScanRunner:
                 )
                 all_confluence_stocks.append(stock_obj)
 
-            # Sort all stocks by match_count desc, then confluence_score desc
-            all_confluence_stocks.sort(key=lambda s: (s.match_count, s.confluence_score), reverse=True)
+            # Sort all stocks by confluence_score desc, then match_count desc
+            all_confluence_stocks.sort(key=lambda s: (s.confluence_score, s.match_count), reverse=True)
 
-            top_confluence = [s for s in all_confluence_stocks if s.match_count >= 2]
+            # High Confluence Radar: Top 20 high-probability setups with Core strategy presence
+            high_conf_candidates = [
+                s for s in all_confluence_stocks
+                if (s.match_count >= 2 or s.confluence_score >= 75.0)
+                and any(st.scanner_id.lower() in CORE_SCANNER_IDS for st in s.strategies)
+            ]
+            high_conf_candidates.sort(
+                key=lambda s: (s.match_count >= 2, s.confluence_score, s.volume_ratio),
+                reverse=True,
+            )
+            top_confluence = high_conf_candidates[:20]
             elapsed = time.time() - start_time
 
             digest_report = EODDigestReport(
