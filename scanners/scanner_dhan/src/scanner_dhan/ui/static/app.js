@@ -1866,32 +1866,52 @@ let currentEodReport = null;
 let eodFilterCategory = "ALL";
 let eodFilterLevel = "ALL";
 let eodSearchQuery = "";
+const _eodReportCache = {};
+let _isEodLoading = false;
 
 async function loadEodDatesAndLatest() {
+  if (_isEodLoading) return;
+  _isEodLoading = true;
+
   try {
     const dateSelect = document.getElementById("eod-select-date");
-    const datesRes = await fetch("/api/eod-scans/dates");
-    const dates = await datesRes.json();
 
-    if (dateSelect && Array.isArray(dates) && dates.length > 0) {
-      dateSelect.innerHTML = dates
+    // Fetch dates and latest report in parallel
+    const [datesRes, reportData] = await Promise.all([
+      fetch("/api/eod-scans/dates")
+        .then((r) => r.json())
+        .catch((e) => {
+          console.warn("Failed to load EOD dates:", e);
+          return [];
+        }),
+      loadEodDigest("", false),
+    ]);
+
+    if (dateSelect && Array.isArray(datesRes) && datesRes.length > 0) {
+      dateSelect.innerHTML = datesRes
         .map((d, i) => `<option value="${d}">${i === 0 ? `📅 Today (${d})` : `📅 ${d}`}</option>`)
         .join("");
     }
-
-    await loadEodDigest();
   } catch (err) {
-    console.error("Failed to load EOD dates:", err);
-    await loadEodDigest();
+    console.error("Failed in loadEodDatesAndLatest:", err);
+  } finally {
+    _isEodLoading = false;
   }
 }
 
-async function loadEodDigest(dateStr = "") {
+async function loadEodDigest(dateStr = "", showSpinner = true) {
   const kpiContainer = document.getElementById("eod-kpi-container");
   const tableBody = document.getElementById("eod-table-body");
   const confluenceGrid = document.getElementById("eod-confluence-grid");
 
-  if (kpiContainer) {
+  const cacheKey = dateStr || "latest";
+  if (_eodReportCache[cacheKey]) {
+    currentEodReport = _eodReportCache[cacheKey];
+    renderEodDashboard();
+    return currentEodReport;
+  }
+
+  if (showSpinner && kpiContainer && !currentEodReport) {
     kpiContainer.innerHTML = `
       <div class="col-span-full py-12 text-center text-slate-400 flex items-center justify-center space-x-2">
         <svg class="animate-spin h-5 w-5 text-amber-400" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -1939,11 +1959,14 @@ async function loadEodDigest(dateStr = "") {
         `;
       }
       initLucide();
-      return;
+      return data;
     }
 
+    _eodReportCache[cacheKey] = data;
+    if (data.date) _eodReportCache[data.date] = data;
     currentEodReport = data;
     renderEodDashboard();
+    return data;
   } catch (err) {
     console.error("Failed to fetch EOD digest:", err);
   }

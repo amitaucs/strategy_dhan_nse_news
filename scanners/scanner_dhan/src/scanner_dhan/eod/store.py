@@ -36,6 +36,7 @@ class EODReportStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
         self.storage = storage
+        self._mem_cache: Dict[str, Dict[str, Any]] = {}
         if self.storage is None:
             try:
                 from news_based_strategy.storage.repository import StrategyStorage
@@ -49,6 +50,10 @@ class EODReportStore:
         date_str = report_dict.get("date")
         if not date_str:
             raise ValueError("Report dictionary missing 'date' key")
+
+        # Update in-memory cache immediately
+        self._mem_cache[date_str] = report_dict
+        self._mem_cache["latest"] = report_dict
 
         # 1. Primary: Save to relational database
         if self.storage is not None:
@@ -75,11 +80,18 @@ class EODReportStore:
 
     def get_latest_report(self) -> Optional[Dict[str, Any]]:
         """Load the most recent EOD digest report from Database, with fallback to file cache."""
+        if "latest" in self._mem_cache:
+            return self._mem_cache["latest"]
+
         # 1. Try DB primary
         if self.storage is not None:
             try:
                 db_report = self.storage.get_latest_eod_digest_report()
                 if db_report:
+                    d = db_report.get("date")
+                    if d:
+                        self._mem_cache[d] = db_report
+                    self._mem_cache["latest"] = db_report
                     return db_report
             except Exception as e:
                 logger.warning(f"Failed to read latest EOD report from DB: {e}")
@@ -89,23 +101,34 @@ class EODReportStore:
         if latest_path.exists():
             try:
                 with open(latest_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    self._mem_cache["latest"] = data
+                    if data.get("date"):
+                        self._mem_cache[data["date"]] = data
+                    return data
             except Exception as e:
                 logger.error(f"Failed to read latest EOD report file: {e}")
 
         # 3. Fallback to the latest dated file
         dates = self.list_available_dates()
         if dates:
-            return self.get_report_by_date(dates[0])
+            res = self.get_report_by_date(dates[0])
+            if res:
+                self._mem_cache["latest"] = res
+            return res
         return None
 
     def get_report_by_date(self, date_str: str) -> Optional[Dict[str, Any]]:
         """Load an EOD report for a specific date (YYYY-MM-DD) from Database or file cache."""
+        if date_str in self._mem_cache:
+            return self._mem_cache[date_str]
+
         # 1. Try DB primary
         if self.storage is not None:
             try:
                 db_report = self.storage.get_eod_digest_report_by_date(date_str)
                 if db_report:
+                    self._mem_cache[date_str] = db_report
                     return db_report
             except Exception as e:
                 logger.warning(f"Failed to read EOD report for date {date_str} from DB: {e}")
@@ -115,7 +138,9 @@ class EODReportStore:
         if file_path.exists():
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    self._mem_cache[date_str] = data
+                    return data
             except Exception as e:
                 logger.error(f"Failed to read EOD report file for date {date_str}: {e}")
         return None

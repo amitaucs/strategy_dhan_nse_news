@@ -67,6 +67,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="NSE Catalyst Trading Terminal", version="1.0.0", lifespan=lifespan)
     app.state.dashboard = state
 
+    # Enable HTTP GZip compression for fast payload transport (>1KB)
+    from starlette.middleware.gzip import GZipMiddleware
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+
     # Register all modular endpoint routes
     register_routes(app, state)
 
