@@ -79,6 +79,8 @@ class BullishCeIntradayScanner(BaseScanner):
                 {"value": "NIFTY_100", "label": "Nifty 100 (Top 100 Leaders)"},
                 {"value": "NIFTY_50", "label": "Nifty 50 (50 Liquid Stocks)"},
                 {"value": "NIFTY_500", "label": "Nifty 500 (Broad Market)"},
+                {"value": "NIFTY_MIDCAP_100", "label": "Nifty Midcap 100 (100 Mid-Caps) 🚀"},
+                {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Small-Caps) 🎯"},
             ],
         ),
         ScannerParameter(
@@ -241,7 +243,7 @@ def main() -> None:
     parser.add_argument(
         "--universe",
         default="ALL_F_AND_O",
-        choices=["ALL_F_AND_O", "NIFTY_100", "NIFTY_50", "NIFTY_500"],
+        choices=["ALL_F_AND_O", "NIFTY_100", "NIFTY_50", "NIFTY_500", "NIFTY_MIDCAP_100", "NIFTY_SMALLCAP_100"],
         help="Target stock universe (default: ALL_F_AND_O)",
     )
     parser.add_argument("--vwap-min", type=float, default=-1.0, help="Min VWAP Distance % (default: -1.0)")

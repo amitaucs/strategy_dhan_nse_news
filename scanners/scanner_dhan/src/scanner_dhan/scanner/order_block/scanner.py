@@ -46,8 +46,9 @@ class OrderBlockScanner(BaseScanner):
             options=[
                 {"value": "NIFTY_100", "label": "Nifty 100 (100 Stocks)"},
                 {"value": "NIFTY_500", "label": "Nifty 500 (Broad Market)"},
+                {"value": "NIFTY_MIDCAP_100", "label": "Nifty Midcap 100 (100 Mid-Caps) 🚀"},
+                {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Small-Caps) 🎯"},
                 {"value": "NIFTY_50", "label": "Nifty 50 (50 Stocks)"},
-                {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Stocks)"},
                 {"value": "ALL_F_AND_O", "label": "All F&O Stocks (215 Stocks)"},
             ],
         ),

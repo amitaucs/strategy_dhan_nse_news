@@ -49,7 +49,8 @@ class MonthlyHeikinAshi89EmaScanner(BaseScanner):
                 {"value": "NIFTY_100", "label": "Nifty 100 (100 Stocks) ⭐"},
                 {"value": "NIFTY_50", "label": "Nifty 50 (50 Stocks)"},
                 {"value": "NIFTY_500", "label": "Nifty 500 (Broad Market)"},
-                {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Stocks)"},
+                {"value": "NIFTY_MIDCAP_100", "label": "Nifty Midcap 100 (100 Mid-Caps) 🚀"},
+                {"value": "NIFTY_SMALLCAP_100", "label": "Nifty Smallcap 100 (100 Small-Caps) 🎯"},
                 {"value": "ALL_F_AND_O", "label": "All F&O Stocks (215 Stocks)"},
             ],
         ),
@@ -223,7 +224,7 @@ def main() -> None:
         "--universe",
         type=str,
         default="NIFTY_100",
-        choices=["NIFTY_50", "NIFTY_100", "NIFTY_500", "NIFTY_SMALLCAP_100", "ALL_F_AND_O"],
+        choices=["NIFTY_50", "NIFTY_100", "NIFTY_500", "NIFTY_MIDCAP_100", "NIFTY_SMALLCAP_100", "ALL_F_AND_O"],
         help="Target stock universe (Default: NIFTY_100)",
     )
     parser.add_argument(
