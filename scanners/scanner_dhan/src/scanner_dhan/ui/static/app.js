@@ -2570,9 +2570,36 @@ if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", checkInitialEodStatus);
 }
 
+function triggerAppToast(msg, icon = "📋") {
+  if (typeof window.showToast === "function") {
+    window.showToast(msg, icon);
+    return;
+  }
+  let toast = document.getElementById("toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "toast";
+    toast.className =
+      "fixed bottom-5 right-5 bg-gray-900 border border-gray-700 text-white text-xs px-4 py-3 rounded-lg shadow-2xl transition-all duration-300 opacity-0 translate-y-4 pointer-events-none z-50 flex items-center gap-2";
+    toast.innerHTML = `<span id="toast-icon">${icon}</span><span id="toast-msg">${msg}</span>`;
+    document.body.appendChild(toast);
+  } else {
+    const iconEl = document.getElementById("toast-icon");
+    const msgEl = document.getElementById("toast-msg");
+    if (iconEl) iconEl.textContent = icon;
+    if (msgEl) msgEl.textContent = msg;
+  }
+  toast.classList.remove("opacity-0", "translate-y-4", "pointer-events-none");
+  toast.classList.add("opacity-100", "translate-y-0");
+  setTimeout(() => {
+    toast.classList.add("opacity-0", "translate-y-4", "pointer-events-none");
+    toast.classList.remove("opacity-100", "translate-y-0");
+  }, 3500);
+}
+
 async function copyEodTradingViewWatchlist(onlyConfluence = false) {
   if (!currentEodReport) {
-    alert("No EOD report loaded.");
+    triggerAppToast("No EOD report loaded yet.", "⚠️");
     return;
   }
 
@@ -2581,16 +2608,36 @@ async function copyEodTradingViewWatchlist(onlyConfluence = false) {
     : currentEodReport.all_stocks || [];
 
   if (stocks.length === 0) {
-    alert("No stocks in selected list.");
+    triggerAppToast("No stocks in selected list.", "⚠️");
     return;
   }
 
   const tvString = stocks.map((s) => `NSE:${s.symbol}`).join(", ");
   try {
-    await navigator.clipboard.writeText(tvString);
-    alert(`📋 Copied ${stocks.length} symbols for TradingView:\n\n${tvString}`);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(tvString);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = tvString;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    const label = onlyConfluence ? "Confluence" : "EOD";
+    triggerAppToast(`📋 Copied ${stocks.length} ${label} symbols for TradingView!`, "📋");
   } catch (err) {
-    prompt("Copy TradingView Watchlist:", tvString);
+    const textarea = document.createElement("textarea");
+    textarea.value = tvString;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+    triggerAppToast(`📋 Copied ${stocks.length} symbols for TradingView!`, "📋");
   }
 }
 window.copyEodTradingViewWatchlist = copyEodTradingViewWatchlist;
@@ -2604,7 +2651,7 @@ async function copyTradingViewWatchlist() {
       : [];
 
   if (!itemsToCopy || itemsToCopy.length === 0) {
-    alert("No symbols to copy.");
+    triggerAppToast("No symbols to copy.", "⚠️");
     return;
   }
 
@@ -2612,7 +2659,19 @@ async function copyTradingViewWatchlist() {
   const tvString = itemsToCopy.map((r) => r.symbol).join(", ");
 
   try {
-    await navigator.clipboard.writeText(tvString);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(tvString);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = tvString;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    triggerAppToast(`📋 Copied ${itemsToCopy.length} symbols for TradingView!`, "📋");
 
     // Animate button feedback
     const btn = document.getElementById("btn-copy-tv");
