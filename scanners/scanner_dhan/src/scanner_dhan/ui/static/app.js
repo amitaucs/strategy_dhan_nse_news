@@ -1783,13 +1783,630 @@ function setupEventListeners() {
 function showHomeView() {
   document.getElementById("view-home")?.classList.remove("hidden");
   document.getElementById("view-results")?.classList.add("hidden");
+  document.getElementById("view-eod-digest")?.classList.add("hidden");
   document.getElementById("btn-copy-tv")?.classList.add("hidden");
+
+  // Highlight navbar button
+  const btnStudio = document.getElementById("nav-btn-studio");
+  const btnEod = document.getElementById("nav-btn-eod");
+  if (btnStudio) {
+    btnStudio.className = "px-3 py-1.5 rounded-xl font-bold text-xs transition bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center space-x-1.5";
+  }
+  if (btnEod) {
+    btnEod.className = "px-3 py-1.5 rounded-xl font-semibold text-xs transition text-slate-400 hover:text-white flex items-center space-x-1.5";
+  }
 }
 
 function showResultsView() {
-  document.getElementById("view-home").classList.add("hidden");
-  document.getElementById("view-results").classList.remove("hidden");
+  document.getElementById("view-home")?.classList.add("hidden");
+  document.getElementById("view-results")?.classList.remove("hidden");
+  document.getElementById("view-eod-digest")?.classList.add("hidden");
+  document.getElementById("btn-copy-tv")?.classList.remove("hidden");
 }
+
+function showEodDigestView() {
+  document.getElementById("view-home")?.classList.add("hidden");
+  document.getElementById("view-results")?.classList.add("hidden");
+  document.getElementById("view-eod-digest")?.classList.remove("hidden");
+  document.getElementById("btn-copy-tv")?.classList.add("hidden");
+
+  // Highlight navbar button
+  const btnStudio = document.getElementById("nav-btn-studio");
+  const btnEod = document.getElementById("nav-btn-eod");
+  if (btnStudio) {
+    btnStudio.className = "px-3 py-1.5 rounded-xl font-semibold text-xs transition text-slate-400 hover:text-white flex items-center space-x-1.5";
+  }
+  if (btnEod) {
+    btnEod.className = "px-3 py-1.5 rounded-xl font-bold text-xs transition bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center space-x-1.5";
+  }
+
+  loadEodDatesAndLatest();
+
+  fetch("/api/eod-scans/status")
+    .then((r) => r.json())
+    .then((status) => {
+      if (status && status.is_executing) {
+        startEodStatusPolling();
+      }
+    })
+    .catch(() => {});
+}
+
+window.showHomeView = showHomeView;
+window.showResultsView = showResultsView;
+window.showEodDigestView = showEodDigestView;
+
+// ==================== DAILY EOD DIGEST CONTROLLER ====================
+
+let currentEodReport = null;
+let eodFilterCategory = "ALL";
+let eodSearchQuery = "";
+
+async function loadEodDatesAndLatest() {
+  try {
+    const dateSelect = document.getElementById("eod-select-date");
+    const datesRes = await fetch("/api/eod-scans/dates");
+    const dates = await datesRes.json();
+
+    if (dateSelect && Array.isArray(dates) && dates.length > 0) {
+      dateSelect.innerHTML = dates
+        .map((d, i) => `<option value="${d}">${i === 0 ? `📅 Today (${d})` : `📅 ${d}`}</option>`)
+        .join("");
+    }
+
+    await loadEodDigest();
+  } catch (err) {
+    console.error("Failed to load EOD dates:", err);
+    await loadEodDigest();
+  }
+}
+
+async function loadEodDigest(dateStr = "") {
+  const kpiContainer = document.getElementById("eod-kpi-container");
+  const tableBody = document.getElementById("eod-table-body");
+  const confluenceGrid = document.getElementById("eod-confluence-grid");
+
+  if (kpiContainer) {
+    kpiContainer.innerHTML = `
+      <div class="col-span-full py-12 text-center text-slate-400 flex items-center justify-center space-x-2">
+        <svg class="animate-spin h-5 w-5 text-amber-400" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        <span class="text-xs">Loading EOD Snapshot...</span>
+      </div>
+    `;
+  }
+
+  try {
+    const url = dateStr ? `/api/eod-scans/${dateStr}` : `/api/eod-scans/latest`;
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.status === "no_data" || !data.date) {
+      if (kpiContainer) {
+        kpiContainer.innerHTML = `
+          <div class="col-span-full py-2.5 px-4 bg-slate-900/60 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div class="flex items-center space-x-2 text-slate-300">
+              <span class="px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold text-[11px] flex items-center gap-1 shrink-0">
+                <span>🌆</span> <span>6:30 PM IST Snapshot</span>
+              </span>
+              <span class="text-slate-400 text-xs">Automated multi-scanner runs daily at 6:30 PM IST across 500 NSE stocks & 12 strategies.</span>
+            </div>
+            <div class="text-[11px] font-mono text-slate-400 flex items-center gap-1.5 shrink-0">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Next Run: Today at 6:30 PM</span>
+            </div>
+          </div>
+        `;
+      }
+      if (confluenceGrid) {
+        confluenceGrid.innerHTML = `
+          <div class="col-span-full py-4 text-center text-slate-500 text-xs font-medium">
+            No confluence setups compiled for today yet.
+          </div>
+        `;
+      }
+      if (tableBody) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-6 px-4 text-center text-slate-500 text-xs">
+              No EOD watchlist entries available for today yet. Use the top toolbar to run on-demand or wait for the 6:30 PM snapshot.
+            </td>
+          </tr>
+        `;
+      }
+      initLucide();
+      return;
+    }
+
+    currentEodReport = data;
+    renderEodDashboard();
+  } catch (err) {
+    console.error("Failed to fetch EOD digest:", err);
+  }
+}
+
+function renderEodDashboard() {
+  if (!currentEodReport) return;
+  const r = currentEodReport;
+
+  // Status subtitle
+  const subtitle = document.getElementById("eod-header-subtitle");
+  if (subtitle) {
+    subtitle.innerText = `Automated Post-Market Snapshot for ${r.date} • ${r.universe} (${r.total_scanners_run || 12} Strategies • Executed in ${r.execution_time_seconds || 0}s)`;
+  }
+
+  // Render KPI Cards
+  const kpiContainer = document.getElementById("eod-kpi-container");
+  if (kpiContainer) {
+    const bullishPct = r.unique_stocks_count > 0 ? Math.round((r.bullish_count / r.unique_stocks_count) * 100) : 100;
+    
+    // Top Strategy
+    let topStratName = "VCP Contraction";
+    let topStratHits = 0;
+    Object.values(r.strategies || {}).forEach((st) => {
+      if (st.matches_count > topStratHits) {
+        topStratHits = st.matches_count;
+        topStratName = st.scanner_name;
+      }
+    });
+
+    kpiContainer.innerHTML = `
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Stocks Flagged</p>
+          <p class="text-2xl font-black text-white mt-1">${r.unique_stocks_count} <span class="text-xs font-normal text-slate-500">/ 500 Scanned</span></p>
+        </div>
+        <div class="p-3 bg-sky-950/60 border border-sky-800/40 rounded-xl text-sky-400">
+          <i data-lucide="layers" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="bg-gradient-to-br from-amber-950/40 to-slate-900/80 border border-amber-500/40 rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-amber-500/5">
+        <div>
+          <p class="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1">
+            <i data-lucide="flame" class="w-3.5 h-3.5 text-amber-400"></i> High Confluence Picks
+          </p>
+          <p class="text-2xl font-black text-amber-300 mt-1">${r.confluence_stocks_count} Stocks <span class="text-xs font-semibold text-amber-400/80">(2+ Scanners)</span></p>
+        </div>
+        <div class="p-3 bg-amber-950/80 border border-amber-600/50 rounded-xl text-amber-400">
+          <i data-lucide="crosshair" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Market Sentiment</p>
+          <p class="text-2xl font-black text-emerald-400 mt-1">${bullishPct}% Bullish <span class="text-xs font-normal text-slate-400">(${r.bullish_count} Long / ${r.bearish_count} Short)</span></p>
+        </div>
+        <div class="p-3 bg-emerald-950/60 border border-emerald-800/40 rounded-xl text-emerald-400">
+          <i data-lucide="trending-up" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+        <div>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Top Dominant Setup</p>
+          <p class="text-base font-black text-purple-300 mt-1 truncate" title="${topStratName}">${topStratName} <span class="text-xs font-normal text-slate-400">(${topStratHits} Hits)</span></p>
+        </div>
+        <div class="p-3 bg-purple-950/60 border border-purple-800/40 rounded-xl text-purple-400">
+          <i data-lucide="target" class="w-5 h-5"></i>
+        </div>
+      </div>
+    `;
+  }
+
+  // Render Confluence Section
+  const confSection = document.getElementById("eod-confluence-section");
+  const confGrid = document.getElementById("eod-confluence-grid");
+  const confBadge = document.getElementById("eod-confluence-badge");
+
+  const topStocks = r.top_confluence_stocks || [];
+  if (confBadge) confBadge.innerText = `${topStocks.length} Multi-Strategy Setups`;
+
+  if (topStocks.length === 0) {
+    if (confGrid) {
+      confGrid.innerHTML = `
+        <div class="col-span-full py-8 text-center text-slate-500 bg-slate-950/40 rounded-2xl border border-slate-800 text-xs">
+          No stocks matched 2 or more strategies on this scan date. Check individual scanner matches below.
+        </div>
+      `;
+    }
+  } else if (confGrid) {
+    confGrid.innerHTML = topStocks
+      .map((s) => {
+        const chgColor = s.change_pct >= 0 ? "text-emerald-400" : "text-rose-400";
+        const chgSign = s.change_pct >= 0 ? "+" : "";
+        const stratBadges = (s.strategies || [])
+          .map((st) => {
+            const bColor = categoryBadgeColors[st.category] || "bg-slate-800 text-slate-300 border-slate-700";
+            return `<span class="px-2 py-0.5 text-[10px] font-bold rounded-lg border ${bColor}">${st.scanner_name}</span>`;
+          })
+          .join("");
+
+        const primaryStrat = s.strategies[0] || {};
+        const levelDesc = primaryStrat.level_desc || "Key Level Triggered";
+
+        return `
+          <div class="bg-slate-950/80 border border-amber-500/40 hover:border-amber-400 rounded-2xl p-4 space-y-3 transition group shadow-lg">
+            <div class="flex items-start justify-between">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="text-sm font-black text-white group-hover:text-amber-300 transition">${s.symbol}</span>
+                  <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">NSE</span>
+                </div>
+                <p class="text-[11px] text-slate-400 truncate max-w-[180px]">${s.company_name || s.symbol}</p>
+              </div>
+              <div class="text-right">
+                <span class="text-sm font-mono font-black ${chgColor}">₹${s.close.toFixed(2)}</span>
+                <span class="block text-[11px] font-mono ${chgColor} font-semibold">${chgSign}${s.change_pct.toFixed(2)}%</span>
+              </div>
+            </div>
+
+            <!-- Strategies Badges -->
+            <div class="space-y-1.5">
+              <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">${s.match_count} Strategies Confluence:</p>
+              <div class="flex flex-wrap gap-1.5">
+                ${stratBadges}
+              </div>
+            </div>
+
+            <!-- Key Levels -->
+            <div class="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 text-[11px] space-y-1">
+              <div class="flex justify-between text-slate-400">
+                <span>Trigger Level:</span>
+                <span class="font-mono text-white font-bold truncate max-w-[180px]">${levelDesc}</span>
+              </div>
+              ${
+                s.pivot_level
+                  ? `<div class="flex justify-between text-slate-400">
+                      <span>Pivot Level:</span>
+                      <span class="font-mono text-sky-400 font-bold">₹${s.pivot_level.toFixed(2)}</span>
+                     </div>`
+                  : ""
+              }
+              <div class="flex justify-between text-slate-400">
+                <span>Volume Surge:</span>
+                <span class="font-mono text-sky-400 font-bold">${s.volume_ratio}x Avg</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-1">
+              <span class="text-[10px] font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded-full border border-amber-800/40">⭐ Score: ${s.confluence_score}/100</span>
+              <div class="space-x-1.5">
+                <a href="https://in.tradingview.com/chart/?symbol=NSE:${s.symbol}" target="_blank" class="text-xs text-sky-400 hover:text-sky-300 font-bold inline-flex items-center space-x-1">
+                  <span>TV Chart</span> <i data-lucide="external-link" class="w-3 h-3"></i>
+                </a>
+              </div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  // Render Master Table
+  renderEodWatchlistTable();
+  initLucide();
+}
+
+function renderEodWatchlistTable() {
+  if (!currentEodReport) return;
+  const tableBody = document.getElementById("eod-table-body");
+  const countBadge = document.getElementById("eod-table-count-badge");
+  if (!tableBody) return;
+
+  const query = eodSearchQuery.trim().toLowerCase();
+  const allStocks = currentEodReport.all_stocks || [];
+
+  const filtered = allStocks.filter((s) => {
+    // Category filter
+    let matchesCat = true;
+    if (eodFilterCategory === "CONFLUENCE") {
+      matchesCat = s.match_count >= 2;
+    } else if (eodFilterCategory === "VCP") {
+      matchesCat = (s.strategies || []).some((st) => st.scanner_id.includes("vcp"));
+    } else if (eodFilterCategory === "SMC") {
+      matchesCat = (s.strategies || []).some((st) => st.category.toLowerCase().includes("smart") || st.scanner_id.includes("order_block") || st.scanner_id.includes("fvg"));
+    } else if (eodFilterCategory === "BREAKOUT") {
+      matchesCat = (s.strategies || []).some((st) => st.category.toLowerCase().includes("breakout") || st.scanner_id.includes("ath"));
+    } else if (eodFilterCategory === "REVERSAL") {
+      matchesCat = (s.strategies || []).some((st) => st.category.toLowerCase().includes("reversal") || st.scanner_id.includes("rsi") || st.scanner_id.includes("ha_st01"));
+    } else if (eodFilterCategory === "TREND") {
+      matchesCat = (s.strategies || []).some((st) => st.category.toLowerCase().includes("trend") || st.scanner_id.includes("st07") || st.scanner_id.includes("st15"));
+    }
+
+    // Search query
+    const matchesSearch =
+      !query ||
+      s.symbol.toLowerCase().includes(query) ||
+      (s.company_name && s.company_name.toLowerCase().includes(query)) ||
+      (s.strategies || []).some((st) => st.scanner_name.toLowerCase().includes(query) || st.level_desc.toLowerCase().includes(query));
+
+    return matchesCat && matchesSearch;
+  });
+
+  if (countBadge) {
+    countBadge.innerText = `(${filtered.length} of ${allStocks.length} Flagged)`;
+  }
+
+  if (filtered.length === 0) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="p-8 text-center text-slate-500 text-xs">
+          No stocks match the selected filter "${eodFilterCategory}".
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tableBody.innerHTML = filtered
+    .map((s) => {
+      const chgColor = s.change_pct >= 0 ? "text-emerald-400" : "text-rose-400";
+      const chgSign = s.change_pct >= 0 ? "+" : "";
+      const isConfluence = s.match_count >= 2;
+
+      const stratPills = (s.strategies || [])
+        .map((st) => {
+          const bColor = categoryBadgeColors[st.category] || "bg-slate-800 text-slate-300 border-slate-700";
+          return `<span class="px-2 py-0.5 text-[10px] font-bold rounded border ${bColor}">${st.scanner_name}</span>`;
+        })
+        .join(" ");
+
+      const primaryStrat = s.strategies[0] || {};
+      const triggerDesc = primaryStrat.level_desc || primaryStrat.signal || "Triggered";
+
+      return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="p-3.5 font-bold text-white flex items-center space-x-2">
+            ${
+              isConfluence
+                ? `<span class="w-2 h-2 rounded-full bg-amber-400" title="High Confluence (2+ Scanners)"></span>`
+                : `<span class="w-2 h-2 rounded-full bg-slate-600"></span>`
+            }
+            <span>${s.symbol}</span>
+          </td>
+          <td class="p-3.5 font-mono">₹${s.close.toFixed(2)} <span class="${chgColor} font-bold ml-1">${chgSign}${s.change_pct.toFixed(2)}%</span></td>
+          <td class="p-3.5">
+            <div class="flex gap-1 flex-wrap">
+              ${stratPills}
+            </div>
+          </td>
+          <td class="p-3.5 text-slate-300 max-w-[280px] truncate" title="${triggerDesc}">${triggerDesc}</td>
+          <td class="p-3.5 font-mono font-bold text-sky-400">${s.volume_ratio}x</td>
+          <td class="p-3.5 text-right space-x-2 whitespace-nowrap">
+            <a href="https://in.tradingview.com/chart/?symbol=NSE:${s.symbol}" target="_blank" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded-lg text-[11px] font-semibold transition inline-block">TV Chart</a>
+            <a href="https://web.dhan.co" target="_blank" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/40 text-sky-300 border border-sky-500/40 rounded-lg text-[11px] font-semibold transition inline-block">Dhan</a>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  initLucide();
+}
+
+function filterEodTable(cat) {
+  eodFilterCategory = cat;
+  document.querySelectorAll(".eod-filter-btn").forEach((btn) => {
+    if (btn.dataset.eodFilter === cat) {
+      btn.className = "eod-filter-btn px-3 py-1 rounded-lg font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30";
+    } else {
+      btn.className = "eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white";
+    }
+  });
+  renderEodWatchlistTable();
+}
+window.filterEodTable = filterEodTable;
+
+function onEodSearchInput(query) {
+  eodSearchQuery = query;
+  renderEodWatchlistTable();
+}
+window.onEodSearchInput = onEodSearchInput;
+
+function onEodDateSelected(date) {
+  loadEodDigest(date);
+}
+window.onEodDateSelected = onEodDateSelected;
+
+function openEodConfirmModal() {
+  const modal = document.getElementById("modal-eod-confirm");
+  if (modal) {
+    modal.classList.remove("hidden");
+    initLucide();
+  }
+}
+window.openEodConfirmModal = openEodConfirmModal;
+
+function closeEodConfirmModal() {
+  const modal = document.getElementById("modal-eod-confirm");
+  if (modal) {
+    modal.classList.add("hidden");
+  }
+}
+window.closeEodConfirmModal = closeEodConfirmModal;
+
+async function confirmAndStartEodScan() {
+  closeEodConfirmModal();
+  await runEodScanNow();
+}
+window.confirmAndStartEodScan = confirmAndStartEodScan;
+
+function updateEodProgressUI(status) {
+  const banner = document.getElementById("eod-active-scan-banner");
+  const pBar = document.getElementById("eod-scan-progress-bar");
+  const pctBadge = document.getElementById("eod-scan-pct-badge");
+  const stepInd = document.getElementById("eod-scan-step-indicator");
+  const btn = document.getElementById("btn-eod-run-now");
+  const icon = document.getElementById("icon-eod-refresh");
+  const text = document.getElementById("btn-eod-run-text");
+  const dateSelect = document.getElementById("eod-select-date");
+
+  // Global nav badge
+  const globalBadge = document.getElementById("global-eod-scan-badge");
+  const globalText = document.getElementById("global-eod-scan-text");
+
+  if (status && status.is_executing) {
+    const pct = status.progress_pct !== undefined ? status.progress_pct : 0;
+    const count = status.completed_scanners ? `${status.completed_scanners}/${status.total_scanners || 12}` : "0/12";
+    const curName = status.current_scanner || "Starting scanners";
+
+    // 1. Show & update EOD banner
+    if (banner) {
+      banner.classList.remove("hidden");
+    }
+    if (pBar) {
+      pBar.style.width = `${Math.max(5, pct)}%`;
+    }
+    if (pctBadge) {
+      pctBadge.innerText = `${pct}%`;
+    }
+    if (stepInd) {
+      stepInd.innerHTML = `Scanner <strong class="text-sky-300">${count}</strong>: <span class="text-amber-300 font-semibold">${curName}</span>`;
+    }
+
+    // 2. Lock EOD screen action controls
+    if (btn) btn.disabled = true;
+    if (icon) icon.classList.add("animate-spin");
+    if (text) text.innerText = `Scanning (${pct}%)...`;
+    if (dateSelect) dateSelect.disabled = true;
+
+    // 3. Show & update global navbar badge across tabs
+    if (globalBadge) {
+      globalBadge.classList.remove("hidden");
+      globalBadge.classList.add("flex");
+    }
+    if (globalText) {
+      globalText.innerText = `⚡ EOD Scan: ${pct}% (${curName})`;
+    }
+  } else {
+    // Hide EOD banner & global badge, re-enable controls
+    if (banner) {
+      banner.classList.add("hidden");
+    }
+    if (globalBadge) {
+      globalBadge.classList.add("hidden");
+      globalBadge.classList.remove("flex");
+    }
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove("animate-spin");
+    if (text) text.innerText = "Run All Now";
+    if (dateSelect) dateSelect.disabled = false;
+  }
+  initLucide();
+}
+window.updateEodProgressUI = updateEodProgressUI;
+
+let eodPollInterval = null;
+
+async function runEodScanNow() {
+  updateEodProgressUI({
+    is_executing: true,
+    progress_pct: 0,
+    completed_scanners: 0,
+    total_scanners: 12,
+    current_scanner: "Initializing Batch Scan",
+  });
+
+  try {
+    const res = await fetch("/api/eod-scans/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ universe: "NIFTY_500" }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      throw new Error(errData.detail || `Server returned ${res.status}`);
+    }
+
+    const startData = await res.json();
+    console.log("EOD Scan started:", startData);
+    if (typeof showToast === "function") {
+      showToast("🚀 EOD Batch Scan started (~5–10 min). Safe to switch tabs!", "⏳");
+    }
+
+    startEodStatusPolling();
+  } catch (err) {
+    console.error("Error running EOD batch scan:", err);
+    updateEodProgressUI({ is_executing: false });
+    if (typeof showToast === "function") {
+      showToast(`EOD Scan error: ${err.message || err}`, "❌");
+    } else {
+      alert(`EOD Scan failed: ${err.message || err}`);
+    }
+  }
+}
+window.runEodScanNow = runEodScanNow;
+
+function startEodStatusPolling() {
+  if (eodPollInterval) clearInterval(eodPollInterval);
+
+  eodPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch("/api/eod-scans/status");
+      if (!res.ok) return;
+      const status = await res.json();
+
+      if (status.is_executing) {
+        updateEodProgressUI(status);
+      } else {
+        clearInterval(eodPollInterval);
+        eodPollInterval = null;
+        updateEodProgressUI({ is_executing: false });
+
+        await loadEodDatesAndLatest();
+        if (typeof showToast === "function") {
+          showToast("🎉 Daily EOD Multi-Scanner Digest complete & saved to MySQL!", "🌆");
+        }
+      }
+    } catch (e) {
+      console.warn("Polling EOD status error:", e);
+    }
+  }, 2000);
+}
+window.startEodStatusPolling = startEodStatusPolling;
+
+function checkInitialEodStatus() {
+  fetch("/api/eod-scans/status")
+    .then((r) => r.json())
+    .then((status) => {
+      if (status && status.is_executing) {
+        updateEodProgressUI(status);
+        startEodStatusPolling();
+      }
+    })
+    .catch(() => {});
+}
+checkInitialEodStatus();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", checkInitialEodStatus);
+}
+
+async function copyEodTradingViewWatchlist(onlyConfluence = false) {
+  if (!currentEodReport) {
+    alert("No EOD report loaded.");
+    return;
+  }
+
+  const stocks = onlyConfluence
+    ? currentEodReport.top_confluence_stocks || []
+    : currentEodReport.all_stocks || [];
+
+  if (stocks.length === 0) {
+    alert("No stocks in selected list.");
+    return;
+  }
+
+  const tvString = stocks.map((s) => `NSE:${s.symbol}`).join(", ");
+  try {
+    await navigator.clipboard.writeText(tvString);
+    alert(`📋 Copied ${stocks.length} symbols for TradingView:\n\n${tvString}`);
+  } catch (err) {
+    prompt("Copy TradingView Watchlist:", tvString);
+  }
+}
+window.copyEodTradingViewWatchlist = copyEodTradingViewWatchlist;
 
 async function copyTradingViewWatchlist() {
   const itemsToCopy =

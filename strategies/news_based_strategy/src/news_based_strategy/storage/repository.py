@@ -6,6 +6,7 @@ Supports remote MySQL (MariaDB) with transparent local SQLite fallback.
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -259,6 +260,51 @@ class StrategyStorage:
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS eod_digest_reports (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            scan_date VARCHAR(10) UNIQUE NOT NULL,
+                            universe VARCHAR(32) NOT NULL,
+                            total_scanners INT NOT NULL DEFAULT 12,
+                            total_matches INT NOT NULL DEFAULT 0,
+                            unique_stocks_count INT NOT NULL DEFAULT 0,
+                            confluence_stocks_count INT NOT NULL DEFAULT 0,
+                            bullish_count INT NOT NULL DEFAULT 0,
+                            bearish_count INT NOT NULL DEFAULT 0,
+                            execution_time_seconds DOUBLE DEFAULT 0.0,
+                            report_json LONGTEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            INDEX idx_scan_date (scan_date)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS eod_confluence_stocks (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            scan_date VARCHAR(10) NOT NULL,
+                            symbol VARCHAR(32) NOT NULL,
+                            company_name VARCHAR(255),
+                            security_id VARCHAR(32),
+                            close_price DOUBLE NOT NULL DEFAULT 0.0,
+                            change_pct DOUBLE NOT NULL DEFAULT 0.0,
+                            volume BIGINT DEFAULT 0,
+                            volume_ratio DOUBLE DEFAULT 1.0,
+                            match_count INT NOT NULL DEFAULT 1,
+                            confluence_score DOUBLE NOT NULL DEFAULT 0.0,
+                            primary_category VARCHAR(64),
+                            pivot_level DOUBLE,
+                            stop_loss DOUBLE,
+                            strategies_json TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE KEY uk_scan_symbol (scan_date, symbol),
+                            INDEX idx_date (scan_date),
+                            INDEX idx_symbol (symbol),
+                            INDEX idx_score (confluence_score)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 return
             except Exception as e:
                 logger.warning("Failed creating MySQL tables: %s. Reverting to SQLite.", e)
@@ -346,6 +392,47 @@ class StrategyStorage:
                         name TEXT,
                         is_active INTEGER NOT NULL DEFAULT 1,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS eod_digest_reports (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scan_date TEXT UNIQUE NOT NULL,
+                        universe TEXT NOT NULL,
+                        total_scanners INTEGER NOT NULL DEFAULT 12,
+                        total_matches INTEGER NOT NULL DEFAULT 0,
+                        unique_stocks_count INTEGER NOT NULL DEFAULT 0,
+                        confluence_stocks_count INTEGER NOT NULL DEFAULT 0,
+                        bullish_count INTEGER NOT NULL DEFAULT 0,
+                        bearish_count INTEGER NOT NULL DEFAULT 0,
+                        execution_time_seconds REAL DEFAULT 0.0,
+                        report_json TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                self._sqlite_conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS eod_confluence_stocks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scan_date TEXT NOT NULL,
+                        symbol TEXT NOT NULL,
+                        company_name TEXT,
+                        security_id TEXT,
+                        close_price REAL NOT NULL DEFAULT 0.0,
+                        change_pct REAL NOT NULL DEFAULT 0.0,
+                        volume INTEGER DEFAULT 0,
+                        volume_ratio REAL DEFAULT 1.0,
+                        match_count INTEGER NOT NULL DEFAULT 1,
+                        confluence_score REAL NOT NULL DEFAULT 0.0,
+                        primary_category TEXT,
+                        pivot_level REAL,
+                        stop_loss REAL,
+                        strategies_json TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (scan_date, symbol)
                     )
                     """
                 )
@@ -1103,6 +1190,371 @@ class StrategyStorage:
             if self.is_mysql_active:
                 self._mysql_conn = None
         return False
+
+    # ==================== EOD MULTI-SCANNER DAILY DIGEST STORAGE ====================
+
+    @_thread_safe
+    def save_eod_digest_report(self, report_dict: Dict[str, Any]) -> bool:
+        """Persist full EOD multi-scanner digest report and individual confluence stocks into DB."""
+        if not report_dict or not report_dict.get("date"):
+            logger.warning("save_eod_digest_report called with invalid report dictionary (missing 'date')")
+            return False
+
+        self._ensure_connection()
+        date_str = str(report_dict["date"]).strip()
+        universe = str(report_dict.get("universe", "NIFTY_500"))
+        total_scanners = int(report_dict.get("total_scanners_run", 12))
+        total_matches = int(report_dict.get("total_matches", 0))
+        unique_stocks_count = int(report_dict.get("unique_stocks_count", 0))
+        confluence_stocks_count = int(report_dict.get("confluence_stocks_count", 0))
+        bullish_count = int(report_dict.get("bullish_count", 0))
+        bearish_count = int(report_dict.get("bearish_count", 0))
+        execution_time_seconds = float(report_dict.get("execution_time_seconds", 0.0))
+        report_json_str = json.dumps(report_dict, ensure_ascii=False)
+
+        stocks = report_dict.get("all_stocks") or report_dict.get("top_confluence_stocks") or []
+
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    # 1. Upsert eod_digest_reports
+                    cursor.execute(
+                        """
+                        INSERT INTO eod_digest_reports (
+                            scan_date, universe, total_scanners, total_matches,
+                            unique_stocks_count, confluence_stocks_count, bullish_count, bearish_count,
+                            execution_time_seconds, report_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            universe = VALUES(universe),
+                            total_scanners = VALUES(total_scanners),
+                            total_matches = VALUES(total_matches),
+                            unique_stocks_count = VALUES(unique_stocks_count),
+                            confluence_stocks_count = VALUES(confluence_stocks_count),
+                            bullish_count = VALUES(bullish_count),
+                            bearish_count = VALUES(bearish_count),
+                            execution_time_seconds = VALUES(execution_time_seconds),
+                            report_json = VALUES(report_json),
+                            created_at = CURRENT_TIMESTAMP
+                        """,
+                        (
+                            date_str,
+                            universe,
+                            total_scanners,
+                            total_matches,
+                            unique_stocks_count,
+                            confluence_stocks_count,
+                            bullish_count,
+                            bearish_count,
+                            execution_time_seconds,
+                            report_json_str,
+                        ),
+                    )
+
+                    # 2. Upsert eod_confluence_stocks
+                    for st in stocks:
+                        sym = str(st.get("symbol", "")).strip()
+                        if not sym:
+                            continue
+                        c_name = st.get("company_name", "")
+                        sec_id = str(st.get("security_id", ""))
+                        close_p = float(st.get("close", 0.0) or 0.0)
+                        chg_pct = float(st.get("change_pct", 0.0) or 0.0)
+                        vol = int(st.get("volume", 0) or 0)
+                        vol_ratio = float(st.get("volume_ratio", 1.0) or 1.0)
+                        match_cnt = int(st.get("match_count", 1) or 1)
+                        conf_score = float(st.get("confluence_score", 0.0) or 0.0)
+                        cat = st.get("primary_category", "")
+                        pivot_lvl = float(st["pivot_level"]) if st.get("pivot_level") is not None else None
+                        stop_lvl = float(st["stop_loss"]) if st.get("stop_loss") is not None else None
+                        strat_json = json.dumps(st.get("strategies", []), ensure_ascii=False)
+
+                        cursor.execute(
+                            """
+                            INSERT INTO eod_confluence_stocks (
+                                scan_date, symbol, company_name, security_id,
+                                close_price, change_pct, volume, volume_ratio,
+                                match_count, confluence_score, primary_category,
+                                pivot_level, stop_loss, strategies_json
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                company_name = VALUES(company_name),
+                                security_id = VALUES(security_id),
+                                close_price = VALUES(close_price),
+                                change_pct = VALUES(change_pct),
+                                volume = VALUES(volume),
+                                volume_ratio = VALUES(volume_ratio),
+                                match_count = VALUES(match_count),
+                                confluence_score = VALUES(confluence_score),
+                                primary_category = VALUES(primary_category),
+                                pivot_level = VALUES(pivot_level),
+                                stop_loss = VALUES(stop_loss),
+                                strategies_json = VALUES(strategies_json),
+                                created_at = CURRENT_TIMESTAMP
+                            """,
+                            (
+                                date_str,
+                                sym,
+                                c_name,
+                                sec_id,
+                                close_p,
+                                chg_pct,
+                                vol,
+                                vol_ratio,
+                                match_cnt,
+                                conf_score,
+                                cat,
+                                pivot_lvl,
+                                stop_lvl,
+                                strat_json,
+                            ),
+                        )
+                logger.info("Successfully persisted EOD digest report for date %s to MySQL", date_str)
+                return True
+
+            elif self._sqlite_conn:
+                with self._sqlite_conn:
+                    # 1. Upsert eod_digest_reports
+                    self._sqlite_conn.execute(
+                        """
+                        INSERT INTO eod_digest_reports (
+                            scan_date, universe, total_scanners, total_matches,
+                            unique_stocks_count, confluence_stocks_count, bullish_count, bearish_count,
+                            execution_time_seconds, report_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(scan_date) DO UPDATE SET
+                            universe = excluded.universe,
+                            total_scanners = excluded.total_scanners,
+                            total_matches = excluded.total_matches,
+                            unique_stocks_count = excluded.unique_stocks_count,
+                            confluence_stocks_count = excluded.confluence_stocks_count,
+                            bullish_count = excluded.bullish_count,
+                            bearish_count = excluded.bearish_count,
+                            execution_time_seconds = excluded.execution_time_seconds,
+                            report_json = excluded.report_json,
+                            created_at = CURRENT_TIMESTAMP
+                        """,
+                        (
+                            date_str,
+                            universe,
+                            total_scanners,
+                            total_matches,
+                            unique_stocks_count,
+                            confluence_stocks_count,
+                            bullish_count,
+                            bearish_count,
+                            execution_time_seconds,
+                            report_json_str,
+                        ),
+                    )
+
+                    # 2. Upsert eod_confluence_stocks
+                    for st in stocks:
+                        sym = str(st.get("symbol", "")).strip()
+                        if not sym:
+                            continue
+                        c_name = st.get("company_name", "")
+                        sec_id = str(st.get("security_id", ""))
+                        close_p = float(st.get("close", 0.0) or 0.0)
+                        chg_pct = float(st.get("change_pct", 0.0) or 0.0)
+                        vol = int(st.get("volume", 0) or 0)
+                        vol_ratio = float(st.get("volume_ratio", 1.0) or 1.0)
+                        match_cnt = int(st.get("match_count", 1) or 1)
+                        conf_score = float(st.get("confluence_score", 0.0) or 0.0)
+                        cat = st.get("primary_category", "")
+                        pivot_lvl = float(st["pivot_level"]) if st.get("pivot_level") is not None else None
+                        stop_lvl = float(st["stop_loss"]) if st.get("stop_loss") is not None else None
+                        strat_json = json.dumps(st.get("strategies", []), ensure_ascii=False)
+
+                        self._sqlite_conn.execute(
+                            """
+                            INSERT INTO eod_confluence_stocks (
+                                scan_date, symbol, company_name, security_id,
+                                close_price, change_pct, volume, volume_ratio,
+                                match_count, confluence_score, primary_category,
+                                pivot_level, stop_loss, strategies_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(scan_date, symbol) DO UPDATE SET
+                                company_name = excluded.company_name,
+                                security_id = excluded.security_id,
+                                close_price = excluded.close_price,
+                                change_pct = excluded.change_pct,
+                                volume = excluded.volume,
+                                volume_ratio = excluded.volume_ratio,
+                                match_count = excluded.match_count,
+                                confluence_score = excluded.confluence_score,
+                                primary_category = excluded.primary_category,
+                                pivot_level = excluded.pivot_level,
+                                stop_loss = excluded.stop_loss,
+                                strategies_json = excluded.strategies_json,
+                                created_at = CURRENT_TIMESTAMP
+                            """,
+                            (
+                                date_str,
+                                sym,
+                                c_name,
+                                sec_id,
+                                close_p,
+                                chg_pct,
+                                vol,
+                                vol_ratio,
+                                match_cnt,
+                                conf_score,
+                                cat,
+                                pivot_lvl,
+                                stop_lvl,
+                                strat_json,
+                            ),
+                        )
+                logger.info("Successfully persisted EOD digest report for date %s to SQLite", date_str)
+                return True
+        except Exception as e:
+            logger.error("Failed to save EOD digest report to DB: %s", e, exc_info=True)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return False
+
+    @_thread_safe
+    def get_latest_eod_digest_report(self) -> Optional[Dict[str, Any]]:
+        """Retrieve the most recent EOD digest report from the database."""
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT report_json FROM eod_digest_reports ORDER BY scan_date DESC LIMIT 1")
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        return json.loads(row[0])
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT report_json FROM eod_digest_reports ORDER BY scan_date DESC LIMIT 1")
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+        except Exception as e:
+            logger.error("Failed to get latest EOD digest report from DB: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return None
+
+    @_thread_safe
+    def get_eod_digest_report_by_date(self, scan_date: str) -> Optional[Dict[str, Any]]:
+        """Retrieve historical EOD digest report for a specific date (YYYY-MM-DD) from DB."""
+        if not scan_date:
+            return None
+        self._ensure_connection()
+        date_str = str(scan_date).strip()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT report_json FROM eod_digest_reports WHERE scan_date = %s", (date_str,))
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        return json.loads(row[0])
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT report_json FROM eod_digest_reports WHERE scan_date = ?", (date_str,))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return json.loads(row[0])
+        except Exception as e:
+            logger.error("Failed to get EOD digest report for date %s from DB: %s", date_str, e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return None
+
+    @_thread_safe
+    def list_eod_digest_dates(self) -> List[str]:
+        """List all available historical EOD scan dates in descending chronological order from DB."""
+        self._ensure_connection()
+        try:
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute("SELECT scan_date FROM eod_digest_reports ORDER BY scan_date DESC")
+                    rows = cursor.fetchall()
+                    return [str(r[0]) for r in rows if r and r[0]]
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute("SELECT scan_date FROM eod_digest_reports ORDER BY scan_date DESC")
+                rows = cursor.fetchall()
+                return [str(r[0]) for r in rows if r and r[0]]
+        except Exception as e:
+            logger.error("Failed to list EOD digest dates from DB: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return []
+
+    @_thread_safe
+    def get_eod_confluence_stocks(self, scan_date: Optional[str] = None, min_matches: int = 1) -> List[Dict[str, Any]]:
+        """Query individual confluence stocks from `eod_confluence_stocks` table."""
+        self._ensure_connection()
+        try:
+            target_date = scan_date
+            if not target_date:
+                dates = self.list_eod_digest_dates()
+                if not dates:
+                    return []
+                target_date = dates[0]
+
+            sql_mysql = """
+                SELECT id, scan_date, symbol, company_name, security_id, close_price,
+                       change_pct, volume, volume_ratio, match_count, confluence_score,
+                       primary_category, pivot_level, stop_loss, strategies_json, created_at
+                FROM eod_confluence_stocks
+                WHERE scan_date = %s AND match_count >= %s
+                ORDER BY match_count DESC, confluence_score DESC
+            """
+            sql_sqlite = """
+                SELECT id, scan_date, symbol, company_name, security_id, close_price,
+                       change_pct, volume, volume_ratio, match_count, confluence_score,
+                       primary_category, pivot_level, stop_loss, strategies_json, created_at
+                FROM eod_confluence_stocks
+                WHERE scan_date = ? AND match_count >= ?
+                ORDER BY match_count DESC, confluence_score DESC
+            """
+
+            rows = []
+            if self.is_mysql_active and self._mysql_conn:
+                with self._mysql_conn.cursor() as cursor:
+                    cursor.execute(sql_mysql, (target_date, min_matches))
+                    rows = cursor.fetchall()
+            elif self._sqlite_conn:
+                cursor = self._sqlite_conn.cursor()
+                cursor.execute(sql_sqlite, (target_date, min_matches))
+                rows = cursor.fetchall()
+
+            result = []
+            for r in rows:
+                strats = []
+                if r[14]:
+                    try:
+                        strats = json.loads(r[14])
+                    except Exception:
+                        pass
+                result.append({
+                    "id": r[0],
+                    "scan_date": str(r[1]),
+                    "symbol": str(r[2]),
+                    "company_name": r[3] or "",
+                    "security_id": str(r[4] or ""),
+                    "close": float(r[5] or 0.0),
+                    "change_pct": float(r[6] or 0.0),
+                    "volume": int(r[7] or 0),
+                    "volume_ratio": float(r[8] or 1.0),
+                    "match_count": int(r[9] or 1),
+                    "confluence_score": float(r[10] or 0.0),
+                    "primary_category": r[11] or "",
+                    "pivot_level": float(r[12]) if r[12] is not None else None,
+                    "stop_loss": float(r[13]) if r[13] is not None else None,
+                    "strategies": strats,
+                    "created_at": str(r[15]),
+                })
+            return result
+        except Exception as e:
+            logger.error("Failed to query EOD confluence stocks from DB: %s", e)
+            if self.is_mysql_active:
+                self._mysql_conn = None
+        return []
 
     @_thread_safe
     def get_status_description(self) -> str:

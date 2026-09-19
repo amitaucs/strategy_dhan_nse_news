@@ -71,18 +71,33 @@ try:
         DhanRateLimitError,
     )
     from scanner_dhan.scanner.registry import ScannerRegistry
+    from scanner_dhan.eod import EODReportStore, EODScanRunner, EODScheduler
     SCANNER_AVAILABLE = True
 except Exception as _scanner_err:
     logger.warning(f"scanner_dhan package not available: {_scanner_err}")
     SCANNER_AVAILABLE = False
 
 _scanner_executor = ThreadPoolExecutor(max_workers=3)
+_eod_store = EODReportStore() if SCANNER_AVAILABLE else None
+_eod_runner = EODScanRunner(store=_eod_store) if SCANNER_AVAILABLE else None
+_eod_scheduler = EODScheduler(runner=_eod_runner, store=_eod_store) if SCANNER_AVAILABLE else None
 
 COOKIE_NAME = "app_session_token"
 
 
 def register_routes(app: FastAPI, state: DashboardState) -> None:
     """Register all UI and API endpoints onto the FastAPI application."""
+    global _eod_store, _eod_runner, _eod_scheduler
+    if SCANNER_AVAILABLE:
+        if _eod_store is None:
+            _eod_store = EODReportStore(storage=state.storage)
+        else:
+            _eod_store.storage = state.storage
+        if _eod_runner is None:
+            _eod_runner = EODScanRunner(store=_eod_store)
+        if _eod_scheduler is None:
+            _eod_scheduler = EODScheduler(runner=_eod_runner, store=_eod_store)
+
     COOKIE_NAME = "app_session_token"
 
     def get_authenticated_user(request: Request) -> Optional[str]:
@@ -818,6 +833,73 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
                 "matched_count": 0,
                 "results": [],
             }
+
+    # ==================== EOD MULTI-SCANNER DAILY DIGEST ENDPOINTS ====================
+
+    @app.get("/api/eod-scans/latest")
+    async def get_latest_eod_scan():
+        """Fetch the most recent EOD Multi-Scanner Daily Digest report."""
+        if not SCANNER_AVAILABLE or _eod_store is None:
+            raise HTTPException(status_code=500, detail="EOD Scanner module not initialized")
+        report = _eod_store.get_latest_report()
+        if not report:
+            return {"status": "no_data", "message": "No EOD scan snapshots available yet."}
+        return report
+
+    @app.get("/api/eod-scans/dates")
+    async def list_eod_scan_dates():
+        """List all available historical EOD scan snapshot dates."""
+        if not SCANNER_AVAILABLE or _eod_store is None:
+            return []
+        return _eod_store.list_available_dates()
+
+    @app.get("/api/eod-scans/status")
+    async def get_eod_scheduler_status():
+        """Check EOD 6:30 PM scheduler status, next scheduled run, and health."""
+        if not SCANNER_AVAILABLE or _eod_scheduler is None:
+            return {"scheduler_active": False, "message": "EOD Scheduler unavailable"}
+        return _eod_scheduler.get_status()
+
+    @app.get("/api/eod-scans/{date_str}")
+    async def get_eod_scan_by_date(date_str: str):
+        """Fetch historical EOD digest snapshot for a specific date (YYYY-MM-DD)."""
+        if not SCANNER_AVAILABLE or _eod_store is None:
+            raise HTTPException(status_code=500, detail="EOD Scanner module not initialized")
+        report = _eod_store.get_report_by_date(date_str)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"No EOD snapshot found for date {date_str}")
+        return report
+
+    @app.post("/api/eod-scans/run")
+    async def run_eod_scan_now(request: Request):
+        """Manually trigger an immediate full EOD Multi-Scanner batch execution in background."""
+        if not SCANNER_AVAILABLE or _eod_scheduler is None:
+            raise HTTPException(status_code=500, detail="EOD Scanner module not initialized")
+        
+        if _eod_scheduler._is_executing:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "already_running",
+                    "message": "An EOD batch scan is already running in the background.",
+                    "is_executing": True
+                }
+            )
+
+        universe = "NIFTY_500"
+        try:
+            body = await request.json()
+            if body and "universe" in body:
+                universe = body["universe"]
+        except Exception:
+            pass
+
+        asyncio.create_task(_eod_scheduler.trigger_now(universe=universe))
+        return {
+            "status": "started",
+            "message": f"EOD batch scan started in background on universe '{universe}'.",
+            "is_executing": True
+        }
 
     # ==================== STRATEGY API ENDPOINTS ====================
 

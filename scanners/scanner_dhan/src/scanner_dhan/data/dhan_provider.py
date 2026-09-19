@@ -125,6 +125,8 @@ class DhanDataProvider:
     _last_rest_time = 0.0
 
     _data_api_health_cache: tuple[float, dict[str, Any]] | None = None
+    _daily_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
+    _intraday_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
     quote_delay: float = 1.0       # Dhan REST quote API strict limit: 1 request/sec
     historical_delay: float = 0.20 # Dhan historical data API limit: ~5 requests/sec
     rest_delay: float = 0.50       # Dhan general REST API: ~2 requests/sec
@@ -345,6 +347,13 @@ class DhanDataProvider:
         instrument_type: str = "EQUITY",
     ) -> pd.DataFrame:
         """Fetch historical daily OHLCV bars directly from DhanHQ with rate-limit and subscription error checks."""
+        cache_key = (str(security_id), int(days), str(exchange_segment))
+        now_ts = time.time()
+        if cache_key in DhanDataProvider._daily_bars_cache:
+            ts, cached_df = DhanDataProvider._daily_bars_cache[cache_key]
+            if now_ts - ts < 900.0:  # 15 min in-memory TTL
+                return cached_df.copy()
+
         if self.dhan is None:
             raise DhanAuthError("Dhan client is not configured. Please provide DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN.")
 
@@ -419,7 +428,10 @@ class DhanDataProvider:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            return df.sort_values("timestamp").reset_index(drop=True)
+            res_df = df.sort_values("timestamp").reset_index(drop=True)
+            if not res_df.empty:
+                DhanDataProvider._daily_bars_cache[cache_key] = (now_ts, res_df)
+            return res_df
 
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 

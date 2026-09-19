@@ -165,12 +165,10 @@ def resolve_1otm_ce_contract(
     today = current_date or dt.date.today()
     dhan_prov = provider or DhanDataProvider()
 
-    under_sec_id: Optional[str] = None
-    if dhan_prov:
-        mgr = get_universe_manager()
-        under_sec_id = mgr._equity_sec_ids.get(symbol.upper())
-        if not under_sec_id and dhan_prov.dhan:
-            under_sec_id = str(dhan_prov.resolve_security_id(symbol))
+    mgr = get_universe_manager()
+    under_sec_id = mgr.get_security_id(symbol)
+    if not under_sec_id and dhan_prov and hasattr(dhan_prov, "resolve_security_id"):
+        under_sec_id = str(dhan_prov.resolve_security_id(symbol))
 
     # 2. Resolve Active Expiry Date via DhanHQ expiry_list() API
     expiry_dt: dt.date

@@ -317,7 +317,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           </div>
         </div>
 
-        <!-- Navigation Tabs Switcher (Strategies vs Scanner) -->
+        <!-- Navigation Tabs Switcher (Strategies vs Scanner vs EOD Digest) -->
         <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
           <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5">
             <span>⚡</span> <span>Strategies</span>
@@ -325,6 +325,15 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
             <span>🔭</span> <span>Scanner</span>
           </button>
+          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+            <span>🌆</span> <span>EOD Digest</span>
+          </button>
+        </div>
+
+        <!-- Global EOD Scan Live Progress Pill -->
+        <div id="global-eod-scan-badge" class="hidden items-center gap-2 px-3 py-1.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-semibold cursor-pointer animate-pulse transition hover:bg-amber-500/25 shadow-sm" onclick="switchMainTab('eod')" title="EOD Batch Scan in progress (~5-10 min). Click to view live progress on EOD tab.">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+          <span id="global-eod-scan-text">⚡ EOD Scan: 0%</span>
         </div>
 
       </div>
@@ -907,17 +916,37 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             Select a strategy on the left to customize live parameters (Universe, Timeframe, Proximity & Multipliers), then launch the real-time scan.
           </p>
         </div>
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-3 flex-wrap gap-y-2">
+          <!-- Mode Navigation Switcher -->
+          <div class="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-2xl border border-slate-800">
+            <button
+              id="nav-btn-studio"
+              onclick="showHomeView()"
+              class="px-3 py-1.5 rounded-xl font-bold text-xs transition bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center space-x-1.5"
+            >
+              <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
+              <span>Scanner Studio</span>
+            </button>
+            <button
+              id="nav-btn-eod"
+              onclick="showEodDigestView()"
+              class="px-3 py-1.5 rounded-xl font-semibold text-xs transition text-slate-400 hover:text-white flex items-center space-x-1.5"
+            >
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>Daily EOD Digest</span>
+            </button>
+          </div>
+
           <div id="dhan-status-badge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700">
             <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
             <span class="text-xs text-slate-300 font-medium">Checking DhanHQ API...</span>
           </div>
-          <div class="relative w-full md:w-64">
+          <div class="relative w-full md:w-56">
             <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
             <input
               type="text"
               id="home-scanner-search"
-              placeholder="Search strategy (e.g. Order Block)..."
+              placeholder="Search strategy..."
               class="w-full pl-10 pr-4 py-2 bg-slate-950/80 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 shadow-inner"
             />
           </div>
@@ -1240,6 +1269,173 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       </div>
     </section>
 
+    <!-- View 3: Daily EOD Multi-Scanner Digest View -->
+    <section id="view-eod-digest" class="hidden space-y-6">
+      
+      <!-- Top Control Bar -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center space-x-4">
+          <div class="p-3 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl shadow-lg shadow-amber-500/20 text-white shrink-0">
+            <i data-lucide="sun-medium" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2.5 flex-wrap">
+              <h2 class="text-xl font-black text-white tracking-tight">Daily EOD Multi-Scanner Digest</h2>
+              <span id="eod-live-status-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 flex items-center space-x-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 live-dot"></span>
+                <span id="eod-status-text">6:30 PM IST Snapshot</span>
+              </span>
+            </div>
+            <p id="eod-header-subtitle" class="text-xs text-slate-400 mt-0.5">Automated Post-Market Snapshot across 500 Liquid NSE Stocks • 12 Active Strategies</p>
+          </div>
+        </div>
+
+        <!-- Action Buttons & Date Picker -->
+        <div class="flex items-center space-x-2.5 flex-wrap gap-y-2">
+          <div class="relative">
+            <select id="eod-select-date" onchange="onEodDateSelected(this.value)" class="pl-3 pr-8 py-2 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer shadow-sm appearance-none">
+              <!-- Populated dynamically -->
+            </select>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+          </div>
+
+          <button onclick="openEodConfirmModal()" id="btn-eod-run-now" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition flex items-center space-x-1.5 cursor-pointer shadow-sm">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-sky-400" id="icon-eod-refresh"></i>
+            <span id="btn-eod-run-text">Run All Now</span>
+          </button>
+
+          <button onclick="copyEodTradingViewWatchlist(true)" class="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-amber-500/20 active:scale-95 transition flex items-center space-x-1.5 cursor-pointer" title="Copy only high-confluence stocks for TradingView">
+            <i data-lucide="flame" class="w-3.5 h-3.5"></i>
+            <span>Copy Confluence</span>
+          </button>
+
+          <button onclick="copyEodTradingViewWatchlist(false)" class="px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-sky-500/20 active:scale-95 transition flex items-center space-x-1.5 cursor-pointer" title="Copy all flagged stocks for TradingView">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>Copy All Symbols</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- EOD ACTIVE BATCH SCAN PROGRESS CARD (Shown while scan is running) -->
+      <div id="eod-active-scan-banner" class="hidden bg-gradient-to-r from-slate-900 via-indigo-950/70 to-slate-900 border-2 border-sky-500/40 rounded-3xl p-6 shadow-2xl space-y-4">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div class="flex items-center space-x-4">
+            <div class="p-3 bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-2xl shrink-0">
+              <i data-lucide="loader-2" class="w-7 h-7 animate-spin"></i>
+            </div>
+            <div>
+              <div class="flex items-center space-x-2.5">
+                <h3 class="text-lg font-bold text-white tracking-tight">EOD Multi-Scanner Batch in Progress</h3>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40" id="eod-scan-pct-badge">0%</span>
+              </div>
+              <p class="text-xs text-slate-300 mt-1" id="eod-scan-status-detail">
+                Scanning 500 stocks across 12 strategies. Estimated time: <strong class="text-amber-300">~5–10 minutes</strong>.
+              </p>
+            </div>
+          </div>
+          <div class="text-right shrink-0">
+            <span class="text-[11px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/60 px-3 py-1.5 rounded-xl shadow-sm">
+              🛡️ Running on Server • Storing in MySQL
+            </span>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="w-full bg-slate-950/90 rounded-full h-3.5 overflow-hidden border border-slate-700/60 p-0.5 shadow-inner">
+          <div id="eod-scan-progress-bar" class="bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500 shadow-md shadow-sky-500/50" style="width: 0%;"></div>
+        </div>
+
+        <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono flex-wrap gap-2">
+          <span id="eod-scan-step-indicator" class="text-sky-300 font-semibold">Scanner 1 of 12: Initializing...</span>
+          <span class="text-amber-400/90 flex items-center gap-1.5">
+            <span>⚠️ Screen actions paused for EOD scan. You may safely switch tabs or let it finish.</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- Metric KPI Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="eod-kpi-container">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- SECTION 1: 🔥 HIGH CONFLUENCE RADAR (2+ STRATEGIES) -->
+      <div id="eod-confluence-section" class="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 shadow-2xl space-y-4">
+        <div class="flex items-center space-x-3">
+          <div class="p-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl">
+            <i data-lucide="flame" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+              <span>High Confluence Radar</span>
+              <span id="eod-confluence-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">-- Multi-Strategy Setups</span>
+            </h3>
+            <p class="text-xs text-slate-400">Stocks that triggered 2 or more independent algorithmic strategies simultaneously today.</p>
+          </div>
+        </div>
+
+        <div id="eod-confluence-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- SECTION 2: CONSOLIDATED MASTER WATCHLIST TABLE -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+              <i data-lucide="table-2" class="w-4 h-4 text-sky-400"></i>
+              <span>Master EOD Watchlist</span>
+              <span id="eod-table-count-badge" class="text-xs font-normal text-slate-400">(-- Total Unique Stocks Flagged)</span>
+            </h3>
+          </div>
+
+          <!-- Category filter tabs & Search -->
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <div class="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs" id="eod-table-filters">
+              <button onclick="filterEodTable('ALL')" data-eod-filter="ALL" class="eod-filter-btn px-3 py-1 rounded-lg font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">All</button>
+              <button onclick="filterEodTable('CONFLUENCE')" data-eod-filter="CONFLUENCE" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">🔥 Confluence (2+)</button>
+              <button onclick="filterEodTable('VCP')" data-eod-filter="VCP" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">VCP</button>
+              <button onclick="filterEodTable('SMC')" data-eod-filter="SMC" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">SMC / OB</button>
+              <button onclick="filterEodTable('BREAKOUT')" data-eod-filter="BREAKOUT" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Breakout</button>
+              <button onclick="filterEodTable('REVERSAL')" data-eod-filter="REVERSAL" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Reversal</button>
+              <button onclick="filterEodTable('TREND')" data-eod-filter="TREND" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Trend</button>
+            </div>
+
+            <div class="relative">
+              <input
+                type="text"
+                id="eod-table-search"
+                placeholder="Filter symbol..."
+                oninput="onEodSearchInput(this.value)"
+                class="pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 w-36 shadow-inner"
+              />
+              <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table Container -->
+        <div class="overflow-x-auto rounded-2xl border border-slate-800">
+          <table class="w-full text-left text-xs text-slate-300">
+            <thead class="bg-slate-950/80 text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <tr>
+                <th class="p-3.5">Symbol</th>
+                <th class="p-3.5">LTP / Change</th>
+                <th class="p-3.5">Triggered Strategies</th>
+                <th class="p-3.5">Key Trigger Level / Signal</th>
+                <th class="p-3.5">Volume Multiple</th>
+                <th class="p-3.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="eod-table-body" class="divide-y divide-slate-800/60 bg-slate-900/40">
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
   </div>
 
   <!-- EMBEDDED REAL-TIME INTERACTIVE CHART MODAL -->
@@ -1460,6 +1656,48 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       </div>
       <div class="flex justify-end pt-2 border-t border-gray-800">
         <button onclick="closeHotkeysModal()" class="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition">Got It</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EOD BATCH SCAN CONFIRMATION MODAL -->
+  <div id="modal-eod-confirm" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200" id="modal-eod-confirm-card">
+      <div class="flex items-start space-x-4">
+        <div class="p-3.5 bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 rounded-2xl shrink-0">
+          <i data-lucide="sun-medium" class="w-7 h-7"></i>
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-white tracking-tight">Run Full EOD Multi-Scanner Batch?</h3>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            This triggers a complete quantitative scan across all <strong>500 stocks</strong> in Nifty 500 for all <strong>12 algorithmic strategies</strong>.
+          </p>
+        </div>
+      </div>
+
+      <div class="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2.5 text-xs text-slate-300">
+        <div class="flex items-center space-x-2.5 text-amber-300 font-semibold">
+          <i data-lucide="clock" class="w-4 h-4 shrink-0 text-amber-400"></i>
+          <span>Estimated Duration: Approx 5–10 minutes</span>
+        </div>
+        <div class="flex items-center space-x-2.5 text-emerald-400">
+          <i data-lucide="database" class="w-4 h-4 shrink-0 text-emerald-400"></i>
+          <span>Data Safety: Permanently saved to MySQL & SQLite database</span>
+        </div>
+        <div class="flex items-center space-x-2.5 text-slate-400">
+          <i data-lucide="shield-check" class="w-4 h-4 shrink-0 text-sky-400"></i>
+          <span>Background Execution: Safe to switch screens or view live positions</span>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end space-x-3 pt-2">
+        <button onclick="closeEodConfirmModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-semibold text-xs rounded-xl border border-slate-700 transition cursor-pointer">
+          Cancel
+        </button>
+        <button onclick="confirmAndStartEodScan()" class="px-5 py-2 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 hover:from-amber-500 hover:to-orange-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition flex items-center space-x-1.5 cursor-pointer">
+          <i data-lucide="zap" class="w-4 h-4"></i>
+          <span>Start EOD Batch Scan</span>
+        </button>
       </div>
     </div>
   </div>
@@ -4496,16 +4734,50 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const scannerTab = document.getElementById('main-tab-scanner');
       const btnStrategies = document.getElementById('nav-tab-strategies');
       const btnScanner = document.getElementById('nav-tab-scanner');
+      const btnEod = document.getElementById('nav-tab-eod');
       const strategyControls = document.getElementById('strategy-controls-group');
       const btnStratSelector = document.getElementById('btn-strategy-selector');
       const stratMenu = document.getElementById('strategy-menu-dropdown');
 
-      if (tabName === 'scanner') {
+      const viewHome = document.getElementById('view-home');
+      const viewResults = document.getElementById('view-results');
+      const viewEod = document.getElementById('view-eod-digest');
+
+      if (tabName === 'eod') {
         if (strategiesTab) strategiesTab.classList.add('hidden');
         if (scannerTab) scannerTab.classList.remove('hidden');
         if (strategyControls) strategyControls.classList.add('hidden');
         if (stratMenu) stratMenu.classList.add('hidden');
         
+        if (viewHome) viewHome.classList.add('hidden');
+        if (viewResults) viewResults.classList.add('hidden');
+        if (viewEod) viewEod.classList.remove('hidden');
+
+        if (btnStratSelector) {
+          btnStratSelector.disabled = true;
+          btnStratSelector.classList.add('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
+          btnStratSelector.setAttribute('title', 'Strategy selector disabled in EOD Digest mode.');
+        }
+
+        if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+        if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+        if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5";
+
+        if (typeof showEodDigestView === 'function') {
+          showEodDigestView();
+        } else if (typeof loadEodDatesAndLatest === 'function') {
+          loadEodDatesAndLatest();
+        }
+      } else if (tabName === 'scanner') {
+        if (strategiesTab) strategiesTab.classList.add('hidden');
+        if (scannerTab) scannerTab.classList.remove('hidden');
+        if (strategyControls) strategyControls.classList.add('hidden');
+        if (stratMenu) stratMenu.classList.add('hidden');
+        
+        if (viewHome) viewHome.classList.remove('hidden');
+        if (viewResults) viewResults.classList.add('hidden');
+        if (viewEod) viewEod.classList.add('hidden');
+
         // Disable Strategy Dropdown in Scanner view
         if (btnStratSelector) {
           btnStratSelector.disabled = true;
@@ -4515,6 +4787,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
+        if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+
+        if (typeof showHomeView === 'function') {
+          showHomeView();
+        }
       } else {
         if (scannerTab) scannerTab.classList.add('hidden');
         if (strategiesTab) strategiesTab.classList.remove('hidden');
@@ -4530,6 +4807,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         }
 
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+        if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5";
       }
     }
@@ -4568,7 +4846,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </script>
 
   <!-- Scanner Application Logic -->
-  <script src="/static/scanner/app.js?v=3.0"></script>
+  <script src="/static/scanner/app.js?v=3.6"></script>
 </body>
 </html>
 """

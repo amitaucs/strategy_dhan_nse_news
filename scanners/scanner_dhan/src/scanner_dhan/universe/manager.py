@@ -57,6 +57,10 @@ class DhanUniverseManager:
         self._equity_sec_ids: Dict[str, str] = {}
         self._init_memory_from_cache()
 
+    def get_security_id(self, symbol: str) -> Optional[str]:
+        """Resolve equity security ID from cache."""
+        return self._equity_sec_ids.get(symbol.upper())
+
     @classmethod
     def get_instance(cls, cache_dir: Optional[str | Path] = None) -> DhanUniverseManager:
         """Get or create singleton instance of DhanUniverseManager."""

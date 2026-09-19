@@ -31,10 +31,9 @@ def check_breakout_candle_cross(
             - message: Status message describing the trigger state
     """
     ltp = None
-    dhan_prov = provider or DhanDataProvider()
-    if dhan_prov.dhan and sec_id:
+    if provider is not None and provider.dhan and sec_id:
         try:
-            ltp_map = dhan_prov.fetch_ltp_batch([sec_id])
+            ltp_map = provider.fetch_ltp_batch([sec_id])
             if sec_id in ltp_map and ltp_map[sec_id] > 0:
                 ltp = ltp_map[sec_id]
             else:
@@ -42,8 +41,20 @@ def check_breakout_candle_cross(
         except Exception as exc:
             logger.warning("Error fetching live LTP for %s: %s", symbol, exc)
             return False, 0.0, f"⏳ Pending Trigger: Live quote fetch exception for {symbol} (Breakout High: ₹{breakout_candle_high:,.2f}): {exc}"
-    else:
+    elif current_ltp is not None and current_ltp > 0:
         ltp = current_ltp
+    else:
+        dhan_prov = DhanDataProvider()
+        if dhan_prov.dhan and sec_id:
+            try:
+                ltp_map = dhan_prov.fetch_ltp_batch([sec_id])
+                if sec_id in ltp_map and ltp_map[sec_id] > 0:
+                    ltp = ltp_map[sec_id]
+                else:
+                    return False, 0.0, f"⏳ Pending Trigger: Live real-time price unavailable from broker for {symbol} (Breakout High: ₹{breakout_candle_high:,.2f})"
+            except Exception as exc:
+                logger.warning("Error fetching live LTP for %s: %s", symbol, exc)
+                return False, 0.0, f"⏳ Pending Trigger: Live quote fetch exception for {symbol} (Breakout High: ₹{breakout_candle_high:,.2f}): {exc}"
 
     if ltp is None or ltp <= 0:
         return False, 0.0, f"⏳ Pending Trigger: Live price unavailable for {symbol} (Breakout High: ₹{breakout_candle_high:,.2f})"

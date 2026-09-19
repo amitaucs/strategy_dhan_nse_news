@@ -47,10 +47,22 @@ def create_app() -> FastAPI:
         # Load today's signals by default on startup
         state.load_recent_audits_from_db(today_only=True)
         task = asyncio.create_task(state.start_background_poller())
+        
+        # Start EOD Multi-Scanner 6:30 PM Scheduler
+        eod_task = None
+        try:
+            from news_based_strategy.ui.routes import _eod_scheduler
+            if _eod_scheduler is not None:
+                eod_task = asyncio.create_task(_eod_scheduler.start())
+        except Exception as err:
+            logger.warning(f"Could not start EOD scheduler: {err}")
+
         try:
             yield
         finally:
             task.cancel()
+            if eod_task:
+                eod_task.cancel()
 
     app = FastAPI(title="NSE Catalyst Trading Terminal", version="1.0.0", lifespan=lifespan)
     app.state.dashboard = state
