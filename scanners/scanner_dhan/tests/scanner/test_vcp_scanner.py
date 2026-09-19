@@ -263,10 +263,18 @@ class TestVcpScanner(unittest.TestCase):
         self.assertIn("vdu_threshold", param_names)
 
         univ_param = next(p for p in scanner.parameters if p.name == "universe")
-        self.assertEqual(univ_param.default, "NIFTY_500")
+        self.assertEqual(univ_param.default, "NIFTY_100")
         univ_values = [opt["value"] for opt in univ_param.options]
+        self.assertIn("NIFTY_100", univ_values)
         self.assertIn("NIFTY_500", univ_values)
         self.assertIn("NIFTY_MIDCAP_100", univ_values)
+
+        # Test alias resolution in ScannerRegistry
+        from scanner_dhan.scanner.registry import ScannerRegistry
+        self.assertIsNotNone(ScannerRegistry.get("vcp_contraction"))
+        self.assertIsNotNone(ScannerRegistry.get("vcp_scanner"))
+        self.assertIsNotNone(ScannerRegistry.get("vcp_breakout"))
+        self.assertIsNotNone(ScannerRegistry.get("vcp"))
 
     def test_format_vcp_dataframe(self) -> None:
         """Verify presentation DataFrame output."""

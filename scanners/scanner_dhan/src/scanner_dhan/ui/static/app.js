@@ -732,7 +732,28 @@ async function runScanner(scannerId, overrideParams = null) {
     try {
       resData = await res.json();
     } catch (e) {
-      resData = { status: "error", error_message: "Invalid response from server" };
+      if (res.status === 504 || res.status === 524 || res.status === 408) {
+        resData = {
+          status: "error",
+          error_title: "Scanner Request Timeout",
+          error_message: `The scan request timed out (HTTP ${res.status}) because scanning a large universe takes longer than the gateway timeout. Try selecting 'Nifty 100' or 'Nifty 50' for immediate scans, or use the automated EOD Multi-Scanner Daily Digest for the entire Nifty 500.`,
+          error_type: "TIMEOUT_ERROR",
+        };
+      } else if (res.status === 502 || res.status === 503) {
+        resData = {
+          status: "error",
+          error_title: "Server Busy / Gateway Unavailable",
+          error_message: `The server gateway encountered HTTP ${res.status}. Please wait a few seconds and retry.`,
+          error_type: "GATEWAY_ERROR",
+        };
+      } else {
+        resData = {
+          status: "error",
+          error_title: "Scan Execution Failed",
+          error_message: `Server returned HTTP ${res.status || "Unknown"}. Please check server logs or retry with Nifty 100.`,
+          error_type: "HTTP_ERROR",
+        };
+      }
     }
 
     if (!res.ok || resData.status === "error") {
