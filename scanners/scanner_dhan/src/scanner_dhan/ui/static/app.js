@@ -801,6 +801,17 @@ function getItemLevelDesc(r, report) {
     return "⚡ FVG + 0.618 Fib";
   }
 
+  // Dedicated handling for VCP Contraction scanner
+  if (report && (report.scanner_id === "vcp_contraction" || report.scanner_id === "vcp_scanner")) {
+    if (r.support_desc) return r.support_desc;
+    if (r.setup) {
+      const cCount = r.setup.contractions_count || 3;
+      const stat = r.setup.status === "BREAKOUT_ACTIVE" ? "Breakout Active" : r.setup.status === "PRIMED_TIGHT" ? "Primed" : "Forming";
+      return `⚡ ${cCount}T VCP (${stat})`;
+    }
+    return "⚡ VCP Contraction";
+  }
+
   // 1. Extract raw level description from whichever field is populated by the backend search
   let raw =
     r.support_desc ||
@@ -1025,7 +1036,13 @@ function renderReport(report) {
   const thirdMetricLabel =
     document.getElementById("metric-third-label") ||
     document.querySelector("#results-content .metric-badge:nth-child(3) span");
-  if (report.scanner_id === "fvg_fib_0618" || report.scanner_id === "fvg_fibonacci") {
+  if (report.scanner_id === "vcp_contraction" || report.scanner_id === "vcp_scanner") {
+    if (thirdMetricLabel) thirdMetricLabel.innerText = "Primed VCPs";
+    const primedCount = (report.results || []).filter(
+      (r) => r.is_at_support || (r.setup && (r.setup.status === "PRIMED_TIGHT" || r.setup.status === "BREAKOUT_ACTIVE"))
+    ).length;
+    document.getElementById("metric-reversals").innerText = primedCount;
+  } else if (report.scanner_id === "fvg_fib_0618" || report.scanner_id === "fvg_fibonacci") {
     if (thirdMetricLabel) thirdMetricLabel.innerText = "Confirmed Pullbacks";
     const readyCount = (report.results || []).filter(
       (r) => r.is_at_support || r.is_pullback || (r.status === "PULLBACK_AT_618")
@@ -1248,14 +1265,15 @@ function renderTable(items) {
   const isSt14Scanner = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
   const isHsScanner = currentReport && currentReport.scanner_id === "head_and_shoulders";
   const isFvgFibScanner = currentReport && (currentReport.scanner_id === "fvg_fib_0618" || currentReport.scanner_id === "fvg_fibonacci");
+  const isVcpScanner = currentReport && (currentReport.scanner_id === "vcp_contraction" || currentReport.scanner_id === "vcp_scanner");
   const thKeyLevel = document.getElementById("th-col-key-level-text");
   const thDist = document.getElementById("th-col-distance-text");
   const thDesc = document.getElementById("th-col-desc-text");
   const thRsi = document.getElementById("th-col-rsi-text");
 
-  if (thKeyLevel) thKeyLevel.innerText = isSt14Scanner ? "5H Breakout (₹)" : isHsScanner ? "Neckline (₹)" : isFvgFibScanner ? "0.618 Fib / FVG (₹)" : "Key Level (₹)";
-  if (thDist) thDist.innerText = isSt14Scanner ? "5H Dist (%)" : isHsScanner ? "Neckline Dist (%)" : isFvgFibScanner ? "0.618 Dist (%)" : "Distance (%)";
-  if (thDesc) thDesc.innerText = isSt14Scanner ? "Setup Status" : isHsScanner ? "Pattern & Status" : isFvgFibScanner ? "Imbalance & Confluence" : "Level Description";
+  if (thKeyLevel) thKeyLevel.innerText = isSt14Scanner ? "5H Breakout (₹)" : isHsScanner ? "Neckline (₹)" : isFvgFibScanner ? "0.618 Fib / FVG (₹)" : isVcpScanner ? "Pivot Trigger (₹)" : "Key Level (₹)";
+  if (thDist) thDist.innerText = isSt14Scanner ? "5H Dist (%)" : isHsScanner ? "Neckline Dist (%)" : isFvgFibScanner ? "0.618 Dist (%)" : isVcpScanner ? "Pivot Dist (%)" : "Distance (%)";
+  if (thDesc) thDesc.innerText = isSt14Scanner ? "Setup Status" : isHsScanner ? "Pattern & Status" : isFvgFibScanner ? "Imbalance & Confluence" : isVcpScanner ? "Contraction Sequence" : "Level Description";
   if (thRsi) thRsi.innerText = isSt14Scanner ? "Intraday VWAP" : "RSI (14)";
 
   if (items.length === 0) {
@@ -1359,6 +1377,7 @@ function renderTable(items) {
       const isSt14 = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
       const isHs = currentReport && currentReport.scanner_id === "head_and_shoulders";
       const isFvgFib = currentReport && (currentReport.scanner_id === "fvg_fib_0618" || currentReport.scanner_id === "fvg_fibonacci");
+      const isVcp = currentReport && (currentReport.scanner_id === "vcp_contraction" || currentReport.scanner_id === "vcp_scanner");
       const keyLevelPrice = isAth08
         ? r.prior_ath_price
         : isHaSt01
@@ -1371,6 +1390,8 @@ function renderTable(items) {
         ? (r.neckline || (r.pattern ? r.pattern.neckline_price : null) || r.support_price)
         : isFvgFib
         ? (r.confluence_price || (r.setup ? r.setup.confluence_price : null) || r.support_price)
+        : isVcp
+        ? (r.setup ? r.setup.pivot_level : (r.pivot_level || r.support_price))
         : (r.support_price !== undefined ? r.support_price : (r.nearest_support ? r.nearest_support.price : null));
       const keyLevelDesc = getItemLevelDesc(r, currentReport);
       const hoverTitle = isAth08
@@ -1385,6 +1406,8 @@ function renderTable(items) {
         ? `Neckline: ₹${r.neckline || (r.pattern ? r.pattern.neckline_price : 0)} | T1: ₹${r.target_1 || (r.pattern ? r.pattern.target_1 : 0)} | SL: ₹${r.stop_loss || (r.pattern ? r.pattern.stop_loss : 0)} | Head: ₹${r.head_price || (r.pattern ? r.pattern.head.price : 0)} | Left: ₹${r.left_shoulder_price || (r.pattern ? r.pattern.left_shoulder.price : 0)} | Right: ₹${r.right_shoulder_price || (r.pattern ? r.pattern.right_shoulder.price : 0)}`
         : isFvgFib
         ? `0.618 Fib: ₹${r.confluence_price || (r.setup ? r.setup.confluence_price : 0)} | FVG: ${r.setup ? r.setup.fvg_overlap_desc : ''} | T1: ₹${r.target_1 || 0} | T2: ₹${r.target_2 || (r.setup ? r.setup.target_2 : 0)} | SL: ₹${r.stop_loss || 0} | R:R 1:${r.risk_reward_ratio || (r.setup ? r.setup.risk_reward_ratio : 0)}`
+        : isVcp && r.setup
+        ? `Pivot: ₹${r.setup.pivot_level} | SL: ₹${r.setup.stop_loss} (${r.setup.risk_pct}%) | VDU: ${r.setup.vdu_ratio}x | T1: ₹${r.setup.target_1} | T2: ₹${r.setup.target_2} | R:R 1:${r.setup.risk_reward_ratio} | [${r.setup.schematic}]`
         : (r.support_desc || "");
 
       let levelBadgeColor = "text-slate-300 bg-slate-800/80 border-slate-700";

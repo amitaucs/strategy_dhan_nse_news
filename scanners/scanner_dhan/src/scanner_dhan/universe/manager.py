@@ -23,6 +23,7 @@ NSE_INDEX_URLS = {
     "NIFTY_100": "https://archives.nseindia.com/content/indices/ind_nifty100list.csv",
     "NIFTY_200": "https://archives.nseindia.com/content/indices/ind_nifty200list.csv",
     "NIFTY_500": "https://archives.nseindia.com/content/indices/ind_nifty500list.csv",
+    "NIFTY_MIDCAP_100": "https://archives.nseindia.com/content/indices/ind_niftymidcap100list.csv",
     "NIFTY_SMALLCAP_100": "https://archives.nseindia.com/content/indices/ind_niftysmallcap100list.csv",
 }
 
@@ -70,7 +71,7 @@ class DhanUniverseManager:
 
     def _init_memory_from_cache(self) -> None:
         """Load any existing valid cached universes on startup."""
-        for key in ["fno", "nifty50", "nifty100", "nifty200", "nifty500", "niftysmallcap100", "dhanequitymaster"]:
+        for key in ["fno", "nifty50", "nifty100", "nifty200", "nifty500", "niftymidcap100", "niftysmallcap100", "dhanequitymaster"]:
             cpath = self._get_cache_path(key)
             if cpath.exists():
                 try:
@@ -337,6 +338,8 @@ class DhanUniverseManager:
             key = "NIFTY_200"
         elif norm in ("NIFTY_100", "NIFTY100", "100"):
             key = "NIFTY_100"
+        elif norm in ("NIFTY_MIDCAP_100", "NIFTY_MIDCAP", "MIDCAP_100", "MIDCAP", "NIFTYMIDCAP100"):
+            key = "NIFTY_MIDCAP_100"
         elif norm in ("NIFTY_SMALLCAP_100", "NIFTY_SMALLCAP", "SMALLCAP_100", "SMALLCAP"):
             key = "NIFTY_SMALLCAP_100"
         elif norm in ("NIFTY_50", "NIFTY50", "50"):

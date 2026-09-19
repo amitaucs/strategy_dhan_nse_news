@@ -88,6 +88,20 @@ from scanner_dhan.scanner.fvg_fibonacci import (
     format_fvg_fib_dataframe,
     scan_stock_for_fvg_fib,
 )
+from scanner_dhan.scanner.vcp_scanner import (
+    Stage2Metrics,
+    VcpPattern,
+    VcpScanResult,
+    VcpScanner,
+    VcpSchematic,
+    VcpStatus,
+    VcpWave,
+    detect_peaks_and_troughs,
+    detect_vcp_pattern,
+    evaluate_stage2_trend,
+    format_vcp_dataframe,
+    scan_stock_for_vcp,
+)
 
 __all__ = [
     "BaseScanner",
@@ -161,4 +175,16 @@ __all__ = [
     "detect_fvg_fib_confluences",
     "format_fvg_fib_dataframe",
     "scan_stock_for_fvg_fib",
+    "VcpScanner",
+    "VcpPattern",
+    "VcpWave",
+    "VcpScanResult",
+    "VcpStatus",
+    "VcpSchematic",
+    "Stage2Metrics",
+    "evaluate_stage2_trend",
+    "detect_peaks_and_troughs",
+    "detect_vcp_pattern",
+    "scan_stock_for_vcp",
+    "format_vcp_dataframe",
 ]

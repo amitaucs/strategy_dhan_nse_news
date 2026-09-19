@@ -41,6 +41,12 @@ from scanner_dhan.universe.nifty500 import (
     get_nifty500_symbols,
     resolve_nifty500_securities,
 )
+from scanner_dhan.universe.nifty_midcap100 import (
+    NIFTY_MIDCAP_100_SECURITY_IDS,
+    NIFTY_MIDCAP_100_SYMBOLS,
+    get_nifty_midcap100_symbols,
+    resolve_nifty_midcap100_securities,
+)
 from scanner_dhan.universe.nifty_smallcap100 import (
     NIFTY_SMALLCAP_100_SECURITY_IDS,
     NIFTY_SMALLCAP_100_SYMBOLS,
@@ -70,6 +76,10 @@ __all__ = [
     "NIFTY_500_SYMBOLS",
     "get_nifty500_symbols",
     "resolve_nifty500_securities",
+    "NIFTY_MIDCAP_100_SECURITY_IDS",
+    "NIFTY_MIDCAP_100_SYMBOLS",
+    "get_nifty_midcap100_symbols",
+    "resolve_nifty_midcap100_securities",
     "NIFTY_SMALLCAP_100_SECURITY_IDS",
     "NIFTY_SMALLCAP_100_SYMBOLS",
     "get_nifty_smallcap100_symbols",
@@ -87,6 +97,6 @@ def get_active_universe(
 ) -> tuple[str, list[str], dict[str, str]]:
     """Return active stock universe symbols and security ID mapping dynamically from DhanUniverseManager.
 
-    Supports `NIFTY_500`, `NIFTY_200`, `NIFTY_100`, `NIFTY_50`, `NIFTY_SMALLCAP_100`, and `ALL_F_AND_O`.
+    Supports `NIFTY_500`, `NIFTY_200`, `NIFTY_100`, `NIFTY_50`, `NIFTY_MIDCAP_100`, `NIFTY_SMALLCAP_100`, and `ALL_F_AND_O`.
     """
     return get_universe_manager().get_universe(universe_name)
