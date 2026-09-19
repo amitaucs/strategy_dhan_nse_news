@@ -23,6 +23,9 @@ function initializeScannerApp() {
   checkHealth();
   loadScanners();
   setupEventListeners();
+  if (typeof loadEodDatesAndLatest === "function") {
+    loadEodDatesAndLatest();
+  }
 }
 
 if (document.readyState === "loading") {

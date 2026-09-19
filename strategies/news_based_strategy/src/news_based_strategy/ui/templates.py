@@ -282,7 +282,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         <!-- Strategy Quick-Selector Dropdown -->
         <div class="relative" id="strategy-selector-container">
-          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" class="bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95" title="Switch Active Quantitative Strategy">
+          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" disabled class="opacity-30 cursor-not-allowed pointer-events-none bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95" title="Strategy selector disabled in EOD Digest mode.">
             <span id="header-strat-icon" class="text-base">⚡</span>
             <div class="text-left">
               <div class="flex items-center gap-1.5">
@@ -317,16 +317,16 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           </div>
         </div>
 
-        <!-- Navigation Tabs Switcher (Strategies vs Scanner vs EOD Digest) -->
+        <!-- Navigation Tabs Switcher (EOD Digest vs Strategies vs Scanner) -->
         <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
-          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5">
+          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5">
+            <span>🌆</span> <span>EOD Digest</span>
+          </button>
+          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
             <span>⚡</span> <span>Strategies</span>
           </button>
           <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
             <span>🔭</span> <span>Scanner</span>
-          </button>
-          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
-            <span>🌆</span> <span>EOD Digest</span>
           </button>
         </div>
 
@@ -342,7 +342,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <div class="flex items-center gap-2.5">
         
         <!-- Strategy Controls Group -->
-        <div id="strategy-controls-group" class="flex items-center gap-2">
+        <div id="strategy-controls-group" class="hidden flex items-center gap-2">
           <!-- MASTER STRATEGY ENGINE POWER BUTTON (ACTIVE / PAUSED) -->
           <button id="toggle-engine-btn" onclick="toggleStrategyEngine()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer" title="Master Power Switch: Start or Pause Strategy Engine (Stops background polling & AI grading)">
             <span id="engine-status-indicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -444,7 +444,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </header>
 
   <!-- STRATEGIES TAB CONTAINER -->
-  <div id="main-tab-strategies" class="w-full flex-1 flex flex-col">
+  <div id="main-tab-strategies" class="hidden w-full flex-1 flex flex-col">
 
     <!-- WORKSPACE 1: ST-NEWS CATALYST WORKSPACE -->
     <div id="workspace-st-news" class="strategy-workspace-pane w-full flex-1 flex flex-col">
@@ -897,10 +897,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div> <!-- /main-tab-strategies -->
 
   <!-- TECHNICAL SCANNER TAB CONTAINER -->
-  <div id="main-tab-scanner" class="hidden max-w-[1600px] mx-auto px-6 py-6 w-full space-y-6 flex-1">
+  <div id="main-tab-scanner" class="max-w-[1600px] mx-auto px-6 py-6 w-full space-y-6 flex-1">
     
     <!-- View 1: Scanners Directory & Pro Studio (Home View) -->
-    <section id="view-home" class="space-y-6">
+    <section id="view-home" class="hidden space-y-6">
       
       <!-- Top Overview Bar -->
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/80 p-6 rounded-3xl border border-slate-800 shadow-xl">
@@ -1270,7 +1270,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     </section>
 
     <!-- View 3: Daily EOD Multi-Scanner Digest View -->
-    <section id="view-eod-digest" class="hidden space-y-6">
+    <section id="view-eod-digest" class="space-y-6">
       
       <!-- Top Control Bar -->
       <div class="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -4835,6 +4835,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         window.history.replaceState({}, document.title, window.location.pathname);
       }
 
+      switchMainTab('eod');
       updateSoundUI();
       initDesktopNotifications();
       renderMarketStatusUI(computeMarketStatusClient());
