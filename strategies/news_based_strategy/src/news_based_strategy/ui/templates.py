@@ -1389,7 +1389,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             </h3>
           </div>
 
-          <!-- Category filter tabs & Search -->
+          <!-- Category filter tabs, Level dropdown & Search -->
           <div class="flex items-center space-x-2 flex-wrap gap-y-2">
             <div class="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs" id="eod-table-filters">
               <button onclick="filterEodTable('ALL')" data-eod-filter="ALL" class="eod-filter-btn px-3 py-1 rounded-lg font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">All</button>
@@ -1399,6 +1399,19 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <button onclick="filterEodTable('BREAKOUT')" data-eod-filter="BREAKOUT" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Breakout</button>
               <button onclick="filterEodTable('REVERSAL')" data-eod-filter="REVERSAL" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Reversal</button>
               <button onclick="filterEodTable('TREND')" data-eod-filter="TREND" class="eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white">Trend</button>
+            </div>
+
+            <!-- Dynamic Key Trigger Level / Signal Filter Dropdown -->
+            <div class="relative flex items-center shrink-0" id="container-eod-level-filter">
+              <select
+                id="eod-level-filter"
+                onchange="onEodLevelFilterChange(this.value)"
+                class="pl-3 pr-8 py-1.5 bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl text-xs font-semibold text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer transition shadow-sm appearance-none max-w-[210px] truncate"
+                title="Filter by Key Trigger Level / Signal"
+              >
+                <option value="ALL">🎯 All Trigger Levels</option>
+              </select>
+              <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 absolute right-2.5 pointer-events-none"></i>
             </div>
 
             <div class="relative">

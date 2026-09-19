@@ -1861,6 +1861,7 @@ window.showEodDigestView = showEodDigestView;
 
 let currentEodReport = null;
 let eodFilterCategory = "ALL";
+let eodFilterLevel = "ALL";
 let eodSearchQuery = "";
 
 async function loadEodDatesAndLatest() {
@@ -2104,10 +2105,122 @@ function renderEodDashboard() {
       .join("");
   }
 
-  // Render Master Table
+  // Render Master Table & Level Filter Dropdown
+  renderEodLevelFilterDropdown();
   renderEodWatchlistTable();
   initLucide();
 }
+
+function getCleanEodStrategyLevel(st) {
+  if (!st) return "Key Level";
+  const desc = st.level_desc || "";
+  const sig = st.signal || "";
+  const scanId = st.scanner_id || "";
+
+  if (scanId.includes("vcp") || desc.toUpperCase().includes("VCP")) {
+    return "VCP Contraction";
+  }
+  if (desc.includes("Pullback to 200 EMA")) return "Pullback to 200 EMA";
+  if (desc.includes("Pullback to 20 EMA")) return "Pullback to 20 EMA";
+  if (desc.includes("Pullback to 50 EMA")) return "Pullback to 50 EMA";
+  if (desc.includes("Pullback to 89 EMA")) return "Pullback to 89 EMA";
+  if (desc.includes("Pullback to") && desc.includes("EMA")) {
+    const match = desc.match(/Pullback to \d+ EMA/);
+    if (match) return match[0];
+  }
+  if (desc.toUpperCase().includes("INVERSE_HS") || desc.toUpperCase().includes("INVERSE H&S")) {
+    return desc.toUpperCase().includes("CONFIRMED") ? "Inverse H&S (Confirmed)" : "Inverse H&S (Forming)";
+  }
+  if (desc.toUpperCase().includes("REGULAR_HS") || desc.toUpperCase().includes("REGULAR H&S")) {
+    return desc.toUpperCase().includes("CONFIRMED") ? "Regular H&S (Confirmed)" : "Regular H&S (Forming)";
+  }
+  if (desc.toUpperCase().includes("DEMAND") || desc.toUpperCase().includes("BULLISH_DEMAND")) {
+    return "Demand Order Block";
+  }
+  if (desc.toUpperCase().includes("SUPPLY") || desc.toUpperCase().includes("BEARISH_SUPPLY")) {
+    return "Supply Order Block";
+  }
+  if (desc.toUpperCase().includes("FVG") || scanId.includes("fvg")) {
+    return "FVG 0.618 Fib Zone";
+  }
+  if (desc.includes("HA Reversal: Bullish") || (scanId.includes("ha_st01") && sig.toUpperCase().includes("BULLISH"))) {
+    return "HA Bullish Reversal";
+  }
+  if (desc.includes("HA Reversal: Bearish") || (scanId.includes("ha_st01") && sig.toUpperCase().includes("BEARISH"))) {
+    return "HA Bearish Reversal";
+  }
+  if (scanId.includes("ath") || desc.toUpperCase().includes("ATH")) {
+    return "Monthly ATH Breakout";
+  }
+  if (scanId.includes("rsi") || desc.toUpperCase().includes("RSI")) {
+    return sig.toUpperCase().includes("OVERSOLD") || sig.toUpperCase().includes("BULLISH") ? "RSI Oversold Reversal" : "RSI Momentum Setup";
+  }
+  if (scanId.includes("support")) {
+    return sig && sig !== "Setup Triggered" ? `Support (${sig})` : "Support Level";
+  }
+  if (scanId.includes("resistance")) {
+    return sig && sig !== "Setup Triggered" ? `Resistance (${sig})` : "Resistance Level";
+  }
+
+  // Generic fallback cleanup: strip price/bounce tags
+  let clean = (desc || sig || "Key Level")
+    .replace(/\s*\([^)]*₹[^)]*\)/g, "")
+    .replace(/\s*@\s*₹?[0-9.,]+/g, "")
+    .replace(/\s*•.*$/, "")
+    .trim();
+  return clean || "Key Level";
+}
+
+function renderEodLevelFilterDropdown() {
+  const container = document.getElementById("container-eod-level-filter");
+  const select = document.getElementById("eod-level-filter");
+  if (!container || !select || !currentEodReport) return;
+
+  const allStocks = currentEodReport.all_stocks || [];
+
+  // Get stocks matching the active category
+  const categoryStocks = allStocks.filter((s) => {
+    if (eodFilterCategory === "CONFLUENCE") return s.match_count >= 2;
+    if (eodFilterCategory === "VCP") return (s.strategies || []).some((st) => st.scanner_id.includes("vcp"));
+    if (eodFilterCategory === "SMC") return (s.strategies || []).some((st) => st.category.toLowerCase().includes("smart") || st.scanner_id.includes("order_block") || st.scanner_id.includes("fvg"));
+    if (eodFilterCategory === "BREAKOUT") return (s.strategies || []).some((st) => st.category.toLowerCase().includes("breakout") || st.scanner_id.includes("ath"));
+    if (eodFilterCategory === "REVERSAL") return (s.strategies || []).some((st) => st.category.toLowerCase().includes("reversal") || st.scanner_id.includes("rsi") || st.scanner_id.includes("ha_st01"));
+    if (eodFilterCategory === "TREND") return (s.strategies || []).some((st) => st.category.toLowerCase().includes("trend") || st.scanner_id.includes("st07") || st.scanner_id.includes("st15"));
+    return true;
+  });
+
+  const levelCounts = {};
+  categoryStocks.forEach((s) => {
+    const stockLevels = new Set();
+    (s.strategies || []).forEach((st) => {
+      const lvl = getCleanEodStrategyLevel(st);
+      if (lvl && lvl !== "N/A" && lvl !== "Key Level") {
+        stockLevels.add(lvl);
+      }
+    });
+    stockLevels.forEach((lvl) => {
+      levelCounts[lvl] = (levelCounts[lvl] || 0) + 1;
+    });
+  });
+
+  const uniqueLevels = Object.keys(levelCounts).sort((a, b) => levelCounts[b] - levelCounts[a]);
+  const currentVal = eodFilterLevel || "ALL";
+
+  let optionsHtml = `<option value="ALL" ${currentVal === "ALL" ? "selected" : ""}>🎯 All Trigger Levels (${categoryStocks.length})</option>`;
+  uniqueLevels.forEach((lvl) => {
+    const count = levelCounts[lvl];
+    const isSelected = currentVal === lvl ? "selected" : "";
+    optionsHtml += `<option value="${lvl.replace(/"/g, "&quot;")}" ${isSelected}>${lvl} (${count})</option>`;
+  });
+
+  select.innerHTML = optionsHtml;
+}
+
+function onEodLevelFilterChange(val) {
+  eodFilterLevel = val || "ALL";
+  renderEodWatchlistTable();
+}
+window.onEodLevelFilterChange = onEodLevelFilterChange;
 
 function renderEodWatchlistTable() {
   if (!currentEodReport) return;
@@ -2135,14 +2248,20 @@ function renderEodWatchlistTable() {
       matchesCat = (s.strategies || []).some((st) => st.category.toLowerCase().includes("trend") || st.scanner_id.includes("st07") || st.scanner_id.includes("st15"));
     }
 
+    // Dynamic Key Trigger Level Filter
+    let matchesLevel = true;
+    if (eodFilterLevel && eodFilterLevel !== "ALL") {
+      matchesLevel = (s.strategies || []).some((st) => getCleanEodStrategyLevel(st) === eodFilterLevel);
+    }
+
     // Search query
     const matchesSearch =
       !query ||
       s.symbol.toLowerCase().includes(query) ||
       (s.company_name && s.company_name.toLowerCase().includes(query)) ||
-      (s.strategies || []).some((st) => st.scanner_name.toLowerCase().includes(query) || st.level_desc.toLowerCase().includes(query));
+      (s.strategies || []).some((st) => st.scanner_name.toLowerCase().includes(query) || st.level_desc.toLowerCase().includes(query) || getCleanEodStrategyLevel(st).toLowerCase().includes(query));
 
-    return matchesCat && matchesSearch;
+    return matchesCat && matchesLevel && matchesSearch;
   });
 
   if (countBadge) {
@@ -2153,7 +2272,7 @@ function renderEodWatchlistTable() {
     tableBody.innerHTML = `
       <tr>
         <td colspan="6" class="p-8 text-center text-slate-500 text-xs">
-          No stocks match the selected filter "${eodFilterCategory}".
+          No stocks match the selected filter "${eodFilterCategory}"${eodFilterLevel !== "ALL" ? ` and level "${eodFilterLevel}"` : ""}.
         </td>
       </tr>
     `;
@@ -2208,6 +2327,7 @@ function renderEodWatchlistTable() {
 
 function filterEodTable(cat) {
   eodFilterCategory = cat;
+  eodFilterLevel = "ALL";
   document.querySelectorAll(".eod-filter-btn").forEach((btn) => {
     if (btn.dataset.eodFilter === cat) {
       btn.className = "eod-filter-btn px-3 py-1 rounded-lg font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30";
@@ -2215,6 +2335,7 @@ function filterEodTable(cat) {
       btn.className = "eod-filter-btn px-3 py-1 rounded-lg font-semibold text-slate-400 hover:text-white";
     }
   });
+  renderEodLevelFilterDropdown();
   renderEodWatchlistTable();
 }
 window.filterEodTable = filterEodTable;
