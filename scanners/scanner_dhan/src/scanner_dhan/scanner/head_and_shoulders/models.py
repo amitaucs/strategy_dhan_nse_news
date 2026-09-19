@@ -130,16 +130,20 @@ class HeadAndShouldersScanResult:
     has_pattern: bool = False
     pattern: Optional[HeadAndShouldersPattern] = None
     rsi: Optional[float] = None
+    volume: float = 0.0
     error: Optional[str] = None
-    # Optional direct attributes / shortcuts
+    # Direct attributes / UI interoperability shortcuts
     status: Optional[ConfirmationStatus] = None
     pattern_type: Optional[PatternType] = None
     neckline: float = 0.0
+    support_price: float = 0.0
+    distance_pct: float = 0.0
     head_price: float = 0.0
     current_price: float = 0.0
     target_1: float = 0.0
     stop_loss: float = 0.0
     shoulder_symmetry_pct: float = 0.0
+    support_desc: str = ""
     signal_desc: str = ""
 
     def __post_init__(self) -> None:
@@ -151,6 +155,8 @@ class HeadAndShouldersScanResult:
                 self.pattern_type = self.pattern.pattern_type
             if not self.neckline:
                 self.neckline = self.pattern.neckline_price
+            if not self.support_price:
+                self.support_price = self.neckline
             if not self.head_price:
                 self.head_price = self.pattern.head.price
             if not self.current_price:
@@ -161,17 +167,20 @@ class HeadAndShouldersScanResult:
                 self.stop_loss = self.pattern.stop_loss
             if not self.shoulder_symmetry_pct:
                 self.shoulder_symmetry_pct = self.pattern.shoulder_symmetry_pct
+            if self.neckline and self.ltp:
+                self.distance_pct = round(((self.ltp - self.neckline) / self.neckline) * 100.0, 2)
+            if not self.support_desc:
+                dir_label = "🔴 Bearish H&S" if self.pattern.pattern_type == PatternType.REGULAR_HS else "🟢 Bullish Inv H&S"
+                st_label = "Confirmed" if self.pattern.status == ConfirmationStatus.CONFIRMED else "Forming"
+                self.support_desc = f"{dir_label} ({st_label})"
             if not self.signal_desc:
-                dir_txt = "Bearish Breakdown" if self.pattern.pattern_type == PatternType.REGULAR_HS else "Bullish Breakout"
-                if self.pattern.status == ConfirmationStatus.CONFIRMED:
-                    self.signal_desc = f"⚡ Confirmed {dir_txt} below/above Neckline ₹{self.neckline:.2f}"
-                else:
-                    self.signal_desc = f"⏳ Forming {dir_txt} near Neckline ₹{self.neckline:.2f}"
+                rr_txt = f"1:{self.pattern.risk_reward_ratio:.1f}" if self.pattern.risk_reward_ratio > 0 else "-"
+                self.signal_desc = f"T1: ₹{self.target_1:.1f} | SL: ₹{self.stop_loss:.1f} (R:R {rr_txt})"
 
     @property
     def is_at_support(self) -> bool:
         """Alias for BaseScanner report matching."""
-        return self.has_pattern and self.pattern is not None and self.pattern.status == ConfirmationStatus.CONFIRMED
+        return self.has_pattern and self.pattern is not None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -181,16 +190,24 @@ class HeadAndShouldersScanResult:
             "timeframe": self.timeframe,
             "scanned_at": self.scanned_at.isoformat() if hasattr(self.scanned_at, "isoformat") else str(self.scanned_at),
             "has_pattern": self.has_pattern,
-            "is_confirmed": self.is_at_support,
+            "is_at_support": self.has_pattern,
+            "is_confirmed": (self.status == ConfirmationStatus.CONFIRMED if self.status else False),
             "status": self.status.value if hasattr(self.status, "value") else str(self.status) if self.status else None,
             "pattern_type": self.pattern_type.value if hasattr(self.pattern_type, "value") else str(self.pattern_type) if self.pattern_type else None,
             "neckline": round(self.neckline, 2),
+            "support_price": round(self.support_price or self.neckline, 2),
+            "distance_pct": round(self.distance_pct, 2),
+            "support_desc": self.support_desc,
+            "candle_signal": self.signal_desc,
             "head_price": round(self.head_price, 2),
+            "left_shoulder_price": round(self.pattern.left_shoulder.price, 2) if self.pattern else 0.0,
+            "right_shoulder_price": round(self.pattern.right_shoulder.price, 2) if self.pattern else 0.0,
             "current_price": round(self.current_price, 2),
             "target_1": round(self.target_1, 2),
             "stop_loss": round(self.stop_loss, 2),
             "shoulder_symmetry_pct": round(self.shoulder_symmetry_pct, 2),
             "signal_desc": self.signal_desc,
+            "volume": round(self.volume, 2),
             "pattern": self.pattern.to_dict() if self.pattern else None,
             "rsi": round(self.rsi, 2) if self.rsi is not None else None,
             "error": self.error,

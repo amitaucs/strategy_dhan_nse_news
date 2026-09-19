@@ -779,6 +779,28 @@ function getItemLevelDesc(r, report) {
     return "Watchlist Setup";
   }
 
+  // Dedicated handling for Head & Shoulders scanner
+  if (report && report.scanner_id === "head_and_shoulders") {
+    if (r.support_desc) return r.support_desc;
+    if (r.pattern && r.pattern.pattern_type) {
+      const pType = r.pattern.pattern_type === "REGULAR_HS" ? "🔴 Bearish H&S" : "🟢 Bullish Inv H&S";
+      const pStat = r.pattern.status === "CONFIRMED" ? "Confirmed" : "Forming";
+      return `${pType} (${pStat})`;
+    }
+    return "Head & Shoulders";
+  }
+
+  // Dedicated handling for FVG + 0.618 Fib scanner
+  if (report && (report.scanner_id === "fvg_fib_0618" || report.scanner_id === "fvg_fibonacci")) {
+    if (r.support_desc) return r.support_desc;
+    if (r.setup && r.setup.fvg) {
+      const dir = r.setup.fvg.fvg_type === "BULLISH_FVG" ? "⚡ Bullish FVG + 0.618" : "⚡ Bearish FVG + 0.618";
+      const stat = r.setup.is_at_confluence ? "Pullback Confirmed" : "Testing Level";
+      return `${dir} (${stat})`;
+    }
+    return "⚡ FVG + 0.618 Fib";
+  }
+
   // 1. Extract raw level description from whichever field is populated by the backend search
   let raw =
     r.support_desc ||
@@ -1003,7 +1025,19 @@ function renderReport(report) {
   const thirdMetricLabel =
     document.getElementById("metric-third-label") ||
     document.querySelector("#results-content .metric-badge:nth-child(3) span");
-  if (report.scanner_id === "ha_st01_rsi_reversal") {
+  if (report.scanner_id === "fvg_fib_0618" || report.scanner_id === "fvg_fibonacci") {
+    if (thirdMetricLabel) thirdMetricLabel.innerText = "Confirmed Pullbacks";
+    const readyCount = (report.results || []).filter(
+      (r) => r.is_at_support || r.is_pullback || (r.status === "PULLBACK_AT_618")
+    ).length;
+    document.getElementById("metric-reversals").innerText = readyCount;
+  } else if (report.scanner_id === "head_and_shoulders") {
+    if (thirdMetricLabel) thirdMetricLabel.innerText = "Confirmed Setups";
+    const confirmedCount = (report.results || []).filter(
+      (r) => r.is_confirmed || (r.status === "CONFIRMED") || (r.pattern && r.pattern.status === "CONFIRMED")
+    ).length;
+    document.getElementById("metric-reversals").innerText = confirmedCount;
+  } else if (report.scanner_id === "ha_st01_rsi_reversal") {
     if (thirdMetricLabel) thirdMetricLabel.innerText = "Bullish Divergences";
     const divCount = (report.results || []).filter((r) => r.has_bullish_divergence).length;
     document.getElementById("metric-reversals").innerText = divCount;
@@ -1075,7 +1109,16 @@ function applyFiltersAndRender() {
 
   // 1. Match Status & Core Strategy Filter
   if (filterState.status === "matched") {
-    items = items.filter((r) => r.is_at_support || r.is_pullback);
+    items = items.filter(
+      (r) =>
+        r.is_at_support ||
+        r.is_pullback ||
+        r.has_pattern ||
+        r.matched ||
+        r.is_confirmed ||
+        (r.status === "CONFIRMED") ||
+        (r.pattern && r.pattern.status === "CONFIRMED")
+    );
   }
 
   // 2. Key Level / Setup Description Dropdown Filter
@@ -1203,14 +1246,16 @@ function renderTable(items) {
   } stocks`;
 
   const isSt14Scanner = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
+  const isHsScanner = currentReport && currentReport.scanner_id === "head_and_shoulders";
+  const isFvgFibScanner = currentReport && (currentReport.scanner_id === "fvg_fib_0618" || currentReport.scanner_id === "fvg_fibonacci");
   const thKeyLevel = document.getElementById("th-col-key-level-text");
   const thDist = document.getElementById("th-col-distance-text");
   const thDesc = document.getElementById("th-col-desc-text");
   const thRsi = document.getElementById("th-col-rsi-text");
 
-  if (thKeyLevel) thKeyLevel.innerText = isSt14Scanner ? "5H Breakout (₹)" : "Key Level (₹)";
-  if (thDist) thDist.innerText = isSt14Scanner ? "5H Dist (%)" : "Distance (%)";
-  if (thDesc) thDesc.innerText = isSt14Scanner ? "Setup Status" : "Level Description";
+  if (thKeyLevel) thKeyLevel.innerText = isSt14Scanner ? "5H Breakout (₹)" : isHsScanner ? "Neckline (₹)" : isFvgFibScanner ? "0.618 Fib / FVG (₹)" : "Key Level (₹)";
+  if (thDist) thDist.innerText = isSt14Scanner ? "5H Dist (%)" : isHsScanner ? "Neckline Dist (%)" : isFvgFibScanner ? "0.618 Dist (%)" : "Distance (%)";
+  if (thDesc) thDesc.innerText = isSt14Scanner ? "Setup Status" : isHsScanner ? "Pattern & Status" : isFvgFibScanner ? "Imbalance & Confluence" : "Level Description";
   if (thRsi) thRsi.innerText = isSt14Scanner ? "Intraday VWAP" : "RSI (14)";
 
   if (items.length === 0) {
@@ -1231,10 +1276,11 @@ function renderTable(items) {
 
   tbody.innerHTML = items
     .map((r) => {
-      const distFormatted = (r.distance_pct >= 0 ? "+" : "") + r.distance_pct.toFixed(2) + "%";
+      const distVal = (r.distance_pct !== undefined && r.distance_pct !== null && !isNaN(r.distance_pct)) ? Number(r.distance_pct) : 0.0;
+      const distFormatted = (distVal >= 0 ? "+" : "") + distVal.toFixed(2) + "%";
       const distColor = r.is_at_support
         ? "text-emerald-400 font-semibold"
-        : Math.abs(r.distance_pct) <= 3.0
+        : Math.abs(distVal) <= 3.0
         ? "text-amber-400"
         : "text-slate-400";
 
@@ -1300,6 +1346,8 @@ function renderTable(items) {
       const isAth08 = currentReport && currentReport.scanner_id === "ath_st08_breakout";
       const isHaSt01 = currentReport && currentReport.scanner_id === "ha_st01_rsi_reversal";
       const isSt14 = currentReport && (currentReport.scanner_id === "st14_bullish_ce" || currentReport.scanner_id === "st14_scanner");
+      const isHs = currentReport && currentReport.scanner_id === "head_and_shoulders";
+      const isFvgFib = currentReport && (currentReport.scanner_id === "fvg_fib_0618" || currentReport.scanner_id === "fvg_fibonacci");
       const keyLevelPrice = isAth08
         ? r.prior_ath_price
         : isHaSt01
@@ -1308,6 +1356,10 @@ function renderTable(items) {
         ? r.ema_89
         : isSt14
         ? (r.five_hour_high || r.support_price)
+        : isHs
+        ? (r.neckline || (r.pattern ? r.pattern.neckline_price : null) || r.support_price)
+        : isFvgFib
+        ? (r.confluence_price || (r.setup ? r.setup.confluence_price : null) || r.support_price)
         : (r.support_price !== undefined ? r.support_price : (r.nearest_support ? r.nearest_support.price : null));
       const keyLevelDesc = getItemLevelDesc(r, currentReport);
       const hoverTitle = isAth08
@@ -1318,11 +1370,29 @@ function renderTable(items) {
         ? `Buy Trigger: ₹${r.buy_trigger_price} | SL: ₹${r.stop_loss} | 21 EMA: ₹${r.ema_21} | HA Close: ₹${r.ha_close}`
         : isSt14
         ? `5H Breakout High: ₹${r.five_hour_high} | 5D High: ₹${r.five_day_high} | VWAP: ₹${r.vwap} (${r.vwap_dist_pct > 0 ? '+' : ''}${r.vwap_dist_pct}%, ${r.vwap_angle_deg || 0}°) | 1H 20 EMA: ₹${r.hourly_ema20} | Daily 20 EMA: ₹${r.daily_ema20} | [${r.timing_message || ''}]`
+        : isHs
+        ? `Neckline: ₹${r.neckline || (r.pattern ? r.pattern.neckline_price : 0)} | T1: ₹${r.target_1 || (r.pattern ? r.pattern.target_1 : 0)} | SL: ₹${r.stop_loss || (r.pattern ? r.pattern.stop_loss : 0)} | Head: ₹${r.head_price || (r.pattern ? r.pattern.head.price : 0)} | Left: ₹${r.left_shoulder_price || (r.pattern ? r.pattern.left_shoulder.price : 0)} | Right: ₹${r.right_shoulder_price || (r.pattern ? r.pattern.right_shoulder.price : 0)}`
+        : isFvgFib
+        ? `0.618 Fib: ₹${r.confluence_price || (r.setup ? r.setup.confluence_price : 0)} | FVG: ${r.setup ? r.setup.fvg_overlap_desc : ''} | T1: ₹${r.target_1 || 0} | T2: ₹${r.target_2 || (r.setup ? r.setup.target_2 : 0)} | SL: ₹${r.stop_loss || 0} | R:R 1:${r.risk_reward_ratio || (r.setup ? r.setup.risk_reward_ratio : 0)}`
         : (r.support_desc || "");
 
       let levelBadgeColor = "text-slate-300 bg-slate-800/80 border-slate-700";
       const desc = keyLevelDesc;
-      if (desc.includes("Bullish CE Trigger") || desc.includes("BULLISH CE")) {
+      if (desc.includes("Pullback Confirmed")) {
+        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
+      } else if (desc.includes("Rejection Confirmed")) {
+        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
+      } else if (desc.includes("Testing Level") || desc.includes("Watchlist")) {
+        levelBadgeColor = "text-amber-300 font-bold bg-amber-950/60 border-amber-500/50 shadow-sm shadow-amber-950";
+      } else if (desc.includes("Bullish FVG + 0.618") || (desc.includes("Bullish") && desc.includes("FVG"))) {
+        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
+      } else if (desc.includes("Bearish FVG + 0.618") || (desc.includes("Bearish") && desc.includes("FVG"))) {
+        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
+      } else if (desc.includes("Bearish H&S") || (desc.includes("Bearish") && desc.includes("H&S"))) {
+        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
+      } else if (desc.includes("Bullish Inv H&S") || (desc.includes("Bullish") && desc.includes("H&S"))) {
+        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
+      } else if (desc.includes("Bullish CE Trigger") || desc.includes("BULLISH CE")) {
         levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
       } else if (desc.includes("Watchlist")) {
         levelBadgeColor = "text-amber-300 font-bold bg-amber-950/60 border-amber-500/50 shadow-sm shadow-amber-950";

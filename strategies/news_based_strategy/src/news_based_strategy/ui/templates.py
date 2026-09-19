@@ -4567,7 +4567,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </script>
 
   <!-- Scanner Application Logic -->
-  <script src="/static/scanner/app.js?v=2.4"></script>
+  <script src="/static/scanner/app.js?v=3.0"></script>
 </body>
 </html>
 """

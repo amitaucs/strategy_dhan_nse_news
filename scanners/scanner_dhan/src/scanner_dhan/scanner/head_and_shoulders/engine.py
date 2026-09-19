@@ -478,6 +478,13 @@ def scan_stock_for_head_and_shoulders(
         )
         all_patterns.extend(inverse_patterns)
 
+    vol = 0.0
+    try:
+        vol_series = _get_column(df, "volume")
+        vol = float(vol_series.iloc[-1])
+    except Exception:
+        pass
+
     if not all_patterns:
         return HeadAndShouldersScanResult(
             symbol=symbol,
@@ -487,6 +494,7 @@ def scan_stock_for_head_and_shoulders(
             scanned_at=now,
             has_pattern=False,
             rsi=latest_rsi,
+            volume=vol,
         )
 
     # Prioritize CONFIRMED patterns first, then most recently formed
@@ -508,4 +516,5 @@ def scan_stock_for_head_and_shoulders(
         has_pattern=True,
         pattern=selected_pattern,
         rsi=latest_rsi,
+        volume=vol,
     )

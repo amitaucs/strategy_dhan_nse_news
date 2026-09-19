@@ -883,3 +883,14 @@ class DhanDataProvider:
         """Alias for fetch_daily_bars."""
         return self.fetch_daily_bars(security_id=security_id, days=days or 150)
 
+    def get_historical_data(
+        self,
+        security_id: str,
+        timeframe: str = "Daily",
+        days: int = 180,
+        symbol: str | None = None,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        """Unified historical data fetcher compatible with all scanner engines."""
+        return self.fetch_bars(security_id=security_id, timeframe=timeframe, days=days)
+

@@ -74,6 +74,20 @@ from scanner_dhan.scanner.st14_scanner import (
     evaluate_bullish_conditions,
     format_st14_dataframe,
 )
+from scanner_dhan.scanner.fvg_fibonacci import (
+    FairValueGap,
+    FibonacciRetracement,
+    FvgFibConfluenceSetup,
+    FvgFibScanResult,
+    FvgFibonacciScanner,
+    FvgStatus,
+    FvgType,
+    calculate_fibonacci_retracement,
+    detect_fair_value_gaps,
+    detect_fvg_fib_confluences,
+    format_fvg_fib_dataframe,
+    scan_stock_for_fvg_fib,
+)
 
 __all__ = [
     "BaseScanner",
@@ -135,4 +149,16 @@ __all__ = [
     "detect_pivot_resistances",
     "detect_swing_supports",
     "detect_swing_resistances",
+    "FvgFibonacciScanner",
+    "FvgFibScanResult",
+    "FvgFibConfluenceSetup",
+    "FairValueGap",
+    "FibonacciRetracement",
+    "FvgStatus",
+    "FvgType",
+    "detect_fair_value_gaps",
+    "calculate_fibonacci_retracement",
+    "detect_fvg_fib_confluences",
+    "format_fvg_fib_dataframe",
+    "scan_stock_for_fvg_fib",
 ]
