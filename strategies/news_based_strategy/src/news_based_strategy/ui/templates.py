@@ -999,6 +999,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <option value="NIFTY_500">Nifty 500 (Broad Market)</option>
               <option value="NIFTY_100">Nifty 100</option>
               <option value="NIFTY_50">Nifty 50</option>
+              <option value="NIFTY_MIDCAP_100">Midcap 100</option>
               <option value="NIFTY_SMALLCAP_100">Smallcap 100</option>
               <option value="ALL_F_AND_O">All F&O (215)</option>
             </select>

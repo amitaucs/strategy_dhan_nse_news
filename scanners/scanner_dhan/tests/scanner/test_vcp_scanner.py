@@ -254,7 +254,7 @@ class TestVcpScanner(unittest.TestCase):
         scanner = VcpScanner()
         self.assertEqual(scanner.id, "vcp_contraction")
         self.assertEqual(scanner.name, "Volatility Contraction Pattern (VCP) Scanner")
-        self.assertEqual(scanner.category, "Momentum & Breakouts")
+        self.assertIn("Chart Patterns", scanner.category)
 
         param_names = [p.name for p in scanner.parameters]
         self.assertIn("universe", param_names)

@@ -92,7 +92,7 @@ class FvgFibonacciScanner(BaseScanner):
         "with 0.618 Golden Ratio & 0.705 OTE Fibonacci retracements with multi-candle "
         "confirmation and strict invalidation."
     )
-    category = "Smart Money / ICT"
+    category = "Smart Money Concepts"
     icon = "layers"
     parameters = [
         ScannerParameter(

@@ -112,7 +112,7 @@ class VcpScanner(BaseScanner):
         "Scans for Mark Minervini's Stage 2 Volatility Contraction Patterns (VCP) with "
         "monotonic depth decay, Volume Dry-Up (VDU), and pivot breakout triggers."
     )
-    category = "Momentum & Breakouts"
+    category = "Chart Patterns & Breakout"
     icon = "activity"
     parameters = [
         ScannerParameter(

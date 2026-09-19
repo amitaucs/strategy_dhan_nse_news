@@ -116,7 +116,7 @@ class HeadAndShouldersScanner(BaseScanner):
         "using geometric extrema detection, neckline regression, shoulder symmetry, "
         "and breakout/breakdown confirmation."
     )
-    category = "Pattern Recognition"
+    category = "Chart Patterns"
     icon = "activity"
     parameters = [
         ScannerParameter(

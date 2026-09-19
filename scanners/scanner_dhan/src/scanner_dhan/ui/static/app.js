@@ -84,6 +84,7 @@ let homeSearchQuery = "";
 const categoryBadgeColors = {
   "Support & Resistance": "bg-emerald-950/60 text-emerald-300 border-emerald-800/50",
   "Momentum": "bg-indigo-950/60 text-indigo-300 border-indigo-800/50",
+  "Options / Intraday Momentum": "bg-indigo-950/60 text-indigo-300 border-indigo-800/50",
   "Reversal": "bg-purple-950/60 text-purple-300 border-purple-800/50",
   "Reversal / Momentum": "bg-purple-950/60 text-purple-300 border-purple-800/50",
   "Trend": "bg-amber-950/60 text-amber-300 border-amber-800/50",
@@ -91,13 +92,17 @@ const categoryBadgeColors = {
   "Breakout": "bg-amber-950/60 text-amber-300 border-amber-800/50",
   "Breakout / Momentum": "bg-amber-950/60 text-amber-300 border-amber-800/50",
   "Smart Money Concepts": "bg-purple-950/60 text-purple-300 border-purple-800/50",
+  "Smart Money / ICT": "bg-purple-950/60 text-purple-300 border-purple-800/50",
   "Chart Patterns": "bg-rose-950/60 text-rose-300 border-rose-800/50",
+  "Chart Patterns & Breakout": "bg-rose-950/60 text-rose-300 border-rose-800/50",
+  "Pattern Recognition": "bg-rose-950/60 text-rose-300 border-rose-800/50",
   "Classic Chart Patterns": "bg-rose-950/60 text-rose-300 border-rose-800/50",
 };
 
 const categoryIconGradients = {
   "Support & Resistance": "from-emerald-500 to-teal-600 shadow-emerald-500/20",
   "Momentum": "from-indigo-500 to-purple-600 shadow-indigo-500/20",
+  "Options / Intraday Momentum": "from-indigo-500 to-purple-600 shadow-indigo-500/20",
   "Reversal": "from-purple-500 to-pink-600 shadow-purple-500/20",
   "Reversal / Momentum": "from-purple-500 to-pink-600 shadow-purple-500/20",
   "Trend": "from-amber-500 to-orange-600 shadow-amber-500/20",
@@ -105,9 +110,113 @@ const categoryIconGradients = {
   "Breakout": "from-amber-500 to-yellow-600 shadow-amber-500/20",
   "Breakout / Momentum": "from-amber-500 to-yellow-600 shadow-amber-500/20",
   "Smart Money Concepts": "from-purple-500 to-indigo-600 shadow-purple-500/20",
+  "Smart Money / ICT": "from-purple-500 to-indigo-600 shadow-purple-500/20",
   "Chart Patterns": "from-rose-500 to-pink-600 shadow-rose-500/20",
+  "Chart Patterns & Breakout": "from-rose-500 to-pink-600 shadow-rose-500/20",
+  "Pattern Recognition": "from-rose-500 to-pink-600 shadow-rose-500/20",
   "Classic Chart Patterns": "from-rose-500 to-pink-600 shadow-rose-500/20",
 };
+
+function matchesCategory(scanner, selectedFilter) {
+  if (!selectedFilter || selectedFilter === "ALL") return true;
+  const sCat = (scanner.category || "").toLowerCase();
+  const sId = (scanner.id || "").toLowerCase();
+  const sName = (scanner.name || "").toLowerCase();
+  const fCat = selectedFilter.toLowerCase();
+
+  // Direct exact or substring match
+  if (sCat === fCat || sCat.includes(fCat) || fCat.includes(sCat)) return true;
+
+  // Smart Money Concepts / SMC / ICT
+  if (fCat.includes("smart money") || fCat.includes("smc") || fCat === "smc") {
+    return (
+      sCat.includes("smart money") ||
+      sCat.includes("smc") ||
+      sCat.includes("ict") ||
+      sId.includes("order_block") ||
+      sId.includes("fvg") ||
+      sName.includes("fvg") ||
+      sName.includes("order block")
+    );
+  }
+
+  // Chart Patterns
+  if (fCat.includes("pattern")) {
+    return (
+      sCat.includes("pattern") ||
+      sId.includes("head_and_shoulders") ||
+      sId.includes("vcp") ||
+      sName.includes("head & shoulders") ||
+      sName.includes("vcp")
+    );
+  }
+
+  // Breakouts
+  if (fCat.includes("breakout")) {
+    return (
+      sCat.includes("breakout") ||
+      sId.includes("ath") ||
+      sId.includes("vcp") ||
+      sId.includes("st14") ||
+      sName.includes("all-time high") ||
+      sName.includes("vcp")
+    );
+  }
+
+  // Reversals
+  if (fCat.includes("reversal")) {
+    return (
+      sCat.includes("reversal") ||
+      sId.includes("rsi") ||
+      sId.includes("ha_st01") ||
+      sId.includes("head_and_shoulders") ||
+      sName.includes("rsi") ||
+      sName.includes("heikin")
+    );
+  }
+
+  // Trend Following
+  if (fCat.includes("trend")) {
+    return (
+      sCat.includes("trend") ||
+      sId.includes("st07") ||
+      sId.includes("st15") ||
+      sName.includes("trend")
+    );
+  }
+
+  // Support & Resistance
+  if (
+    fCat.includes("support") ||
+    fCat.includes("resistance") ||
+    fCat.includes("s&r") ||
+    fCat === "s&r"
+  ) {
+    return (
+      sCat.includes("support") ||
+      sCat.includes("resistance") ||
+      sId.includes("support") ||
+      sId.includes("resistance") ||
+      sId.includes("nifty50_support") ||
+      sId.includes("nifty100_support")
+    );
+  }
+
+  // Momentum
+  if (fCat.includes("momentum")) {
+    return (
+      sCat.includes("momentum") ||
+      sId.includes("rsi") ||
+      sId.includes("ath") ||
+      sId.includes("st14") ||
+      sId.includes("ha_st01") ||
+      sId.includes("vcp") ||
+      sId.includes("st07")
+    );
+  }
+
+  return false;
+}
 
 async function loadScanners() {
   const navContainer = document.getElementById("scanner-nav-list");
@@ -153,18 +262,12 @@ function renderScannerNavList() {
 
   const query = homeSearchQuery.trim().toLowerCase();
   const filtered = allScanners.filter((s) => {
-    const filterLower = selectedCategoryFilter.toLowerCase();
-    const catLower = (s.category || "").toLowerCase();
-    const matchesCat =
-      selectedCategoryFilter === "ALL" ||
-      catLower === filterLower ||
-      catLower.includes(filterLower) ||
-      filterLower.includes(catLower);
+    const matchesCat = matchesCategory(s, selectedCategoryFilter);
     const matchesSearch =
       !query ||
       s.name.toLowerCase().includes(query) ||
       s.description.toLowerCase().includes(query) ||
-      s.category.toLowerCase().includes(query);
+      (s.category && s.category.toLowerCase().includes(query));
     return matchesCat && matchesSearch;
   });
 
@@ -557,8 +660,20 @@ async function runScanner(scannerId, overrideParams = null) {
 
   // Sync results view universe dropdown
   const resultsUnivSelect = document.getElementById("results-select-universe");
-  if (resultsUnivSelect && params.universe) {
-    resultsUnivSelect.value = params.universe;
+  if (resultsUnivSelect) {
+    const univParam = (scanner.parameters || []).find((p) => p.name === "universe");
+    if (univParam && Array.isArray(univParam.options) && univParam.options.length > 0) {
+      const selectedVal = params.universe || univParam.default || "NIFTY_500";
+      resultsUnivSelect.innerHTML = univParam.options
+        .map(
+          (opt) =>
+            `<option value="${opt.value}" ${opt.value === selectedVal ? "selected" : ""}>${opt.label}</option>`
+        )
+        .join("");
+    }
+    if (params.universe) {
+      resultsUnivSelect.value = params.universe;
+    }
   }
 
   // Sync timeframe select on home card if it exists
