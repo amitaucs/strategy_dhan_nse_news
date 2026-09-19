@@ -1305,11 +1305,18 @@ function renderTable(items) {
       }
 
       const sigStr = r.candle_signal || "";
+      const isBearishSignal =
+        sigStr.includes("🔴") ||
+        sigStr.includes("Shooting Star") ||
+        sigStr.includes("Bearish") ||
+        sigStr.includes("Red") ||
+        (sigStr.includes("Rejection") && !sigStr.includes("🟢"));
+
       const isBullish =
         sigStr.includes("Hammer") ||
-        sigStr.includes("Reversal") ||
-        sigStr.includes("Engulfing") ||
+        sigStr.includes("Bullish") ||
         sigStr.includes("Green") ||
+        sigStr.includes("🟢") ||
         sigStr.includes("TRIGGER");
 
       const isFreshFirstGreen = r.is_first_green || sigStr.includes("1st Green");
@@ -1320,6 +1327,10 @@ function renderTable(items) {
       let signalBadge;
       if (isBullishCeTrigger) {
         signalBadge = `<span class="inline-flex items-center space-x-1 text-emerald-300 font-bold bg-emerald-950/80 border border-emerald-400/80 px-2.5 py-1 rounded-lg text-xs shadow-md shadow-emerald-950">
+             <span>${sigStr}</span>
+           </span>`;
+      } else if (isBearishSignal) {
+        signalBadge = `<span class="inline-flex items-center space-x-1 text-rose-300 font-bold bg-rose-950/70 border border-rose-500/60 px-2.5 py-1 rounded-lg text-xs shadow-sm shadow-rose-950">
              <span>${sigStr}</span>
            </span>`;
       } else if (isFreshCrossover) {
@@ -1378,23 +1389,13 @@ function renderTable(items) {
 
       let levelBadgeColor = "text-slate-300 bg-slate-800/80 border-slate-700";
       const desc = keyLevelDesc;
-      if (desc.includes("Pullback Confirmed")) {
+      if (desc.includes("Bearish FVG") || desc.includes("Bearish H&S") || desc.includes("Supply OB") || (desc.includes("Bearish") && !desc.includes("Bullish"))) {
+        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/70 border-rose-500/60 shadow-sm shadow-rose-950";
+      } else if (desc.includes("Bullish FVG") || desc.includes("Bullish Inv H&S") || desc.includes("Demand OB") || desc.includes("BULLISH CE") || desc.includes("Bullish") || desc.includes("Pullback Confirmed")) {
         levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
       } else if (desc.includes("Rejection Confirmed")) {
-        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
+        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/70 border-rose-500/60 shadow-sm shadow-rose-950";
       } else if (desc.includes("Testing Level") || desc.includes("Watchlist")) {
-        levelBadgeColor = "text-amber-300 font-bold bg-amber-950/60 border-amber-500/50 shadow-sm shadow-amber-950";
-      } else if (desc.includes("Bullish FVG + 0.618") || (desc.includes("Bullish") && desc.includes("FVG"))) {
-        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
-      } else if (desc.includes("Bearish FVG + 0.618") || (desc.includes("Bearish") && desc.includes("FVG"))) {
-        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
-      } else if (desc.includes("Bearish H&S") || (desc.includes("Bearish") && desc.includes("H&S"))) {
-        levelBadgeColor = "text-rose-300 font-bold bg-rose-950/60 border-rose-500/50 shadow-sm shadow-rose-950";
-      } else if (desc.includes("Bullish Inv H&S") || (desc.includes("Bullish") && desc.includes("H&S"))) {
-        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
-      } else if (desc.includes("Bullish CE Trigger") || desc.includes("BULLISH CE")) {
-        levelBadgeColor = "text-emerald-300 font-bold bg-emerald-950/60 border-emerald-500/50 shadow-sm shadow-emerald-950";
-      } else if (desc.includes("Watchlist")) {
         levelBadgeColor = "text-amber-300 font-bold bg-amber-950/60 border-amber-500/50 shadow-sm shadow-amber-950";
       } else if (desc.includes("Divergence + Oversold")) {
         levelBadgeColor = "text-purple-300 font-bold bg-purple-950/60 border-purple-500/50 shadow-sm shadow-purple-950";
