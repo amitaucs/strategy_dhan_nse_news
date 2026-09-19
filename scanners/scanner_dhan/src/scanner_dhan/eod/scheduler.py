@@ -77,7 +77,11 @@ class EODScheduler:
             "last_error": self._last_error,
         }
 
-    async def trigger_now(self, universe: Optional[str] = None) -> EODDigestReport:
+    async def trigger_now(
+        self,
+        universe: Optional[str] = None,
+        provider: Optional[Any] = None,
+    ) -> EODDigestReport:
         """Manually trigger an immediate EOD scan asynchronously."""
         if self._is_executing:
             raise RuntimeError("An EOD scan is already in progress.")
@@ -89,7 +93,10 @@ class EODScheduler:
 
         try:
             logger.info(f"Triggering immediate on-demand EOD Multi-Scanner run on universe '{univ}'...")
-            report = await loop.run_in_executor(None, self.runner.run_all, univ)
+            report = await loop.run_in_executor(
+                None,
+                lambda: self.runner.run_all(universe=univ, provider=provider),
+            )
             self._last_run_date = report.date
             self._last_run_timestamp = report.timestamp
             return report

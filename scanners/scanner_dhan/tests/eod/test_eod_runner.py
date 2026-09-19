@@ -168,6 +168,88 @@ class TestEODRunner(unittest.TestCase):
         self.assertGreater(digest.top_confluence_stocks[0].confluence_score, 85.0)
 
 
+    @patch("scanner_dhan.eod.runner.ScannerRegistry.list_all")
+    @patch("scanner_dhan.eod.runner.ScannerRegistry.run")
+    def test_runner_with_vcp_and_dict_results(self, mock_run, mock_list_all):
+        mock_list_all.return_value = [
+            {"id": "vcp_contraction", "name": "VCP Scanner", "category": "Chart Patterns & Breakout"},
+            {"id": "fvg_0618_fibonacci", "name": "FVG + Fib", "category": "Smart Money Concepts"},
+        ]
+
+        # VCP dictionary result
+        vcp_dict_item = {
+            "symbol": "POLYCAB",
+            "security_id": "9590",
+            "company_name": "Polycab India",
+            "ltp": 6850.0,
+            "has_setup": True,
+            "is_at_support": True,
+            "setup": {
+                "status": "PRIMED_TIGHT",
+                "pivot_level": 7000.0,
+                "stop_loss": 6650.0,
+                "contractions_count": 3,
+                "depth_sequence_pct": [12.0, 6.0, 2.5],
+            },
+            "rsi": 62.4,
+            "volume": 2500000,
+            "support_desc": "VCP 3T [12.0% → 6.0% → 2.5%] • Pivot: ₹7000.0",
+        }
+
+        # FVG dictionary result for POLYCAB and DIXON
+        fvg_dict_item_1 = {
+            "symbol": "POLYCAB",
+            "security_id": "9590",
+            "company_name": "Polycab India",
+            "ltp": 6850.0,
+            "has_setup": True,
+            "is_at_support": True,
+            "setup": {
+                "status": "PULLBACK_AT_618",
+                "confluence_price": 6820.0,
+                "stop_loss": 6600.0,
+            },
+            "rsi": 62.4,
+            "volume": 2500000,
+            "support_desc": "Bullish FVG + 0.618 Fib Confluence",
+        }
+
+        fvg_dict_item_2 = {
+            "symbol": "DIXON",
+            "security_id": "8451",
+            "company_name": "Dixon Tech",
+            "ltp": 14200.0,
+            "has_setup": True,
+            "is_at_support": True,
+            "setup": {
+                "status": "PULLBACK_AT_618",
+                "confluence_price": 14100.0,
+                "stop_loss": 13700.0,
+            },
+            "rsi": 58.0,
+            "volume": 800000,
+            "support_desc": "Bullish FVG + 0.618 Fib Confluence",
+        }
+
+        report_vcp = MagicMock()
+        report_vcp.results = [vcp_dict_item]
+
+        report_fvg = MagicMock()
+        report_fvg.results = [fvg_dict_item_1, fvg_dict_item_2]
+
+        mock_run.side_effect = [report_vcp, report_fvg]
+
+        digest = self.runner.run_all(universe="NIFTY_500", target_date="2026-09-19")
+
+        self.assertEqual(digest.unique_stocks_count, 2)
+        self.assertEqual(digest.confluence_stocks_count, 1)  # POLYCAB matched both VCP and FVG
+        self.assertEqual(digest.top_confluence_stocks[0].symbol, "POLYCAB")
+        self.assertEqual(digest.top_confluence_stocks[0].match_count, 2)
+        self.assertGreater(digest.top_confluence_stocks[0].confluence_score, 80.0)
+        self.assertEqual(digest.top_confluence_stocks[0].pivot_level, 7000.0)
+        self.assertEqual(digest.top_confluence_stocks[0].stop_loss, 6650.0)
+
+
 class TestEODScheduler(unittest.TestCase):
     def test_next_run_calculation(self):
         scheduler = EODScheduler(target_hour=18, target_minute=30)

@@ -894,7 +894,17 @@ def register_routes(app: FastAPI, state: DashboardState) -> None:
         except Exception:
             pass
 
-        asyncio.create_task(_eod_scheduler.trigger_now(universe=universe))
+        provider = None
+        if state.executor.access_token and state.executor.client_id:
+            try:
+                provider = DhanDataProvider(
+                    client_id=state.executor.client_id,
+                    access_token=state.executor.access_token,
+                )
+            except Exception as pe:
+                logger.warning("Could not init DhanDataProvider for EOD batch scan: %s", pe)
+
+        asyncio.create_task(_eod_scheduler.trigger_now(universe=universe, provider=provider))
         return {
             "status": "started",
             "message": f"EOD batch scan started in background on universe '{universe}'.",
