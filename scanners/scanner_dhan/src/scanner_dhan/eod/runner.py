@@ -149,15 +149,15 @@ def is_scanner_item_matched(item: Any, scanner_id: str) -> bool:
         if isinstance(setup_obj, dict):
             stat = str(setup_obj.get("status", "")).upper()
             c_cnt = int(setup_obj.get("contractions_count", 0) or 0)
-            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED") or c_cnt >= 3:
+            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED", "MATCHED", "TRIGGERED") or c_cnt >= 3:
                 return True
         elif setup_obj is not None:
             stat = str(getattr(setup_obj, "status", "")).upper()
             c_cnt = int(getattr(setup_obj, "contractions_count", 0) or 0)
-            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED") or c_cnt >= 3:
+            if stat in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED", "MATCHED", "TRIGGERED") or c_cnt >= 3:
                 return True
         stat_item = str(_extract_val(item, "status", default="") or "").upper()
-        return stat_item in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED")
+        return stat_item in ("BREAKOUT_ACTIVE", "PRIMED_TIGHT", "PRIMED", "MATCHED", "TRIGGERED")
 
     # 4. HA ST-01 Reversal (deep oversold turn)
     if "ha_st01" in sid or "st01" in sid:
@@ -628,14 +628,17 @@ class EODScanRunner:
             # Sort all stocks by confluence_score desc, then match_count desc
             all_confluence_stocks.sort(key=lambda s: (s.confluence_score, s.match_count), reverse=True)
 
-            # High Confluence Radar: Top 20 high-probability setups with Core strategy presence
+            # High Confluence Radar: Top 20 multi-strategy setups with Core strategy presence
             high_conf_candidates = [
                 s for s in all_confluence_stocks
-                if (s.match_count >= 2 or s.confluence_score >= 75.0)
+                if s.match_count >= 2
                 and any(st.scanner_id.lower() in CORE_SCANNER_IDS for st in s.strategies)
             ]
+            if not high_conf_candidates:
+                high_conf_candidates = [s for s in all_confluence_stocks if s.match_count >= 2]
+
             high_conf_candidates.sort(
-                key=lambda s: (s.match_count >= 2, s.confluence_score, s.volume_ratio),
+                key=lambda s: (s.match_count, s.confluence_score, s.volume_ratio),
                 reverse=True,
             )
             top_confluence = high_conf_candidates[:20]

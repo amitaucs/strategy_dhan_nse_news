@@ -1970,46 +1970,48 @@ function renderEodDashboard() {
         topStratName = st.scanner_name;
       }
     });
+    const shortStratName = formatShortScannerName(topStratName);
 
     kpiContainer.innerHTML = `
-      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
-        <div>
-          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Stocks Flagged</p>
-          <p class="text-2xl font-black text-white mt-1">${r.unique_stocks_count} <span class="text-xs font-normal text-slate-500">/ 500 Scanned</span></p>
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg min-w-0">
+        <div class="min-w-0 flex-1 pr-2">
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">Total Stocks Flagged</p>
+          <p class="text-2xl font-black text-white mt-1 truncate">${r.unique_stocks_count} <span class="text-xs font-normal text-slate-500">/ 500 Scanned</span></p>
         </div>
-        <div class="p-3 bg-sky-950/60 border border-sky-800/40 rounded-xl text-sky-400">
+        <div class="p-3 bg-sky-950/60 border border-sky-800/40 rounded-xl text-sky-400 shrink-0">
           <i data-lucide="layers" class="w-5 h-5"></i>
         </div>
       </div>
 
-      <div class="bg-gradient-to-br from-amber-950/40 to-slate-900/80 border border-amber-500/40 rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-amber-500/5">
-        <div>
-          <p class="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1">
-            <i data-lucide="flame" class="w-3.5 h-3.5 text-amber-400"></i> High Confluence Picks
+      <div class="bg-gradient-to-br from-amber-950/40 to-slate-900/80 border border-amber-500/40 rounded-2xl p-4 flex items-center justify-between shadow-lg shadow-amber-500/5 min-w-0">
+        <div class="min-w-0 flex-1 pr-2">
+          <p class="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1 truncate">
+            <i data-lucide="flame" class="w-3.5 h-3.5 text-amber-400 shrink-0"></i> <span>High Confluence</span>
           </p>
-          <p class="text-2xl font-black text-amber-300 mt-1">${r.confluence_stocks_count} Stocks <span class="text-xs font-semibold text-amber-400/80">(2+ Scanners)</span></p>
+          <p class="text-2xl font-black text-amber-300 mt-1 truncate">${r.confluence_stocks_count} Stocks <span class="text-xs font-semibold text-amber-400/80">(2+ Scanners)</span></p>
         </div>
-        <div class="p-3 bg-amber-950/80 border border-amber-600/50 rounded-xl text-amber-400">
+        <div class="p-3 bg-amber-950/80 border border-amber-600/50 rounded-xl text-amber-400 shrink-0">
           <i data-lucide="crosshair" class="w-5 h-5"></i>
         </div>
       </div>
 
-      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
-        <div>
-          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Market Sentiment</p>
-          <p class="text-2xl font-black text-emerald-400 mt-1">${bullishPct}% Bullish <span class="text-xs font-normal text-slate-400">(${r.bullish_count} Long / ${r.bearish_count} Short)</span></p>
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg min-w-0">
+        <div class="min-w-0 flex-1 pr-2">
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">Market Sentiment</p>
+          <p class="text-2xl font-black text-emerald-400 mt-1 truncate">${bullishPct}% Bullish <span class="text-xs font-normal text-slate-400">(${r.bullish_count}L / ${r.bearish_count}S)</span></p>
         </div>
-        <div class="p-3 bg-emerald-950/60 border border-emerald-800/40 rounded-xl text-emerald-400">
+        <div class="p-3 bg-emerald-950/60 border border-emerald-800/40 rounded-xl text-emerald-400 shrink-0">
           <i data-lucide="trending-up" class="w-5 h-5"></i>
         </div>
       </div>
 
-      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg">
-        <div>
-          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Top Dominant Setup</p>
-          <p class="text-base font-black text-purple-300 mt-1 truncate" title="${topStratName}">${topStratName} <span class="text-xs font-normal text-slate-400">(${topStratHits} Hits)</span></p>
+      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-lg min-w-0">
+        <div class="min-w-0 flex-1 pr-2">
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate">Top Dominant Setup</p>
+          <p class="text-base font-black text-purple-300 mt-1 truncate" title="${topStratName}">${shortStratName}</p>
+          <p class="text-[11px] font-semibold text-purple-400/80 font-mono mt-0.5">${topStratHits} Hits</p>
         </div>
-        <div class="p-3 bg-purple-950/60 border border-purple-800/40 rounded-xl text-purple-400">
+        <div class="p-3 bg-purple-950/60 border border-purple-800/40 rounded-xl text-purple-400 shrink-0">
           <i data-lucide="target" class="w-5 h-5"></i>
         </div>
       </div>
