@@ -7,6 +7,14 @@ let allScanners = [];
 let currentReport = null;
 let currentlyDisplayedItems = [];
 
+// EOD Digest State (Declared at top to prevent TDZ ReferenceError)
+let currentEodReport = null;
+let eodFilterCategory = "ALL";
+let eodFilterLevel = "ALL";
+let eodSearchQuery = "";
+const _eodReportCache = {};
+let _isEodLoading = false;
+
 // Streamlined Filter State
 const filterState = {
   status: "matched", // "matched" or "all"
@@ -17,6 +25,16 @@ const filterState = {
   sortColumn: "distance_pct",
   sortAsc: true,
 };
+
+function formatShortScannerName(name) {
+  if (!name) return "None";
+  return name
+    .replace(/^NSE\s+/i, "")
+    .replace(/\s+Scanner$/i, "")
+    .replace(/\s+Strategy$/i, "")
+    .replace(/^ST-\d+\s+/i, "")
+    .trim();
+}
 
 function initializeScannerApp() {
   initLucide();
@@ -1862,19 +1880,16 @@ window.showEodDigestView = showEodDigestView;
 
 // ==================== DAILY EOD DIGEST CONTROLLER ====================
 
-let currentEodReport = null;
-let eodFilterCategory = "ALL";
-let eodFilterLevel = "ALL";
-let eodSearchQuery = "";
-const _eodReportCache = {};
-let _isEodLoading = false;
-
-async function loadEodDatesAndLatest() {
+async function loadEodDatesAndLatest(forceRefresh = false) {
   if (_isEodLoading) return;
   _isEodLoading = true;
 
   try {
     const dateSelect = document.getElementById("eod-select-date");
+
+    if (forceRefresh) {
+      delete _eodReportCache["latest"];
+    }
 
     // Fetch dates and latest report in parallel
     const [datesRes, reportData] = await Promise.all([
@@ -1888,9 +1903,11 @@ async function loadEodDatesAndLatest() {
     ]);
 
     if (dateSelect && Array.isArray(datesRes) && datesRes.length > 0) {
+      const selectedVal = dateSelect.value || datesRes[0];
       dateSelect.innerHTML = datesRes
-        .map((d, i) => `<option value="${d}">${i === 0 ? `📅 Today (${d})` : `📅 ${d}`}</option>`)
+        .map((d, i) => `<option value="${d}" ${d === selectedVal ? "selected" : ""}>${i === 0 ? `📅 Today (${d})` : `📅 ${d}`}</option>`)
         .join("");
+      dateSelect.value = selectedVal;
     }
   } catch (err) {
     console.error("Failed in loadEodDatesAndLatest:", err);
