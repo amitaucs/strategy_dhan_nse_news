@@ -140,17 +140,17 @@ class DhanDataProvider:
     _intraday_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
     _dhan_instance_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
     quote_delay: float = 1.0       # Dhan REST quote API strict limit: 1 request/sec
-    historical_delay: float = 0.05 # Dhan historical data API limit: ~20 requests/sec with pool
+    historical_delay: float = 0.16 # Dhan historical data API limit: ~5 requests/sec with pool
     rest_delay: float = 0.20       # Dhan general REST API: ~5 requests/sec
-    max_retries: int = 3
+    max_retries: int = 4
 
     def __init__(
         self,
         client_id: str | None = None,
         access_token: str | None = None,
         quote_delay: float = 1.0,
-        historical_delay: float = 0.05,
-        max_retries: int = 3,
+        historical_delay: float = 0.16,
+        max_retries: int = 4,
     ) -> None:
         if not client_id or not access_token:
             try:
@@ -749,11 +749,11 @@ class DhanDataProvider:
             # 3. Check for Rate Limit (DH-904)
             if self._is_rate_limit_response(response):
                 if attempt < self.max_retries:
-                    time.sleep(1.0)
+                    time.sleep(0.35 + (attempt * 0.25))
                     continue
                 else:
-                    logger.error("Rate limit exceeded fetching intraday bars for %s", security_id)
-                    raise DhanRateLimitError(f"Rate limit exceeded while fetching intraday bars for {security_id}.")
+                    logger.warning("Rate limit reached fetching intraday bars for %s: %s", security_id, response)
+                    return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
             if not isinstance(response, dict) or response.get("status") != "success":
                 logger.warning("Dhan intraday_minute_data unsuccessful for %s: %s", security_id, response)
@@ -787,112 +787,20 @@ class DhanDataProvider:
         exclude_incomplete: bool = False,
     ) -> pd.DataFrame:
         """Fetch 1-minute bars from Dhan and resample into 1-Hour (60-minute) OHLCV candles aligned to 09:15 IST."""
-        return self.fetch_resampled_bars(security_id=security_id, rule="60min", days=min(days, 30), exclude_incomplete=exclude_incomplete)
-
     def fetch_2h_bars(
         self,
         security_id: str,
-        days: int = 30,
+        days: int = 25,
         exclude_incomplete: bool = False,
-        warmup_days: int = 150,
+        warmup_days: int = 0,
     ) -> pd.DataFrame:
-        """Fetch 1-minute bars from Dhan and resample into 3 standard NSE 2-Hour OHLCV candles per day,
-        warmed up with historical daily data for 200+ candle indicator depth (matching TradingView)."""
-        safe_days = min(max(1, days), 30)
-        m_df = self.fetch_intraday_minute_bars(security_id=security_id, days=safe_days)
-
-        exact_2h_bars = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
-        if not m_df.empty and "timestamp" in m_df.columns:
-            df = m_df.copy()
-            if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-
-            def get_slot_ts(ts: pd.Timestamp) -> pd.Timestamp:
-                d = ts.floor("D")
-                t = ts.time()
-                if t < pd.Timestamp("11:15").time():
-                    return d + pd.Timedelta(hours=9, minutes=15)
-                elif t < pd.Timestamp("13:15").time():
-                    return d + pd.Timedelta(hours=11, minutes=15)
-                else:
-                    return d + pd.Timedelta(hours=13, minutes=15)
-
-            df["slot"] = df["timestamp"].apply(get_slot_ts)
-            agg_dict: dict[str, str] = {
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-            }
-            if "volume" in df.columns:
-                agg_dict["volume"] = "sum"
-
-            exact_2h_bars = df.groupby("slot").agg(agg_dict).reset_index().rename(columns={"slot": "timestamp"})
-            if exclude_incomplete and not exact_2h_bars.empty:
-                counts = df.groupby("slot")["close"].count().reset_index()
-                valid_slots = counts[counts["close"] >= 100]["slot"]
-                exact_2h_bars = exact_2h_bars[exact_2h_bars["timestamp"].isin(valid_slots)]
-
-        # Warm up earlier history with daily bars so 200 EMA / Supertrend have 200+ bars of history
-        if warmup_days > 0:
-            try:
-                daily_df = self.fetch_daily_bars(security_id=security_id, days=warmup_days)
-                if not daily_df.empty and "timestamp" in daily_df.columns:
-                    d_df = daily_df.copy()
-                    if not pd.api.types.is_datetime64_any_dtype(d_df["timestamp"]):
-                        d_df["timestamp"] = pd.to_datetime(d_df["timestamp"])
-
-                    min_exact_ts = exact_2h_bars["timestamp"].min() if not exact_2h_bars.empty else pd.Timestamp.max
-                    min_date = min_exact_ts.floor("D") if not exact_2h_bars.empty else pd.Timestamp.max
-                    older_daily = d_df[d_df["timestamp"].dt.floor("D") < min_date]
-
-                if not older_daily.empty:
-                    synth_rows: list[dict[str, Any]] = []
-                    for _, row in older_daily.iterrows():
-                        d = row["timestamp"].floor("D")
-                        o = float(row["open"])
-                        h = float(row["high"])
-                        l = float(row["low"])
-                        c = float(row["close"])
-                        vol = int(row.get("volume", 0)) // 3
-                        # Slot 1 (09:15)
-                        synth_rows.append({
-                            "timestamp": d + pd.Timedelta(hours=9, minutes=15),
-                            "open": o,
-                            "high": max(o, (2 * o + c) / 3),
-                            "low": min(o, (2 * o + c) / 3),
-                            "close": (2 * o + c) / 3,
-                            "volume": vol,
-                        })
-                        # Slot 2 (11:15)
-                        synth_rows.append({
-                            "timestamp": d + pd.Timedelta(hours=11, minutes=15),
-                            "open": (2 * o + c) / 3,
-                            "high": h,
-                            "low": l,
-                            "close": (o + 2 * c) / 3,
-                            "volume": vol,
-                        })
-                        # Slot 3 (13:15)
-                        synth_rows.append({
-                            "timestamp": d + pd.Timedelta(hours=13, minutes=15),
-                            "open": (o + 2 * c) / 3,
-                            "high": max((o + 2 * c) / 3, c),
-                            "low": min((o + 2 * c) / 3, c),
-                            "close": c,
-                            "volume": vol,
-                        })
-
-                    synth_df = pd.DataFrame(synth_rows)
-                    if not exact_2h_bars.empty:
-                        combined = pd.concat([synth_df, exact_2h_bars]).sort_values("timestamp").reset_index(drop=True)
-                    else:
-                        combined = synth_df.sort_values("timestamp").reset_index(drop=True)
-                    return combined
-            except Exception as exc:
-                logger.debug("Daily warmup skipped for %s: %s", security_id, exc)
-
-        return exact_2h_bars
+        """Fetch 1-minute bars from Dhan and resample into 2-Hour (120-minute) OHLCV candles aligned to 09:15 IST."""
+        return self.fetch_resampled_bars(
+            security_id=security_id,
+            rule="120min",
+            days=min(days, 30),
+            exclude_incomplete=exclude_incomplete,
+        )
 
     def fetch_resampled_bars(
         self,

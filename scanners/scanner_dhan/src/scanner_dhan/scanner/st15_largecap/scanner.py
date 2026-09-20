@@ -389,7 +389,7 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                 return None
 
         scan_results: list[HeikinAshiEmaScanResult] = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
             future_to_sym = {executor.submit(_process_symbol, sym): sym for sym in symbols}
             for future in concurrent.futures.as_completed(future_to_sym):
                 res = future.result()

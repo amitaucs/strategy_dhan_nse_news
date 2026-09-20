@@ -50,10 +50,10 @@ def test_dhan_provider_fetch_bars_timeframes() -> None:
     assert not df_1h.empty
     assert len(df_1h) == 10  # 600m / 60m = 10 bars
 
-    # 3. 2-Hour (120m) Candles (3 standard NSE sessions per trading day)
+    # 3. 2-Hour (120m) Candles
     df_2h = provider.fetch_bars(security_id="1333", timeframe="2H")
     assert not df_2h.empty
-    assert len(df_2h) == 3  # 3 standard NSE 2H slots (09:15, 11:15, 13:15)
+    assert len(df_2h) == 5  # 600m / 120m = 5 bars
 
     # 4. Daily Candles
     mock_dhan.historical_daily_data.return_value = {
