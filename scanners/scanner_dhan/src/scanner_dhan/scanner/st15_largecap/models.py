@@ -24,6 +24,11 @@ class HeikinAshiEmaScanResult:
     is_matched: bool
     is_first_green: bool = False
     is_pullback: bool = False
+    ema_20: float = 0.0
+    ema_50: float = 0.0
+    ema_200: float = 0.0
+    is_ema_aligned: bool = False
+    is_st_fresh_green: bool = False
     volume: int = 0
     rsi: float | None = None
     candle_signal: str = ""
@@ -42,7 +47,12 @@ class HeikinAshiEmaScanResult:
             "is_ha_green": self.is_ha_green,
             "is_first_green": self.is_first_green,
             "is_supertrend_green": self.is_supertrend_green,
+            "is_st_fresh_green": self.is_st_fresh_green,
             "supertrend_val": round(self.supertrend_val, 2),
+            "ema_20": round(self.ema_20, 2),
+            "ema_50": round(self.ema_50, 2),
+            "ema_200": round(self.ema_200, 2),
+            "is_ema_aligned": self.is_ema_aligned,
             "volume": self.volume,
             "rsi": self.rsi,
             "candle_signal": (

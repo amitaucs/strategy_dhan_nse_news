@@ -27,13 +27,14 @@ __all__ = ["HeikinAshiEmaPullbackScanner"]
 
 @register_scanner
 class HeikinAshiEmaPullbackScanner(BaseScanner):
-    """Detects 2H Green Heikin Ashi candles forming after pullback near 20/50/200 EMAs."""
+    """Detects 2H Green Heikin Ashi candles forming after pullback near 20/50/200 EMAs with Bullish EMA Stack."""
 
     id = "heikin_ashi_ema_pullback"
     name = "2H Heikin Ashi EMA Pullback + Supertrend - ST15 LargeCap"
     description = (
         "Identifies bullish continuation setups on 2-Hour Heikin Ashi charts: "
-        "Green Heikin Ashi candle bouncing off/testing 20, 50, or 200 EMA with Green Supertrend."
+        "Strict 20 > 50 > 200 EMA alignment, dip to EMA, 1st Green Heikin Ashi candle, "
+        "and Green Supertrend confirmation."
     )
     category = "Trend Following"
     icon = "zap"
@@ -72,15 +73,27 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                 {"value": "15M", "label": "15 Minutes"},
             ],
         ),
+        ScannerParameter(
+            name="ema_alignment",
+            label="EMA Trend Alignment",
+            param_type="select",
+            default="strict",
+            description="Enforce bullish EMA order (20 EMA > 50 EMA > 200 EMA).",
+            options=[
+                {"value": "strict", "label": "Strict Bullish (20 > 50 > 200 EMA) ⭐"},
+                {"value": "above_200", "label": "Above 200 EMA (20 > 200 & Price > 200)"},
+                {"value": "any", "label": "Any EMA Alignment (No Trend Filter)"},
+            ],
+        ),
         get_wick_parameter(default="NA"),
         ScannerParameter(
             name="target_ema",
             label="Target EMA Pullback",
             param_type="select",
             default="ALL",
-            description="Target a specific EMA (20, 50, or 200 EMA) or Auto-Detect Nearest.",
+            description="Target a specific EMA (20, 50, or 200 EMA) or Auto-Detect Nearest Pullback.",
             options=[
-                {"value": "ALL", "label": "All EMAs (Auto-Detect Nearest)"},
+                {"value": "ALL", "label": "All EMAs (Auto-Detect Nearest Pullback)"},
                 {"value": "EMA_20", "label": "20 EMA Pullback"},
                 {"value": "EMA_50", "label": "50 EMA Pullback"},
                 {"value": "EMA_200", "label": "200 EMA Major Trend Support"},
@@ -90,11 +103,23 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
             name="first_candle_only",
             label="First Green Candle Only",
             param_type="select",
-            default="no",
+            default="yes",
             description="Filter only stocks forming the 1st Green HA candle after a Red pullback.",
             options=[
-                {"value": "no", "label": "All Green HA Pullbacks (Any in Wave)"},
                 {"value": "yes", "label": "1st Green HA Candle Only (Fresh Entry ⭐)"},
+                {"value": "no", "label": "All Green HA Pullbacks (Any in Wave)"},
+            ],
+        ),
+        ScannerParameter(
+            name="require_supertrend",
+            label="Supertrend Filter",
+            param_type="select",
+            default="yes",
+            description="Check when Supertrend (10, 3) is Bullish (Green).",
+            options=[
+                {"value": "yes", "label": "Require Green SuperTrend (Confirmed Bullish ⭐)"},
+                {"value": "fresh", "label": "SuperTrend Turned Green on Current Candle 🚀"},
+                {"value": "no", "label": "Any SuperTrend (Include Waiting for ST ⏳)"},
             ],
         ),
         ScannerParameter(
@@ -137,8 +162,10 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
         p = params or {}
         universe_choice = str(p.get("universe", "NIFTY_100"))
         timeframe = str(p.get("timeframe", "2H")).upper()
+        ema_alignment = str(p.get("ema_alignment", "strict")).lower().strip()
         target_ema = str(p.get("target_ema", "ALL")).upper().strip()
-        first_candle_only = str(p.get("first_candle_only", "no")).lower() in ("yes", "true", "1")
+        first_candle_only = str(p.get("first_candle_only", "yes")).lower() in ("yes", "true", "1")
+        require_supertrend = str(p.get("require_supertrend", "yes")).lower().strip()
         threshold_pct = float(p.get("threshold_pct", 1.5))
         st_period = int(p.get("supertrend_period", 10))
         st_mult = float(p.get("supertrend_multiplier", 3.0))
@@ -171,7 +198,12 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                         distance_pct=999.0,
                         is_ha_green=False,
                         is_supertrend_green=False,
+                        is_st_fresh_green=False,
                         supertrend_val=0.0,
+                        ema_20=0.0,
+                        ema_50=0.0,
+                        ema_200=0.0,
+                        is_ema_aligned=False,
                         is_matched=False,
                         is_first_green=False,
                         candle_signal=f"Insufficient {timeframe} Data",
@@ -201,6 +233,7 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
 
             ha_open = float(df_ha["open"].iloc[-1])
             ha_close = float(df_ha["close"].iloc[-1])
+            ha_high = float(df_ha["high"].iloc[-1])
             ha_low = float(df_ha["low"].iloc[-1])
 
             # Current candle MUST be closed GREEN (HA Close > HA Open)
@@ -216,12 +249,18 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
 
             # Strict 1st Green HA condition:
             # Previous was RED pullback AND current is CLOSED GREEN
-            is_first_green = is_ha_green and prev_is_red
+            is_first_green = bool(is_ha_green and prev_is_red)
 
             # 2. Supertrend Calculation on 2-Hour Heikin Ashi OHLC
             st_df = calculate_supertrend(df_ha, period=st_period, multiplier=st_mult)
             is_st_green = bool(st_df["is_green"].iloc[-1]) if not st_df.empty else False
             st_val = float(st_df["supertrend"].iloc[-1]) if not st_df.empty else 0.0
+
+            if len(st_df) >= 2:
+                prev_st_green = bool(st_df["is_green"].iloc[-2])
+                is_st_fresh_green = bool(is_st_green and not prev_st_green)
+            else:
+                is_st_fresh_green = False
 
             # 3. 20, 50, 200 EMAs on 2-Hour Heikin Ashi Close
             ha_close_series = df_ha["close"].astype(float)
@@ -233,35 +272,56 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                 .iloc[-1]
             )
 
-            # Evaluate distance from Heikin Ashi Close & Low to each of the 3 EMAs
+            # Rule 1: EMA Alignment Filter (20 EMA > 50 EMA > 200 EMA)
+            is_strict_ema = bool(ema_20 > ema_50 and ema_50 > ema_200)
+            is_above_200 = bool(ema_20 > ema_200 and ha_close > ema_200)
+
+            if ema_alignment == "strict":
+                is_ema_aligned = is_strict_ema
+            elif ema_alignment == "above_200":
+                is_ema_aligned = is_above_200
+            else:
+                is_ema_aligned = True
+
+            # Rule 2: Evaluate distance and dip from Heikin Ashi Low & Close to EMAs
+            recent_ha_low = float(df_ha["low"].tail(2).min())
             ema_candidates = [
-                ("20 EMA", ema_20, ((ha_close - ema_20) / ema_20) * 100.0),
-                ("50 EMA", ema_50, ((ha_close - ema_50) / ema_50) * 100.0),
-                ("200 EMA", ema_200, ((ha_close - ema_200) / ema_200) * 100.0),
+                ("20 EMA", ema_20, ((ha_close - ema_20) / ema_20) * 100.0, ((recent_ha_low - ema_20) / ema_20) * 100.0),
+                ("50 EMA", ema_50, ((ha_close - ema_50) / ema_50) * 100.0, ((recent_ha_low - ema_50) / ema_50) * 100.0),
+                ("200 EMA", ema_200, ((ha_close - ema_200) / ema_200) * 100.0, ((recent_ha_low - ema_200) / ema_200) * 100.0),
             ]
 
-            # Find closest EMA
+            def _is_valid_ema_dip(ema_val: float, dist: float, l_dist: float) -> bool:
+                holding = ha_close >= (ema_val * (1.0 - threshold_pct / 100.0))
+                dipped = (
+                    abs(dist) <= threshold_pct
+                    or (-threshold_pct <= l_dist <= threshold_pct)
+                    or (ha_low <= ema_val * 1.005 and ha_close >= ema_val * (1.0 - threshold_pct / 100.0))
+                )
+                return holding and dipped
+
             if target_ema == "EMA_20":
-                best_ema_name, best_ema_price, best_dist_pct = ema_candidates[0]
+                best_ema_name, best_ema_price, best_dist_pct, low_dist = ema_candidates[0]
+                is_near_ema = _is_valid_ema_dip(best_ema_price, best_dist_pct, low_dist)
             elif target_ema == "EMA_50":
-                best_ema_name, best_ema_price, best_dist_pct = ema_candidates[1]
+                best_ema_name, best_ema_price, best_dist_pct, low_dist = ema_candidates[1]
+                is_near_ema = _is_valid_ema_dip(best_ema_price, best_dist_pct, low_dist)
             elif target_ema == "EMA_200":
-                best_ema_name, best_ema_price, best_dist_pct = ema_candidates[2]
+                best_ema_name, best_ema_price, best_dist_pct, low_dist = ema_candidates[2]
+                is_near_ema = _is_valid_ema_dip(best_ema_price, best_dist_pct, low_dist)
             else:
-                ema_candidates.sort(key=lambda x: abs(x[2]))
-                best_ema_name, best_ema_price, best_dist_pct = ema_candidates[0]
-
-            # Check if Heikin Ashi low touched / pulled back near the EMA
-            recent_ha_low = float(df_ha["low"].tail(2).min())
-            ha_low_dist_pct = ((recent_ha_low - best_ema_price) / best_ema_price) * 100.0
-
-            is_holding_ema = ha_close >= (best_ema_price * (1.0 - threshold_pct / 100.0))
-            is_pullback_near = (
-                abs(best_dist_pct) <= threshold_pct
-                or (-1.0 <= ha_low_dist_pct <= threshold_pct)
-                or (ha_low <= best_ema_price * 1.005 and ha_close >= best_ema_price * 0.995)
-            )
-            is_near_ema = is_holding_ema and is_pullback_near
+                qualifying = [
+                    cand for cand in ema_candidates
+                    if _is_valid_ema_dip(cand[1], cand[2], cand[3])
+                ]
+                if qualifying:
+                    qualifying.sort(key=lambda x: abs(x[2]))
+                    best_ema_name, best_ema_price, best_dist_pct, _ = qualifying[0]
+                    is_near_ema = True
+                else:
+                    ema_candidates.sort(key=lambda x: abs(x[2]))
+                    best_ema_name, best_ema_price, best_dist_pct, low_dist = ema_candidates[0]
+                    is_near_ema = False
 
             # Opposing upper rejection wick check (Bullish continuation)
             is_wick_passed, _ = check_candle_wick(
@@ -273,24 +333,43 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                 max_wick_pct_param=max_wick_pct,
             )
 
+            # Rule 3: Candle Condition (1st Green Candle vs Any Green Candle)
+            is_candle_ok = is_first_green if first_candle_only else is_ha_green
+
+            # Rule 4: SuperTrend Condition
+            if require_supertrend == "yes":
+                is_st_ok = is_st_green
+            elif require_supertrend == "fresh":
+                is_st_ok = is_st_fresh_green
+            else:
+                is_st_ok = True
+
             # Strategy Match Condition:
-            # 1. Current candle MUST BE CLOSED GREEN (ha_close > ha_open)
-            # 2. Supertrend is Green (Bullish) on 2H Heikin Ashi
-            # 3. Pullback near 20, 50, or 200 EMA (within threshold %)
-            # 4. Passes maximum opposing wick filter
-            is_pullback = bool(is_ha_green and is_st_green and is_near_ema and is_wick_passed)
-            is_matched = bool(is_pullback and (not first_candle_only or is_first_green))
+            # 1. 20 EMA > 50 EMA > 200 EMA (Bullish EMA stack)
+            # 2. Price dipped near 20, 50, or 200 EMA
+            # 3. 1st Green Heikin Ashi candle (or Green HA)
+            # 4. Supertrend is Green (or just turned green)
+            # 5. Passes maximum opposing wick filter
+            is_pullback = bool(is_ema_aligned and is_near_ema and is_ha_green and is_wick_passed)
+            is_matched = bool(is_ema_aligned and is_near_ema and is_candle_ok and is_st_ok and is_wick_passed)
 
             rsi = calculate_rsi(df_ha["close"], period=14)
 
-            if is_first_green and is_st_green:
-                candle_signal = "⭐ 1st Green HA (Fresh Entry) + ST Bullish"
+            # Human-readable candle signal describing exact technical state
+            if not is_ema_aligned:
+                candle_signal = f"⚠️ EMA Not Aligned (20: {ema_20:.1f} | 50: {ema_50:.1f} | 200: {ema_200:.1f})"
+            elif is_first_green and is_st_fresh_green:
+                candle_signal = f"🌟 1st Green HA + Fresh ST Turn ({best_ema_name})"
+            elif is_first_green and is_st_green:
+                candle_signal = f"⭐ 1st Green HA + ST Bullish ({best_ema_name})"
+            elif is_first_green and not is_st_green:
+                candle_signal = f"⏳ 1st Green HA (Waiting for ST Green) ({best_ema_name})"
             elif is_ha_green and is_st_green:
-                candle_signal = "🟢 Green HA + Bullish ST"
+                candle_signal = f"🟢 Green HA + ST Bullish ({best_ema_name})"
             elif is_ha_green:
-                candle_signal = "🟢 Green HA"
+                candle_signal = f"🟢 Green HA ({best_ema_name})"
             else:
-                candle_signal = "🔴 Red HA (Pulling Back)"
+                candle_signal = f"🔴 Red HA Pullback ({best_ema_name})"
 
             scan_results.append(
                 HeikinAshiEmaScanResult(
@@ -304,7 +383,12 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
                     is_first_green=is_first_green,
                     is_pullback=is_pullback,
                     is_supertrend_green=is_st_green,
+                    is_st_fresh_green=is_st_fresh_green,
                     supertrend_val=st_val,
+                    ema_20=ema_20,
+                    ema_50=ema_50,
+                    ema_200=ema_200,
+                    is_ema_aligned=is_ema_aligned,
                     is_matched=is_matched,
                     volume=volume,
                     rsi=rsi,

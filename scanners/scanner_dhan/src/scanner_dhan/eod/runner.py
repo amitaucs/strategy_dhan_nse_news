@@ -173,13 +173,13 @@ def is_scanner_item_matched(item: Any, scanner_id: str) -> bool:
         stat = str(_extract_val(item, "status", default="") or "").upper()
         return (is_m is True or str(is_m).lower() in ("true", "1")) and stat != "NO_SETUP"
 
-    # 6. ST-15 HA EMA Pullback (active pullback touch/turn)
+    # 6. ST-15 HA EMA Pullback (strict EMA 20>50>200 + pullback + 1st Green HA + Supertrend)
     if "pullback" in sid or "st15" in sid:
-        is_pb = _extract_val(item, "is_pullback", "is_matched", "is_first_green")
-        if is_pb is True or str(is_pb).lower() in ("true", "1"):
+        is_m = _extract_val(item, "is_matched")
+        if is_m is True or str(is_m).lower() in ("true", "1"):
             return True
         stat = str(_extract_val(item, "status", default="") or "").upper()
-        return stat in ("MATCHED", "PULLBACK", "PULLBACK_AT_20", "PULLBACK_AT_50", "PULLBACK_AT_200", "QUALIFIED")
+        return stat in ("MATCHED", "TRIGGERED", "QUALIFIED")
 
     # 7. Institutional Order Block (demand reaction)
     if "order_block" in sid or "block" in sid:
