@@ -68,12 +68,16 @@ EOD_TIGHT_PARAMS_MAP: dict[str, dict[str, Any]] = {
         "target_level": "ALL",
     },
     "heikin_ashi_ema_pullback": {
-        "threshold_pct": 0.75,
+        "ema_alignment": "strict",
+        "threshold_pct": 1.5,
         "first_candle_only": "yes",
+        "require_supertrend": "yes",
     },
     "ha_ema_pullback": {
-        "threshold_pct": 0.75,
+        "ema_alignment": "strict",
+        "threshold_pct": 1.5,
         "first_candle_only": "yes",
+        "require_supertrend": "yes",
     },
     "order_block": {
         "impulse_multiplier": 1.8,
@@ -359,12 +363,14 @@ def _extract_stock_and_strategy(
 
     # 6. ST15 Heikin Ashi EMA Pullback
     elif "st15" in sid_lower or "heikin_ashi_ema" in sid_lower or "pullback" in sid_lower:
-        ema_p = _extract_val(item, "nearest_ema_price")
-        ema_n = str(_extract_val(item, "nearest_ema_name", default="20 EMA"))
+        ema_p = _extract_val(item, "nearest_ema_price", "support_price")
+        ema_n = str(_extract_val(item, "nearest_ema_name", "support_type", default="20 EMA"))
+        st_val = _extract_val(item, "supertrend_val")
         pivot_val = _safe_float(ema_p)
+        stop_val = _safe_float(st_val) if st_val else (pivot_val * 0.98 if pivot_val else None)
         level_desc = f"Pullback to {ema_n} ({_safe_fmt_price(pivot_val)})" if pivot_val else f"Pullback to {ema_n}"
         sig = "HA_EMA_PULLBACK"
-        score = 75.0
+        score = 80.0
 
     # 7. Order Block Scanner
     elif "order_block" in sid_lower:
