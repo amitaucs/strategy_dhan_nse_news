@@ -755,11 +755,104 @@ class DhanDataProvider:
     def fetch_2h_bars(
         self,
         security_id: str,
-        days: int = 25,
+        days: int = 30,
         exclude_incomplete: bool = False,
+        warmup_days: int = 150,
     ) -> pd.DataFrame:
-        """Fetch 1-minute bars from Dhan and resample into 2-Hour OHLCV candles aligned to 09:15 IST."""
-        return self.fetch_resampled_bars(security_id=security_id, rule="120min", days=min(days, 30), exclude_incomplete=exclude_incomplete)
+        """Fetch 1-minute bars from Dhan and resample into 3 standard NSE 2-Hour OHLCV candles per day,
+        warmed up with historical daily data for 200+ candle indicator depth (matching TradingView)."""
+        safe_days = min(max(1, days), 30)
+        m_df = self.fetch_intraday_minute_bars(security_id=security_id, days=safe_days)
+
+        exact_2h_bars = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+        if not m_df.empty and "timestamp" in m_df.columns:
+            df = m_df.copy()
+            if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+            def get_slot_ts(ts: pd.Timestamp) -> pd.Timestamp:
+                d = ts.floor("D")
+                t = ts.time()
+                if t < pd.Timestamp("11:15").time():
+                    return d + pd.Timedelta(hours=9, minutes=15)
+                elif t < pd.Timestamp("13:15").time():
+                    return d + pd.Timedelta(hours=11, minutes=15)
+                else:
+                    return d + pd.Timedelta(hours=13, minutes=15)
+
+            df["slot"] = df["timestamp"].apply(get_slot_ts)
+            agg_dict: dict[str, str] = {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+            }
+            if "volume" in df.columns:
+                agg_dict["volume"] = "sum"
+
+            exact_2h_bars = df.groupby("slot").agg(agg_dict).reset_index().rename(columns={"slot": "timestamp"})
+            if exclude_incomplete and not exact_2h_bars.empty:
+                counts = df.groupby("slot")["close"].count().reset_index()
+                valid_slots = counts[counts["close"] >= 100]["slot"]
+                exact_2h_bars = exact_2h_bars[exact_2h_bars["timestamp"].isin(valid_slots)]
+
+        # Warm up earlier history with daily bars so 200 EMA / Supertrend have 200+ bars of history
+        if warmup_days > 0:
+            daily_df = self.fetch_daily_bars(security_id=security_id, days=warmup_days)
+            if not daily_df.empty and "timestamp" in daily_df.columns:
+                d_df = daily_df.copy()
+                if not pd.api.types.is_datetime64_any_dtype(d_df["timestamp"]):
+                    d_df["timestamp"] = pd.to_datetime(d_df["timestamp"])
+
+                min_exact_ts = exact_2h_bars["timestamp"].min() if not exact_2h_bars.empty else pd.Timestamp.max
+                min_date = min_exact_ts.floor("D") if not exact_2h_bars.empty else pd.Timestamp.max
+                older_daily = d_df[d_df["timestamp"].dt.floor("D") < min_date]
+
+                if not older_daily.empty:
+                    synth_rows: list[dict[str, Any]] = []
+                    for _, row in older_daily.iterrows():
+                        d = row["timestamp"].floor("D")
+                        o = float(row["open"])
+                        h = float(row["high"])
+                        l = float(row["low"])
+                        c = float(row["close"])
+                        vol = int(row.get("volume", 0)) // 3
+                        # Slot 1 (09:15)
+                        synth_rows.append({
+                            "timestamp": d + pd.Timedelta(hours=9, minutes=15),
+                            "open": o,
+                            "high": max(o, (2 * o + c) / 3),
+                            "low": min(o, (2 * o + c) / 3),
+                            "close": (2 * o + c) / 3,
+                            "volume": vol,
+                        })
+                        # Slot 2 (11:15)
+                        synth_rows.append({
+                            "timestamp": d + pd.Timedelta(hours=11, minutes=15),
+                            "open": (2 * o + c) / 3,
+                            "high": h,
+                            "low": l,
+                            "close": (o + 2 * c) / 3,
+                            "volume": vol,
+                        })
+                        # Slot 3 (13:15)
+                        synth_rows.append({
+                            "timestamp": d + pd.Timedelta(hours=13, minutes=15),
+                            "open": (o + 2 * c) / 3,
+                            "high": max((o + 2 * c) / 3, c),
+                            "low": min((o + 2 * c) / 3, c),
+                            "close": c,
+                            "volume": vol,
+                        })
+
+                    synth_df = pd.DataFrame(synth_rows)
+                    if not exact_2h_bars.empty:
+                        combined = pd.concat([synth_df, exact_2h_bars]).sort_values("timestamp").reset_index(drop=True)
+                    else:
+                        combined = synth_df.sort_values("timestamp").reset_index(drop=True)
+                    return combined
+
+        return exact_2h_bars
 
     def fetch_resampled_bars(
         self,
