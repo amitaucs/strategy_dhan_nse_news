@@ -16,4 +16,8 @@ services:
     environment:
       - APP_ENV=production
       - PYTHONUNBUFFERED=1
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 

@@ -95,11 +95,22 @@ class DhanRateLimitError(DhanDataAPIError):
 
 
 def load_dhan_credentials(env_path: str = ".env") -> tuple[str, str]:
-    """Load Dhan Client ID and Access Token from environment or .env file."""
+    """Load Dhan Client ID and Access Token from environment or multiple standard .env locations."""
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(dotenv_path=env_path)
+        # Try specified env_path first, then fallback to standard project locations
+        candidates = [
+            env_path,
+            ".env",
+            "strategies/news_based_strategy/.env",
+            "strategies/st14_bullish_ce/.env",
+            "/opt/nse_trading_terminal/strategies/news_based_strategy/.env",
+            "/opt/nse_trading_terminal/.env",
+        ]
+        for cand in candidates:
+            if cand and os.path.exists(cand):
+                load_dotenv(dotenv_path=cand, override=False)
     except ImportError:
         pass
 
@@ -127,18 +138,19 @@ class DhanDataProvider:
     _data_api_health_cache: tuple[float, dict[str, Any]] | None = None
     _daily_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
     _intraday_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
+    _dhan_instance_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
     quote_delay: float = 1.0       # Dhan REST quote API strict limit: 1 request/sec
-    historical_delay: float = 0.20 # Dhan historical data API limit: ~5 requests/sec
-    rest_delay: float = 0.50       # Dhan general REST API: ~2 requests/sec
-    max_retries: int = 4
+    historical_delay: float = 0.05 # Dhan historical data API limit: ~20 requests/sec with pool
+    rest_delay: float = 0.20       # Dhan general REST API: ~5 requests/sec
+    max_retries: int = 3
 
     def __init__(
         self,
         client_id: str | None = None,
         access_token: str | None = None,
         quote_delay: float = 1.0,
-        historical_delay: float = 0.20,
-        max_retries: int = 4,
+        historical_delay: float = 0.05,
+        max_retries: int = 3,
     ) -> None:
         if not client_id or not access_token:
             try:
@@ -150,13 +162,27 @@ class DhanDataProvider:
 
         self.client_id = client_id or ""
         self.access_token = access_token or ""
-        self.quote_delay = max(1.0, quote_delay)
-        self.historical_delay = max(0.15, historical_delay)
+        self.quote_delay = max(0.5, quote_delay)
+        self.historical_delay = max(0.04, historical_delay)
         self.max_retries = max_retries
 
         if self.client_id and self.access_token:
-            self.context = DhanContext(self.client_id, self.access_token)
-            self.dhan = dhanhq(self.context)
+            cache_k = (self.client_id, self.access_token)
+            if cache_k in DhanDataProvider._dhan_instance_cache:
+                self.context, self.dhan = DhanDataProvider._dhan_instance_cache[cache_k]
+            else:
+                try:
+                    self.context = DhanContext(
+                        self.client_id,
+                        self.access_token,
+                        pool={"pool_connections": 25, "pool_maxsize": 50},
+                    )
+                    self.dhan = dhanhq(self.context)
+                    DhanDataProvider._dhan_instance_cache[cache_k] = (self.context, self.dhan)
+                except Exception:
+                    self.context = DhanContext(self.client_id, self.access_token)
+                    self.dhan = dhanhq(self.context)
+                    DhanDataProvider._dhan_instance_cache[cache_k] = (self.context, self.dhan)
         else:
             self.context = None
             self.dhan = None
@@ -809,15 +835,16 @@ class DhanDataProvider:
 
         # Warm up earlier history with daily bars so 200 EMA / Supertrend have 200+ bars of history
         if warmup_days > 0:
-            daily_df = self.fetch_daily_bars(security_id=security_id, days=warmup_days)
-            if not daily_df.empty and "timestamp" in daily_df.columns:
-                d_df = daily_df.copy()
-                if not pd.api.types.is_datetime64_any_dtype(d_df["timestamp"]):
-                    d_df["timestamp"] = pd.to_datetime(d_df["timestamp"])
+            try:
+                daily_df = self.fetch_daily_bars(security_id=security_id, days=warmup_days)
+                if not daily_df.empty and "timestamp" in daily_df.columns:
+                    d_df = daily_df.copy()
+                    if not pd.api.types.is_datetime64_any_dtype(d_df["timestamp"]):
+                        d_df["timestamp"] = pd.to_datetime(d_df["timestamp"])
 
-                min_exact_ts = exact_2h_bars["timestamp"].min() if not exact_2h_bars.empty else pd.Timestamp.max
-                min_date = min_exact_ts.floor("D") if not exact_2h_bars.empty else pd.Timestamp.max
-                older_daily = d_df[d_df["timestamp"].dt.floor("D") < min_date]
+                    min_exact_ts = exact_2h_bars["timestamp"].min() if not exact_2h_bars.empty else pd.Timestamp.max
+                    min_date = min_exact_ts.floor("D") if not exact_2h_bars.empty else pd.Timestamp.max
+                    older_daily = d_df[d_df["timestamp"].dt.floor("D") < min_date]
 
                 if not older_daily.empty:
                     synth_rows: list[dict[str, Any]] = []
@@ -862,6 +889,8 @@ class DhanDataProvider:
                     else:
                         combined = synth_df.sort_values("timestamp").reset_index(drop=True)
                     return combined
+            except Exception as exc:
+                logger.debug("Daily warmup skipped for %s: %s", security_id, exc)
 
         return exact_2h_bars
 
