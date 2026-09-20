@@ -677,6 +677,14 @@ class DhanDataProvider:
         from_str = from_date.strftime("%Y-%m-%d")
         to_str = to_date.strftime("%Y-%m-%d")
 
+        cache_key = (str(security_id), safe_days, exchange_segment)
+        now_ts = time.time()
+        cached = DhanDataProvider._intraday_bars_cache.get(cache_key)
+        if cached is not None:
+            c_ts, c_df = cached
+            if now_ts - c_ts < 45.0:
+                return c_df.copy()
+
         for attempt in range(1, self.max_retries + 1):
             self._pace_historical_request()
             try:
@@ -739,7 +747,10 @@ class DhanDataProvider:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            return df.sort_values("timestamp").reset_index(drop=True)
+            res_df = df.sort_values("timestamp").reset_index(drop=True)
+            if not res_df.empty:
+                DhanDataProvider._intraday_bars_cache[cache_key] = (now_ts, res_df)
+            return res_df
 
         return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
 
