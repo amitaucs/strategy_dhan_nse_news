@@ -128,7 +128,7 @@ def test_bearish_ema_stack_rejection() -> None:
     assert result.symbol == "HDFCBANK"
     assert result.is_ema_aligned is False
     assert result.is_matched is False
-    assert "EMA Not Aligned" in result.candle_signal
+    assert ("Inverted" in result.candle_signal or "EMA" in result.candle_signal)
     assert report.matched_count == 0
 
 

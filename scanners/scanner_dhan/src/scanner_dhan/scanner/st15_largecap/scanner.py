@@ -357,7 +357,7 @@ class HeikinAshiEmaPullbackScanner(BaseScanner):
 
             # Human-readable candle signal describing exact technical state
             if not is_ema_aligned:
-                candle_signal = f"⚠️ EMA Not Aligned (20: {ema_20:.1f} | 50: {ema_50:.1f} | 200: {ema_200:.1f})"
+                candle_signal = "⚠️ Inverted / Bearish EMA Stack"
             elif is_first_green and is_st_fresh_green:
                 candle_signal = f"🌟 1st Green HA + Fresh ST Turn ({best_ema_name})"
             elif is_first_green and is_st_green:
