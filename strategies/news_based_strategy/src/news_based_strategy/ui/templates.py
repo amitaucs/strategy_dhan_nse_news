@@ -795,23 +795,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       </div>
     </div>
 
-    <!-- Historical Signals Section -->
-    <div class="bg-[#111827] border border-gray-800 rounded-xl p-4 shadow-md space-y-3">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-bold text-white">⚡ ST-14 Confirmed / Executed Breakout Signals History</span>
-          <span id="st14-signals-count-badge" class="text-xs font-mono text-blue-400 bg-blue-950/60 border border-blue-800/50 px-2.5 py-0.5 rounded-full">0 Executed Signals</span>
-        </div>
-        <button onclick="loadSt14Data()" class="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
-          <span>🔄 Refresh Signals</span>
-        </button>
-      </div>
-
-      <div id="st14-signals-container" class="overflow-x-auto">
-        <!-- Rendered dynamically -->
-      </div>
-    </div>
-
   </div> <!-- /workspace-st14 -->
 
   <!-- WORKSPACE 3: MODULAR STRATEGY WORKSPACE (For ST-15, ST-08, ST-01, ST-OB) -->
@@ -4397,9 +4380,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         // Render Positions
         renderSt14Positions(st14Telemetry.active_positions || [], st14Telemetry.closed_positions || []);
-
-        // Render Signals
-        renderSt14Signals(st14Telemetry.recent_signals || []);
       } catch (err) {
         console.debug('Failed loading ST-14 data:', err);
       }
@@ -4562,89 +4542,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
                   </td>
                   <td class="py-2.5 px-3 text-right">
                     <button onclick="confirmSt14SquareOff()" class="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-700/60 rounded text-[10px] font-bold text-rose-300 active:scale-95 cursor-pointer">Square Off</button>
-                  </td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-      `;
-    }
-
-    function renderSt14Signals(signals) {
-      const container = document.getElementById('st14-signals-container');
-      const countBadge = document.getElementById('st14-signals-count-badge');
-      const items = signals || [];
-      if (countBadge) countBadge.textContent = `${items.length} Signals`;
-      if (!container) return;
-
-      if (items.length === 0) {
-        container.innerHTML = `
-          <div class="text-center py-8 border border-dashed border-gray-800 rounded-xl bg-[#0b0f19]/40 space-y-2">
-            <span class="text-2xl">📡</span>
-            <div class="text-xs text-gray-400">No historical breakout signals recorded yet. Scanner runs hourly during market hours.</div>
-          </div>
-        `;
-        return;
-      }
-
-      container.innerHTML = `
-        <table class="w-full text-left border-collapse text-xs">
-          <thead>
-            <tr class="border-b border-gray-800 text-gray-400 uppercase text-[10px] tracking-wider bg-[#0b0f19]/80">
-              <th class="py-2 px-3 font-semibold">Symbol & LTP</th>
-              <th class="py-2 px-3 font-semibold">5D / 5H Breakout</th>
-              <th class="py-2 px-3 font-semibold">20 EMA (Daily / 1H)</th>
-              <th class="py-2 px-3 font-semibold">VWAP & Angle</th>
-              <th class="py-2 px-3 font-semibold">1-OTM Call Option</th>
-              <th class="py-2 px-3 font-semibold">Bracket Levels</th>
-              <th class="py-2 px-3 font-semibold">Status</th>
-              <th class="py-2 px-3 font-semibold text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800/60 font-mono">
-            ${items.map(s => {
-              const opt = s.option_contract || {};
-              const levels = s.order_levels || {};
-              return `
-                <tr class="hover:bg-gray-800/40 transition">
-                  <td class="py-2.5 px-3">
-                    <div class="font-bold text-white font-sans text-sm">${s.symbol}</div>
-                    <div class="text-emerald-400 text-xs font-bold">₹${s.underlying_ltp ? s.underlying_ltp.toFixed(2) : '-'}</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <div class="text-emerald-300">5H High: ₹${s.breakout_candle_high ? s.breakout_candle_high.toFixed(2) : '-'}</div>
-                    <div class="text-[10px] text-gray-400">Crossed: ${s.is_confirmed ? '✅ YES' : '⏳ Monitoring'}</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <div class="text-gray-300">Daily: ₹${s.daily_ema20 ? s.daily_ema20.toFixed(2) : '-'}</div>
-                    <div class="text-gray-400 text-[10px]">1H: ₹${s.hourly_ema20 ? s.hourly_ema20.toFixed(2) : '-'}</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <div class="text-indigo-300">₹${s.vwap ? s.vwap.toFixed(2) : '-'} (${s.vwap_dist_pct ? s.vwap_dist_pct.toFixed(2) : 0}%)</div>
-                    <div class="text-[10px] text-gray-400">Angle: ~${s.vwap_angle_deg ? Math.round(s.vwap_angle_deg) : 45}° ↗️</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <div class="font-bold text-blue-300 font-sans">${opt.symbol || `${s.symbol} CE`}</div>
-                    <div class="text-[10px] text-gray-400">Prem: ₹${opt.ltp ? opt.ltp.toFixed(2) : '-'} | Lot: ${opt.lot_size || '-'}</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <div class="text-emerald-400">TP: ₹${levels.target_price ? levels.target_price.toFixed(2) : '-'} (+40%)</div>
-                    <div class="text-rose-400 text-[10px]">SL: ₹${levels.stop_loss_price ? levels.stop_loss_price.toFixed(2) : '-'} (-20%)</div>
-                  </td>
-                  <td class="py-2.5 px-3">
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'ORDER_PLACED' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-blue-950 text-blue-300 border border-blue-800'}">
-                      ${s.status}
-                    </span>
-                  </td>
-                  <td class="py-2.5 px-3 text-right">
-                    ${s.status !== 'ORDER_PLACED' ? `
-                      <button onclick="executeSt14Signal('${s.signal_id}')" class="px-2.5 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 rounded text-[10px] font-bold text-white shadow active:scale-95 cursor-pointer">
-                        ⚡ Buy CE
-                      </button>
-                    ` : `
-                      <span class="text-emerald-400 text-[10px] font-bold">✓ Executed</span>
-                    `}
                   </td>
                 </tr>
               `;
