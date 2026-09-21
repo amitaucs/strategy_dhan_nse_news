@@ -280,7 +280,20 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         <!-- Vertical Divider -->
         <div class="h-6 w-px bg-gray-800 hidden sm:block"></div>
 
-        <!-- Strategy Quick-Selector Dropdown -->
+        <!-- Navigation Tabs Switcher (Scanner vs EOD Digest vs Strategies) -->
+        <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
+          <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5">
+            <span>🔭</span> <span>Scanner</span>
+          </button>
+          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+            <span>🌆</span> <span>EOD Digest</span>
+          </button>
+          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+            <span>⚡</span> <span>Strategies</span>
+          </button>
+        </div>
+
+        <!-- Strategy Quick-Selector Dropdown (Right of Strategies) -->
         <div class="relative" id="strategy-selector-container">
           <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" disabled class="opacity-30 cursor-not-allowed pointer-events-none bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95" title="Strategy selector disabled in Technical Scanner mode. Switch to Strategies tab to change strategy.">
             <span id="header-strat-icon" class="text-base">⚡</span>
@@ -315,19 +328,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <!-- Populated dynamically -->
             </div>
           </div>
-        </div>
-
-        <!-- Navigation Tabs Switcher (Scanner vs EOD Digest vs Strategies) -->
-        <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
-          <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5">
-            <span>🔭</span> <span>Scanner</span>
-          </button>
-          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
-            <span>🌆</span> <span>EOD Digest</span>
-          </button>
-          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
-            <span>⚡</span> <span>Strategies</span>
-          </button>
         </div>
 
         <!-- Global EOD Scan Live Progress Pill -->
