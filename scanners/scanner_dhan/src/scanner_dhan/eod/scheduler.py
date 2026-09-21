@@ -91,11 +91,19 @@ class EODScheduler:
         univ = universe or self.universe
         loop = asyncio.get_running_loop()
 
+        prov = provider
+        if prov is None:
+            try:
+                from scanner_dhan.data.dhan_provider import DhanDataProvider
+                prov = DhanDataProvider()
+            except Exception as pe:
+                logger.warning("Could not auto-initialize DhanDataProvider in EOD scheduler: %s", pe)
+
         try:
             logger.info(f"Triggering immediate on-demand EOD Multi-Scanner run on universe '{univ}'...")
             report = await loop.run_in_executor(
                 None,
-                lambda: self.runner.run_all(universe=univ, provider=provider),
+                lambda: self.runner.run_all(universe=univ, provider=prov),
             )
             self._last_run_date = report.date
             self._last_run_timestamp = report.timestamp

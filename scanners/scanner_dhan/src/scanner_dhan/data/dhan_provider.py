@@ -95,32 +95,49 @@ class DhanRateLimitError(DhanDataAPIError):
 
 
 def load_dhan_credentials(env_path: str = ".env") -> tuple[str, str]:
-    """Load Dhan Client ID and Access Token from environment or multiple standard .env locations."""
-    try:
-        from dotenv import load_dotenv
+    """Load Dhan Client ID and Access Token from DB storage, environment, or .env files."""
+    client_id = ""
+    access_token = ""
 
-        # Try specified env_path first, then fallback to standard project locations
-        candidates = [
-            env_path,
-            ".env",
-            "strategies/news_based_strategy/.env",
-            "strategies/st14_bullish_ce/.env",
-            "/opt/nse_trading_terminal/strategies/news_based_strategy/.env",
-            "/opt/nse_trading_terminal/.env",
-        ]
-        for cand in candidates:
-            if cand and os.path.exists(cand):
-                load_dotenv(dotenv_path=cand, override=False)
-    except ImportError:
+    # 1. Primary: Try reading from active database settings (StrategyStorage)
+    try:
+        from news_based_strategy.storage.repository import StrategyStorage
+        storage = StrategyStorage()
+        db_cid = storage.get_setting("dhan_client_id")
+        db_tok = storage.get_setting("dhan_access_token")
+        if db_cid and db_tok and db_tok != "NOT_CONFIGURED":
+            client_id = str(db_cid).strip()
+            access_token = str(db_tok).strip()
+    except Exception:
         pass
 
-    client_id = os.getenv("DHAN_CLIENT_ID", "").strip()
-    access_token = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
+    # 2. Secondary: Fallback to environment variables or .env files if DB is not configured
+    if not client_id or not access_token:
+        try:
+            from dotenv import load_dotenv
+
+            # Try specified env_path first, then fallback to standard project locations
+            candidates = [
+                env_path,
+                ".env",
+                "strategies/news_based_strategy/.env",
+                "strategies/st14_bullish_ce/.env",
+                "/opt/nse_trading_terminal/strategies/news_based_strategy/.env",
+                "/opt/nse_trading_terminal/.env",
+            ]
+            for cand in candidates:
+                if cand and os.path.exists(cand):
+                    load_dotenv(dotenv_path=cand, override=False)
+        except ImportError:
+            pass
+
+        client_id = client_id or os.getenv("DHAN_CLIENT_ID", "").strip()
+        access_token = access_token or os.getenv("DHAN_ACCESS_TOKEN", "").strip()
 
     if not client_id or client_id == "YOUR_CLIENT_ID_HERE":
-        raise DhanAuthError("DHAN_CLIENT_ID is missing or not configured in .env or environment")
+        raise DhanAuthError("DHAN_CLIENT_ID is missing or not configured in DB or .env")
     if not access_token or access_token == "YOUR_ACCESS_TOKEN_HERE":
-        raise DhanAuthError("DHAN_ACCESS_TOKEN is missing or not configured in .env or environment")
+        raise DhanAuthError("DHAN_ACCESS_TOKEN is missing or not configured in DB or .env")
 
     return client_id, access_token
 
