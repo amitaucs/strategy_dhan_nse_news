@@ -338,57 +338,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
       </div>
 
-      <!-- Controls & Actions (Execution, Auto Order, Quick Actions & Profile) -->
-      <div class="flex items-center gap-2.5">
-        
-        <!-- Strategy Controls Group -->
-        <div id="strategy-controls-group" class="hidden flex items-center gap-2">
-          <!-- MASTER STRATEGY ENGINE POWER BUTTON (ACTIVE / PAUSED) -->
-          <button id="toggle-engine-btn" onclick="toggleStrategyEngine()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer" title="Master Power Switch: Start or Pause Strategy Engine (Stops background polling & AI grading)">
-            <span id="engine-status-indicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span id="engine-status-label">ENGINE: ACTIVE</span>
-          </button>
-
-          <!-- EXECUTION MODE (VIRTUAL / LIVE) -->
-          <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
-            <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
-            <span id="mode-status-label">VIRTUAL</span>
-          </button>
-
-          <!-- AUTO_ORDER Toggle Switch -->
-          <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Toggle AI Automatic Order Placement">
-            <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
-            <span id="auto-status-label">AUTO: ON</span>
-          </button>
-
-          <!-- Audio Synthesizer Toggle -->
-          <button onclick="toggleAudioSound()" id="sound-toggle-btn" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-emerald-400 text-xs font-semibold px-2 py-1.5 rounded-lg transition border border-gray-700 flex items-center gap-1 shadow" title="Toggle Synthesized Audio Chimes">
-            <span id="sound-icon">🔊</span>
-          </button>
-
-          <!-- Shortcuts Cheat Sheet Button -->
-          <button onclick="openHotkeysModal()" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-300 text-xs font-semibold px-2 py-1.5 rounded-lg transition border border-gray-700 flex items-center shadow" title="Keyboard Shortcuts Cheat Sheet (?)">
-            <span class="font-mono text-xs">⌨️</span>
-          </button>
-
-          <!-- Emergency Square-Off Button -->
-          <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1.5 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Shift + Q)">
-            <span>🛑</span>
-            <span>Square Off (15:00)</span>
-          </button>
-
-          __SIM_HEADER_BTN__
-
-          <!-- Refresh Button -->
-          <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-1.5 rounded-lg transition border border-gray-700" title="Refresh Table">
-            🔄
-          </button>
-        </div>
-
-        <!-- Vertical Divider -->
-        <div class="h-6 w-px bg-gray-800 hidden sm:block"></div>
-
-        <!-- RIGHT-TOP USER LOGIN & ACCOUNT WIDGET -->
+      <!-- RIGHT-TOP USER LOGIN & ACCOUNT WIDGET (Pinned to Extreme Top-Right) -->
+      <div class="flex items-center gap-2.5 flex-shrink-0">
         <div class="relative" id="user-account-container">
           <!-- Unauthenticated Login Button -->
           <button onclick="openLoginScreen()" id="btn-header-login" class="hidden bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center gap-2 transition active:scale-95">
@@ -453,8 +404,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       <div class="bg-[#0e1422] border-b border-gray-800/90 px-6 py-1.5 shadow-sm">
         <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
           
-          <!-- Left: Radar Status & Universe -->
-          <div class="flex items-center gap-2.5">
+          <!-- Left: Radar Status, Universe & Strategy Controls -->
+          <div class="flex items-center gap-2.5 flex-wrap">
             <div class="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full font-bold text-[11px] shadow-sm" id="radar-badge-container">
               <span class="relative flex h-2 w-2">
                 <span id="radar-ping-dot" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -467,8 +418,53 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
               <span class="text-gray-600">•</span>
               <span>Check: <span id="poller-last-time" class="text-emerald-400 font-mono font-bold">Just now</span></span>
               <span id="poller-elapsed-tag" class="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-semibold">0s ago</span>
-              <span class="text-gray-600 hidden md:inline">•</span>
-              <span class="hidden md:inline text-gray-400">Noise Filtered: <span id="poller-noise-count" class="text-amber-400 font-mono font-bold">0</span></span>
+            </div>
+
+            <!-- Vertical Divider -->
+            <div class="h-4 w-px bg-gray-800 hidden sm:block"></div>
+
+            <!-- Strategy Controls Group -->
+            <div id="strategy-controls-group" class="flex items-center gap-1.5 flex-wrap">
+              <!-- MASTER STRATEGY ENGINE POWER BUTTON (ACTIVE / PAUSED) -->
+              <button id="toggle-engine-btn" onclick="toggleStrategyEngine()" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer" title="Master Power Switch: Start or Pause Strategy Engine (Stops background polling & AI grading)">
+                <span id="engine-status-indicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="engine-status-label">ENGINE: ACTIVE</span>
+              </button>
+
+              <!-- EXECUTION MODE (VIRTUAL / LIVE) -->
+              <button id="toggle-mode-btn" onclick="toggleExecutionMode()" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Click to toggle between VIRTUAL (Simulated) and LIVE TRADING">
+                <span id="mode-status-indicator" class="w-2 h-2 rounded-full"></span>
+                <span id="mode-status-label">VIRTUAL</span>
+              </button>
+
+              <!-- AUTO_ORDER Toggle Switch -->
+              <button id="toggle-auto-btn" onclick="toggleAutoOrder()" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-gray-700 bg-[#1e293b]/80" title="Toggle AI Automatic Order Placement">
+                <span id="auto-status-indicator" class="w-2 h-2 rounded-full"></span>
+                <span id="auto-status-label">AUTO: ON</span>
+              </button>
+
+              <!-- Audio Synthesizer Toggle -->
+              <button onclick="toggleAudioSound()" id="sound-toggle-btn" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-emerald-400 text-xs font-semibold px-2 py-1 rounded-lg transition border border-gray-700 flex items-center gap-1 shadow" title="Toggle Synthesized Audio Chimes">
+                <span id="sound-icon">🔊</span>
+              </button>
+
+              <!-- Shortcuts Cheat Sheet Button -->
+              <button onclick="openHotkeysModal()" class="bg-gray-800 hover:bg-gray-700 active:scale-95 text-gray-300 text-xs font-semibold px-2 py-1 rounded-lg transition border border-gray-700 flex items-center shadow" title="Keyboard Shortcuts Cheat Sheet (?)">
+                <span class="font-mono text-xs">⌨️</span>
+              </button>
+
+              <!-- Emergency Square-Off Button -->
+              <button onclick="confirmEmergencySquareOff()" id="square-off-btn" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5" title="Close all open intraday positions and cancel open orders immediately (Shift + Q)">
+                <span>🛑</span>
+                <span>Square Off</span>
+              </button>
+
+              __SIM_HEADER_BTN__
+
+              <!-- Refresh Button -->
+              <button onclick="fetchFeed()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold p-1 rounded-lg transition border border-gray-700" title="Refresh Table">
+                🔄
+              </button>
             </div>
           </div>
 
@@ -4576,7 +4572,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         if (wsNews) wsNews.classList.remove('hidden');
         if (wsSt14) wsSt14.classList.add('hidden');
         if (wsModular) wsModular.classList.add('hidden');
-        if (strategyControls) strategyControls.classList.remove('hidden');
         updateStrategyEngineUI();
         updateExecutionModeUI();
         updateAutoOrderUI();
@@ -4584,13 +4579,11 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         if (wsNews) wsNews.classList.add('hidden');
         if (wsSt14) wsSt14.classList.remove('hidden');
         if (wsModular) wsModular.classList.add('hidden');
-        if (strategyControls) strategyControls.classList.remove('hidden');
         loadSt14Data();
       } else {
         if (wsNews) wsNews.classList.add('hidden');
         if (wsSt14) wsSt14.classList.add('hidden');
         if (wsModular) wsModular.classList.remove('hidden');
-        if (strategyControls) strategyControls.classList.add('hidden');
 
         if (strat) {
           if (document.getElementById('mod-strat-icon')) document.getElementById('mod-strat-icon').textContent = strat.icon || '📈';
@@ -4625,7 +4618,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const btnStrategies = document.getElementById('nav-tab-strategies');
       const btnScanner = document.getElementById('nav-tab-scanner');
       const btnEod = document.getElementById('nav-tab-eod');
-      const strategyControls = document.getElementById('strategy-controls-group');
       const btnStratSelector = document.getElementById('btn-strategy-selector');
       const stratMenu = document.getElementById('strategy-menu-dropdown');
 
@@ -4636,7 +4628,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (tabName === 'eod') {
         if (strategiesTab) strategiesTab.classList.add('hidden');
         if (scannerTab) scannerTab.classList.remove('hidden');
-        if (strategyControls) strategyControls.classList.add('hidden');
         if (stratMenu) stratMenu.classList.add('hidden');
         
         if (viewHome) viewHome.classList.add('hidden');
@@ -4661,7 +4652,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } else if (tabName === 'scanner') {
         if (strategiesTab) strategiesTab.classList.add('hidden');
         if (scannerTab) scannerTab.classList.remove('hidden');
-        if (strategyControls) strategyControls.classList.add('hidden');
         if (stratMenu) stratMenu.classList.add('hidden');
         
         if (viewHome) viewHome.classList.remove('hidden');
@@ -4685,9 +4675,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } else {
         if (scannerTab) scannerTab.classList.add('hidden');
         if (strategiesTab) strategiesTab.classList.remove('hidden');
-        if ((activeStrategyId === 'st_news' || activeStrategyId === 'st14_bullish_ce') && strategyControls) {
-          strategyControls.classList.remove('hidden');
-        }
 
         // Re-enable Strategy Dropdown in Strategies view
         if (btnStratSelector) {
