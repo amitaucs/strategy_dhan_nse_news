@@ -157,8 +157,8 @@ class DhanDataProvider:
     _intraday_bars_cache: dict[tuple[str, int, str], tuple[float, pd.DataFrame]] = {}
     _dhan_instance_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
     quote_delay: float = 1.0       # Dhan REST quote API strict limit: 1 request/sec
-    historical_delay: float = 0.16 # Dhan historical data API limit: ~5 requests/sec with pool
-    rest_delay: float = 0.20       # Dhan general REST API: ~5 requests/sec
+    historical_delay: float = 0.22 # Dhan historical data API limit: ~4.5 requests/sec safe limit
+    rest_delay: float = 0.22       # Dhan general REST API: ~4.5 requests/sec
     max_retries: int = 4
 
     def __init__(
@@ -166,7 +166,7 @@ class DhanDataProvider:
         client_id: str | None = None,
         access_token: str | None = None,
         quote_delay: float = 1.0,
-        historical_delay: float = 0.16,
+        historical_delay: float = 0.22,
         max_retries: int = 4,
     ) -> None:
         if not client_id or not access_token:
@@ -804,6 +804,12 @@ class DhanDataProvider:
         exclude_incomplete: bool = False,
     ) -> pd.DataFrame:
         """Fetch 1-minute bars from Dhan and resample into 1-Hour (60-minute) OHLCV candles aligned to 09:15 IST."""
+        return self.fetch_resampled_bars(
+            security_id=security_id,
+            rule="60min",
+            days=min(days, 30),
+            exclude_incomplete=exclude_incomplete,
+        )
     def fetch_2h_bars(
         self,
         security_id: str,

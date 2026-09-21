@@ -137,7 +137,7 @@ class BullishCeIntradayScanner(BaseScanner):
         require_rising_vwap = bool(p.get("require_rising_vwap", True))
         enforce_timing = bool(p.get("enforce_timing", True))
         daily_days = int(p.get("daily_history_days", 90))
-        hourly_days = int(p.get("hourly_history_days", 20))
+        hourly_days = int(p.get("hourly_history_days", 10))
         max_workers = int(p.get("max_workers", 4))
         max_wick_pct = p.get("max_wick_pct", "NA")
 
@@ -177,7 +177,20 @@ class BullishCeIntradayScanner(BaseScanner):
                 if df_daily.empty or len(df_daily) < 20:
                     return None
 
-                # 2. Fetch 1-Hour Candles
+                # Fast Daily Pre-Filter:
+                # ST-14 requires Daily Close > Daily 20 EMA AND (Daily Close > 5D High or near 5D High)
+                # If a stock doesn't satisfy basic Daily bullish conditions, skip expensive 1-Hour intraday candle fetch.
+                last_daily_close = float(df_daily["close"].iloc[-1])
+                rolling_5d_high = float(df_daily["high"].iloc[-5:-1].max()) if len(df_daily) >= 5 else 0.0
+                daily_ema_series = df_daily["close"].ewm(span=20, adjust=False).mean()
+                daily_ema20 = float(daily_ema_series.iloc[-1]) if not daily_ema_series.empty else 0.0
+
+                if daily_ema20 > 0 and last_daily_close < daily_ema20:
+                    return None
+                if rolling_5d_high > 0 and ((last_daily_close - rolling_5d_high) / rolling_5d_high) < -0.03:
+                    return None
+
+                # 2. Fetch 1-Hour Candles (only for daily bullish candidates)
                 df_hourly = dhan_prov.fetch_1h_bars(
                     security_id=sec_id,
                     days=hourly_days,
