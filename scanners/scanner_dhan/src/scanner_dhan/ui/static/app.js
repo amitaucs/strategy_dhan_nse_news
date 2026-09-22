@@ -1823,44 +1823,77 @@ function setupEventListeners() {
 }
 
 function showHomeView() {
-  document.getElementById("view-home")?.classList.remove("hidden");
-  document.getElementById("view-results")?.classList.add("hidden");
-  document.getElementById("view-eod-digest")?.classList.add("hidden");
-  document.getElementById("btn-copy-tv")?.classList.add("hidden");
+  const stratTab = document.getElementById("main-tab-strategies");
+  const scanTab = document.getElementById("main-tab-scanner");
+  if (stratTab) { stratTab.style.display = "none"; stratTab.classList.add("hidden"); }
+  if (scanTab) { scanTab.style.display = "block"; scanTab.classList.remove("hidden"); }
 
-  // Highlight navbar button
-  const btnStudio = document.getElementById("nav-btn-studio");
-  const btnEod = document.getElementById("nav-btn-eod");
-  if (btnStudio) {
-    btnStudio.className = "px-3 py-1.5 rounded-xl font-bold text-xs transition bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center space-x-1.5";
-  }
-  if (btnEod) {
-    btnEod.className = "px-3 py-1.5 rounded-xl font-semibold text-xs transition text-slate-400 hover:text-white flex items-center space-x-1.5";
-  }
+  const vHome = document.getElementById("view-home");
+  const vResults = document.getElementById("view-results");
+  const vEod = document.getElementById("view-eod-digest");
+  if (vHome) { vHome.style.display = "block"; vHome.classList.remove("hidden"); }
+  if (vResults) { vResults.style.display = "none"; vResults.classList.add("hidden"); }
+  if (vEod) { vEod.style.display = "none"; vEod.classList.add("hidden"); }
+
+  const btnCopyTv = document.getElementById("btn-copy-tv");
+  if (btnCopyTv) btnCopyTv.classList.add("hidden");
+
+  // Highlight top navbar tabs
+  const btnStrategies = document.getElementById("nav-tab-strategies");
+  const btnScanner = document.getElementById("nav-tab-scanner");
+  const btnEod = document.getElementById("nav-tab-eod");
+  if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
+  if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+  if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
 }
 
 function showResultsView() {
-  document.getElementById("view-home")?.classList.add("hidden");
-  document.getElementById("view-results")?.classList.remove("hidden");
-  document.getElementById("view-eod-digest")?.classList.add("hidden");
-  document.getElementById("btn-copy-tv")?.classList.remove("hidden");
+  const stratTab = document.getElementById("main-tab-strategies");
+  const scanTab = document.getElementById("main-tab-scanner");
+  if (stratTab) { stratTab.style.display = "none"; stratTab.classList.add("hidden"); }
+  if (scanTab) { scanTab.style.display = "block"; scanTab.classList.remove("hidden"); }
+
+  const vHome = document.getElementById("view-home");
+  const vResults = document.getElementById("view-results");
+  const vEod = document.getElementById("view-eod-digest");
+  if (vHome) { vHome.style.display = "none"; vHome.classList.add("hidden"); }
+  if (vResults) { vResults.style.display = "block"; vResults.classList.remove("hidden"); }
+  if (vEod) { vEod.style.display = "none"; vEod.classList.add("hidden"); }
+
+  const btnCopyTv = document.getElementById("btn-copy-tv");
+  if (btnCopyTv) btnCopyTv.classList.remove("hidden");
+
+  const btnStrategies = document.getElementById("nav-tab-strategies");
+  const btnScanner = document.getElementById("nav-tab-scanner");
+  const btnEod = document.getElementById("nav-tab-eod");
+  if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
+  if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+  if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
 }
 
 function showEodDigestView() {
-  document.getElementById("view-home")?.classList.add("hidden");
-  document.getElementById("view-results")?.classList.add("hidden");
-  document.getElementById("view-eod-digest")?.classList.remove("hidden");
-  document.getElementById("btn-copy-tv")?.classList.add("hidden");
+  const stratTab = document.getElementById("main-tab-strategies");
+  const scanTab = document.getElementById("main-tab-scanner");
+  if (stratTab) { stratTab.style.display = "none"; stratTab.classList.add("hidden"); }
+  if (scanTab) { scanTab.style.display = "block"; scanTab.classList.remove("hidden"); }
 
-  // Highlight navbar button
-  const btnStudio = document.getElementById("nav-btn-studio");
-  const btnEod = document.getElementById("nav-btn-eod");
-  if (btnStudio) {
-    btnStudio.className = "px-3 py-1.5 rounded-xl font-semibold text-xs transition text-slate-400 hover:text-white flex items-center space-x-1.5";
-  }
-  if (btnEod) {
-    btnEod.className = "px-3 py-1.5 rounded-xl font-bold text-xs transition bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center space-x-1.5";
-  }
+  const vHome = document.getElementById("view-home");
+  const vResults = document.getElementById("view-results");
+  const vEod = document.getElementById("view-eod-digest");
+  if (vHome) { vHome.style.display = "none"; vHome.classList.add("hidden"); }
+  if (vResults) { vResults.style.display = "none"; vResults.classList.add("hidden"); }
+  if (vEod) { vEod.style.display = "block"; vEod.classList.remove("hidden"); }
+
+  const btnCopyTv = document.getElementById("btn-copy-tv");
+  if (btnCopyTv) btnCopyTv.classList.add("hidden");
+
+  // Highlight top navbar tabs
+  const btnStrategies = document.getElementById("nav-tab-strategies");
+  const btnScanner = document.getElementById("nav-tab-scanner");
+  const btnEod = document.getElementById("nav-tab-eod");
+  if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+  if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5";
+  if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
 
   loadEodDatesAndLatest();
 

@@ -246,7 +246,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </style>
   <!-- Lucide Icons & Scanner Assets -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/scanner/style.css?v=2.5" />
+  <link rel="stylesheet" href="/static/scanner/style.css?v=3.0" />
 </head>
 <body class="bg-[#0b0f19] text-gray-200 font-sans antialiased min-h-screen flex flex-col custom-scrollbar">
 
@@ -1790,6 +1790,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
   <!-- JAVASCRIPT LOGIC -->
   <script>
+    let registeredStrategies = [];
+    let activeStrategyId = 'st_news';
+    let currentStrategyCategory = 'ALL';
+
     let isNewsEngineActive = true;
     let isNewsDryRun = true;
     let isNewsAutoOrder = true;
@@ -4179,10 +4183,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
     }
 
-    let registeredStrategies = [];
-    let activeStrategyId = 'st_news';
-    let currentStrategyCategory = 'ALL';
-
     function toggleStrategyMenu() {
       const btn = document.getElementById('btn-strategy-selector');
       if (btn && btn.disabled) return;
@@ -4714,8 +4714,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const btnScanner = document.getElementById('nav-tab-scanner');
       const btnEod = document.getElementById('nav-tab-eod');
 
-      if (scannerTab) scannerTab.classList.add('hidden');
-      if (strategiesTab) strategiesTab.classList.remove('hidden');
+      if (scannerTab) {
+        scannerTab.classList.add('hidden');
+        scannerTab.style.display = 'none';
+      }
+      if (strategiesTab) {
+        strategiesTab.classList.remove('hidden');
+        strategiesTab.style.display = 'flex';
+      }
 
       if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
       if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
@@ -4734,20 +4740,20 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const wsModular = document.getElementById('workspace-st-modular');
 
       if (strategyId === 'st_news') {
-        if (wsNews) wsNews.classList.remove('hidden');
-        if (wsSt14) wsSt14.classList.add('hidden');
-        if (wsModular) wsModular.classList.add('hidden');
+        if (wsNews) { wsNews.classList.remove('hidden'); wsNews.style.display = 'flex'; }
+        if (wsSt14) { wsSt14.classList.add('hidden'); wsSt14.style.display = 'none'; }
+        if (wsModular) { wsModular.classList.add('hidden'); wsModular.style.display = 'none'; }
         syncActiveStrategyState();
       } else if (strategyId === 'st14_bullish_ce') {
-        if (wsNews) wsNews.classList.add('hidden');
-        if (wsSt14) wsSt14.classList.remove('hidden');
-        if (wsModular) wsModular.classList.add('hidden');
+        if (wsNews) { wsNews.classList.add('hidden'); wsNews.style.display = 'none'; }
+        if (wsSt14) { wsSt14.classList.remove('hidden'); wsSt14.style.display = 'block'; }
+        if (wsModular) { wsModular.classList.add('hidden'); wsModular.style.display = 'none'; }
         syncActiveStrategyState();
         loadSt14Data();
       } else {
-        if (wsNews) wsNews.classList.add('hidden');
-        if (wsSt14) wsSt14.classList.add('hidden');
-        if (wsModular) wsModular.classList.remove('hidden');
+        if (wsNews) { wsNews.classList.add('hidden'); wsNews.style.display = 'none'; }
+        if (wsSt14) { wsSt14.classList.add('hidden'); wsSt14.style.display = 'none'; }
+        if (wsModular) { wsModular.classList.remove('hidden'); wsModular.style.display = 'block'; }
 
         if (strat) {
           if (document.getElementById('mod-strat-icon')) document.getElementById('mod-strat-icon').textContent = strat.icon || '📈';
@@ -4791,12 +4797,27 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       if (stratMenu) stratMenu.classList.add('hidden');
 
       if (tabName === 'eod') {
-        if (strategiesTab) strategiesTab.classList.add('hidden');
-        if (scannerTab) scannerTab.classList.remove('hidden');
+        if (strategiesTab) {
+          strategiesTab.classList.add('hidden');
+          strategiesTab.style.display = 'none';
+        }
+        if (scannerTab) {
+          scannerTab.classList.remove('hidden');
+          scannerTab.style.display = 'block';
+        }
         
-        if (viewHome) viewHome.classList.add('hidden');
-        if (viewResults) viewResults.classList.add('hidden');
-        if (viewEod) viewEod.classList.remove('hidden');
+        if (viewHome) {
+          viewHome.classList.add('hidden');
+          viewHome.style.display = 'none';
+        }
+        if (viewResults) {
+          viewResults.classList.add('hidden');
+          viewResults.style.display = 'none';
+        }
+        if (viewEod) {
+          viewEod.classList.remove('hidden');
+          viewEod.style.display = 'block';
+        }
 
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
@@ -4808,12 +4829,27 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           loadEodDatesAndLatest();
         }
       } else if (tabName === 'scanner') {
-        if (strategiesTab) strategiesTab.classList.add('hidden');
-        if (scannerTab) scannerTab.classList.remove('hidden');
+        if (strategiesTab) {
+          strategiesTab.classList.add('hidden');
+          strategiesTab.style.display = 'none';
+        }
+        if (scannerTab) {
+          scannerTab.classList.remove('hidden');
+          scannerTab.style.display = 'block';
+        }
         
-        if (viewHome) viewHome.classList.remove('hidden');
-        if (viewResults) viewResults.classList.add('hidden');
-        if (viewEod) viewEod.classList.add('hidden');
+        if (viewHome) {
+          viewHome.classList.remove('hidden');
+          viewHome.style.display = 'block';
+        }
+        if (viewResults) {
+          viewResults.classList.add('hidden');
+          viewResults.style.display = 'none';
+        }
+        if (viewEod) {
+          viewEod.classList.add('hidden');
+          viewEod.style.display = 'none';
+        }
 
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
@@ -4823,8 +4859,14 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           showHomeView();
         }
       } else {
-        if (scannerTab) scannerTab.classList.add('hidden');
-        if (strategiesTab) strategiesTab.classList.remove('hidden');
+        if (scannerTab) {
+          scannerTab.classList.add('hidden');
+          scannerTab.style.display = 'none';
+        }
+        if (strategiesTab) {
+          strategiesTab.classList.remove('hidden');
+          strategiesTab.style.display = 'flex';
+        }
 
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
@@ -4836,6 +4878,23 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         loadStrategies();
       }
     }
+
+    // Expose core navigation functions to global window scope
+    window.switchMainTab = switchMainTab;
+    window.selectStrategy = selectStrategy;
+    window.toggleStrategyMenu = toggleStrategyMenu;
+    window.filterStrategyCategory = filterStrategyCategory;
+    window.toggleStrategyEngine = toggleStrategyEngine;
+    window.toggleExecutionMode = toggleExecutionMode;
+    window.toggleAutoOrder = toggleAutoOrder;
+    window.switchSt14Product = switchSt14Product;
+    window.runSt14HourlyScanNow = runSt14HourlyScanNow;
+    window.runSt14TriggerCheckNow = runSt14TriggerCheckNow;
+    window.emergencySt14SquareOff = emergencySt14SquareOff;
+    window.toggleUserMenu = toggleUserMenu;
+    window.openLoginScreen = openLoginScreen;
+    window.logoutDhan = logoutDhan;
+    window.logoutApp = logoutApp;
 
     window.onload = function() {
       const urlParams = new URLSearchParams(window.location.search);
@@ -4872,7 +4931,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </script>
 
   <!-- Scanner Application Logic -->
-  <script src="/static/scanner/app.js?v=3.8"></script>
+  <script src="/static/scanner/app.js?v=4.0"></script>
 </body>
 </html>
 """
