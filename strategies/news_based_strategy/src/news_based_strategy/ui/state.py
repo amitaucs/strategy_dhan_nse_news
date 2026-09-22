@@ -275,8 +275,8 @@ class DashboardState:
                         "last_polled_ts": int(self.last_polled_at.timestamp()),
                         "suppressed_noise_count": self.suppressed_noise_count,
                         "is_market_open": False,
-                        "strategy_status": "ACTIVE",
-                        "radar_status": "STANDBY",
+                        "strategy_status": self.strategy_status,
+                        "radar_status": "STANDBY" if self.strategy_status == "ACTIVE" else "PAUSED",
                     })
                 else:
                     self.poll_cycles_count += 1
@@ -337,8 +337,8 @@ class DashboardState:
                         "last_polled_ts": int(self.last_polled_at.timestamp()),
                         "suppressed_noise_count": self.suppressed_noise_count,
                         "is_market_open": True,
-                        "strategy_status": "ACTIVE",
-                        "radar_status": "ACTIVE",
+                        "strategy_status": self.strategy_status,
+                        "radar_status": "ACTIVE" if self.strategy_status == "ACTIVE" else "PAUSED",
                     })
 
                 # 🌅 Daily 08:30 IST Universal Market Universes Auto-Sync (NSE Indices + Dhan Scrip Master)
