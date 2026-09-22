@@ -295,7 +295,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
         <!-- Strategy Quick-Selector Dropdown (Right of Strategies) -->
         <div class="relative" id="strategy-selector-container">
-          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" disabled class="opacity-30 cursor-not-allowed pointer-events-none bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95" title="Strategy selector disabled in Technical Scanner mode. Switch to Strategies tab to change strategy.">
+          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" class="bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95 cursor-pointer" title="Switch Active Quantitative Strategy">
             <span id="header-strat-icon" class="text-base">⚡</span>
             <div class="text-left">
               <div class="flex items-center gap-1.5">
@@ -4707,6 +4707,20 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const menu = document.getElementById('strategy-menu-dropdown');
       if (menu) menu.classList.add('hidden');
 
+      // Update main tab container visibility if switching from Scanner or EOD
+      const scannerTab = document.getElementById('main-tab-scanner');
+      const strategiesTab = document.getElementById('main-tab-strategies');
+      const btnStrategies = document.getElementById('nav-tab-strategies');
+      const btnScanner = document.getElementById('nav-tab-scanner');
+      const btnEod = document.getElementById('nav-tab-eod');
+
+      if (scannerTab) scannerTab.classList.add('hidden');
+      if (strategiesTab) strategiesTab.classList.remove('hidden');
+
+      if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+      if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
+      if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5";
+
       // Update header active strategy badge
       const strat = registeredStrategies.find(s => s.id === strategyId);
       if (strat) {
@@ -4718,7 +4732,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const wsNews = document.getElementById('workspace-st-news');
       const wsSt14 = document.getElementById('workspace-st14');
       const wsModular = document.getElementById('workspace-st-modular');
-      const strategyControls = document.getElementById('strategy-controls-group');
 
       if (strategyId === 'st_news') {
         if (wsNews) wsNews.classList.remove('hidden');
@@ -4769,27 +4782,21 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const btnStrategies = document.getElementById('nav-tab-strategies');
       const btnScanner = document.getElementById('nav-tab-scanner');
       const btnEod = document.getElementById('nav-tab-eod');
-      const btnStratSelector = document.getElementById('btn-strategy-selector');
       const stratMenu = document.getElementById('strategy-menu-dropdown');
 
       const viewHome = document.getElementById('view-home');
       const viewResults = document.getElementById('view-results');
       const viewEod = document.getElementById('view-eod-digest');
 
+      if (stratMenu) stratMenu.classList.add('hidden');
+
       if (tabName === 'eod') {
         if (strategiesTab) strategiesTab.classList.add('hidden');
         if (scannerTab) scannerTab.classList.remove('hidden');
-        if (stratMenu) stratMenu.classList.add('hidden');
         
         if (viewHome) viewHome.classList.add('hidden');
         if (viewResults) viewResults.classList.add('hidden');
         if (viewEod) viewEod.classList.remove('hidden');
-
-        if (btnStratSelector) {
-          btnStratSelector.disabled = true;
-          btnStratSelector.classList.add('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
-          btnStratSelector.setAttribute('title', 'Strategy selector disabled in EOD Digest mode.');
-        }
 
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
@@ -4803,18 +4810,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } else if (tabName === 'scanner') {
         if (strategiesTab) strategiesTab.classList.add('hidden');
         if (scannerTab) scannerTab.classList.remove('hidden');
-        if (stratMenu) stratMenu.classList.add('hidden');
         
         if (viewHome) viewHome.classList.remove('hidden');
         if (viewResults) viewResults.classList.add('hidden');
         if (viewEod) viewEod.classList.add('hidden');
-
-        // Disable Strategy Dropdown in Scanner view
-        if (btnStratSelector) {
-          btnStratSelector.disabled = true;
-          btnStratSelector.classList.add('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
-          btnStratSelector.setAttribute('title', 'Strategy selector disabled in Technical Scanner mode. Switch to Strategies tab to change strategy.');
-        }
 
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5";
@@ -4826,13 +4825,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       } else {
         if (scannerTab) scannerTab.classList.add('hidden');
         if (strategiesTab) strategiesTab.classList.remove('hidden');
-
-        // Re-enable Strategy Dropdown in Strategies view
-        if (btnStratSelector) {
-          btnStratSelector.disabled = false;
-          btnStratSelector.classList.remove('opacity-30', 'cursor-not-allowed', 'pointer-events-none');
-          btnStratSelector.setAttribute('title', 'Switch Active Quantitative Strategy');
-        }
 
         if (btnScanner) btnScanner.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
