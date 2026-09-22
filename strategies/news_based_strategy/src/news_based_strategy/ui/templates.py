@@ -4154,12 +4154,6 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }).join('');
     }
 
-    let isSt14EngineActive = true;
-    let isSt14DryRun = true;
-    let isSt14AutoOrder = true;
-    let st14ProductType = 'INTRADAY';
-    let st14Telemetry = null;
-
     async function toggleSt14Product() {
       const targetProd = (st14ProductType === 'INTRADAY') ? 'DELIVERY' : 'INTRADAY';
       try {
@@ -4699,13 +4693,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         if (btnEod) btnEod.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5";
         if (btnStrategies) btnStrategies.className = "px-2.5 py-1 rounded-lg text-xs font-bold transition bg-emerald-600 text-white shadow-sm flex items-center gap-1.5";
 
-        // Sync & refresh latest status from server
-        syncActiveStrategyState();
+        // Select and display active strategy workspace
+        selectStrategy(activeStrategyId);
         fetchStatus();
         loadStrategies();
-        if (activeStrategyId === 'st14_bullish_ce') {
-          loadSt14Data();
-        }
       }
     }
 
