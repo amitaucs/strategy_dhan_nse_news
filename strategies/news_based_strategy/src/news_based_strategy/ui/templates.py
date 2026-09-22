@@ -629,17 +629,49 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       </div>
 
       <!-- Strategy-Specific Controls Group -->
-      <div class="flex items-center gap-2 flex-shrink-0">
-        <button id="st14-btn-product" onclick="toggleSt14Product()" class="px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1 shadow bg-cyan-950/70 text-cyan-300 hover:bg-cyan-900 border border-cyan-500/40 active:scale-95 cursor-pointer" title="Toggle between INTRADAY (MIS with 3:00 PM square-off) and DELIVERY (MARGIN carry-forward)">
+      <div class="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
+        <!-- MASTER STRATEGY ENGINE POWER BUTTON (ACTIVE / PAUSED) -->
+        <button id="st14-toggle-engine-btn" onclick="toggleStrategyEngine('st14_bullish_ce')" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer" title="Master Power Switch: Start or Pause ST-14 Strategy Engine (Suspends 1-Hr scan & 5-Min breakout monitor)">
+          <span id="st14-engine-status-indicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="st14-engine-status-label">ENGINE: ACTIVE</span>
+        </button>
+
+        <!-- EXECUTION MODE (VIRTUAL / LIVE) -->
+        <button id="st14-toggle-mode-btn" onclick="toggleExecutionMode('st14_bullish_ce')" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/40 bg-amber-600/90 text-amber-100 hover:bg-amber-600 active:scale-95 cursor-pointer" title="Click to toggle between VIRTUAL (Paper Trading) and LIVE TRADING">
+          <span id="st14-mode-status-indicator" class="w-2 h-2 rounded-full bg-amber-300"></span>
+          <span id="st14-mode-status-label">VIRTUAL</span>
+        </button>
+
+        <!-- AUTO_ORDER Toggle Switch -->
+        <button id="st14-toggle-auto-btn" onclick="toggleAutoOrder('st14_bullish_ce')" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-400/40 bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 cursor-pointer" title="Toggle Automated 1-OTM CE Super Order Placement">
+          <span id="st14-auto-status-indicator" class="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+          <span id="st14-auto-status-label">ENABLED (Auto-Place)</span>
+        </button>
+
+        <!-- Vertical Divider -->
+        <div class="h-4 w-px bg-gray-800 hidden sm:block"></div>
+
+        <!-- Product Type Toggle -->
+        <button id="st14-btn-product" onclick="toggleSt14Product()" class="px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1 shadow bg-cyan-950/70 text-cyan-300 hover:bg-cyan-900 border border-cyan-500/40 active:scale-95 cursor-pointer" title="Toggle between INTRADAY (MIS with 3:00 PM square-off) and DELIVERY (MARGIN carry-forward)">
           <span id="st14-btn-product-txt">⏰ INTRADAY</span>
         </button>
-        <button id="st14-btn-trigger-check" onclick="runSt14TriggerCheckNow()" class="bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 font-bold text-xs px-2.5 py-1.5 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger immediate 5-minute check on all watchlisted breakout candidates">
+
+        <!-- Trigger Check -->
+        <button id="st14-btn-trigger-check" onclick="runSt14TriggerCheckNow()" class="bg-amber-950/80 hover:bg-amber-900 border border-amber-500/50 text-amber-300 font-bold text-xs px-2.5 py-1 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger immediate 5-minute check on all watchlisted breakout candidates">
           <span id="st14-trigger-btn-spinner" class="hidden animate-spin">🔄</span>
-          <span>🎯 Check Triggers (5m)</span>
+          <span>🎯 Check Triggers</span>
         </button>
-        <button id="st14-btn-hourly-scan" onclick="runSt14HourlyScanNow()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger full 1-Hour Discovery Scanner across the 228 F&O universe">
+
+        <!-- 1-Hr Scan -->
+        <button id="st14-btn-hourly-scan" onclick="runSt14HourlyScanNow()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3 py-1 rounded-lg shadow transition flex items-center gap-1.5 active:scale-95 cursor-pointer" title="Trigger full 1-Hour Discovery Scanner across the 228 F&O universe">
           <span id="st14-hourly-btn-spinner" class="hidden animate-spin">🔄</span>
-          <span>⚡ Run 1-Hr Scan</span>
+          <span>⚡ 1-Hr Scan</span>
+        </button>
+
+        <!-- Emergency Square Off -->
+        <button onclick="confirmSt14SquareOff()" id="st14-btn-square-off" class="bg-rose-950/70 hover:bg-rose-900 active:scale-95 text-rose-300 hover:text-white text-xs font-bold px-2.5 py-1 rounded-lg transition border border-rose-700/60 shadow flex items-center gap-1.5 cursor-pointer" title="Close all open ST-14 option positions immediately">
+          <span>🛑</span>
+          <span>Square Off</span>
         </button>
       </div>
     </div>
@@ -2170,6 +2202,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       openSquareOffModal();
     }
 
+    function confirmSt14SquareOff() {
+      openSquareOffModal();
+    }
+
     // --- DETAILS DRAWER CONTROLLER ---
     function openDrawer(seqId) {
       const item = feedItems.find(i => i.seq_id === seqId);
@@ -2692,6 +2728,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     function updateStrategyEngineUI() {
+      // 1. ST-NEWS Elements
       const btn = document.getElementById('toggle-engine-btn');
       const label = document.getElementById('engine-status-label');
       const indicator = document.getElementById('engine-status-indicator');
@@ -2708,9 +2745,9 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const radarPingDot = document.getElementById('radar-ping-dot');
       const radarSolidDot = document.getElementById('radar-solid-dot');
 
-      if (isStrategyEngineActive) {
+      if (isNewsEngineActive) {
         if (btn) {
-          btn.className = 'px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer';
+          btn.className = 'px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer';
           btn.setAttribute('title', 'Master Power Switch: Strategy Engine is ACTIVE. Click to Pause (suspends background polling & AI grading).');
         }
         if (label) label.textContent = 'ENGINE: ACTIVE';
@@ -2743,7 +2780,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         }
       } else {
         if (btn) {
-          btn.className = 'px-2.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/50 bg-amber-950/70 text-amber-300 hover:bg-amber-900 active:scale-95 cursor-pointer animate-pulse-subtle';
+          btn.className = 'px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/50 bg-amber-950/70 text-amber-300 hover:bg-amber-900 active:scale-95 cursor-pointer animate-pulse-subtle';
           btn.setAttribute('title', 'Master Power Switch: Strategy Engine is PAUSED. Click to Start/Resume.');
         }
         if (label) label.textContent = 'ENGINE: PAUSED';
@@ -2765,7 +2802,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         if (radarSolidDot) radarSolidDot.className = 'relative inline-flex rounded-full h-2 w-2 bg-amber-500';
 
         if (emptyHeading) emptyHeading.innerHTML = '<span class="text-amber-300 flex items-center justify-center gap-2"><span>⏸️</span> <span>Strategy Engine Paused — Radar Standby</span></span>';
-        if (emptyDesc) emptyDesc.innerHTML = 'Background NSE announcement polling and Gemini AI grading are completely stopped. Click <button onclick="toggleStrategyEngine()" class="underline font-bold text-amber-400 hover:text-amber-300 cursor-pointer">Start Engine</button> above or below to resume active scanning.';
+        if (emptyDesc) emptyDesc.innerHTML = 'Background NSE announcement polling and Gemini AI grading are completely stopped. Click <button onclick="toggleStrategyEngine(\'st_news\')" class="underline font-bold text-amber-400 hover:text-amber-300 cursor-pointer">Start Engine</button> above or below to resume active scanning.';
         if (emptyRadarPing) emptyRadarPing.className = 'hidden';
         if (emptyRadarPulse) emptyRadarPulse.className = 'hidden';
         if (emptyRadarIcon) emptyRadarIcon.textContent = '⏸️';
@@ -2774,6 +2811,66 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
           emptyStatusText.textContent = 'Engine Paused (No API calls)';
           emptyStatusText.className = 'text-amber-300 font-semibold';
         }
+      }
+
+      // 2. ST-14 Elements
+      const st14Btn = document.getElementById('st14-toggle-engine-btn');
+      const st14Label = document.getElementById('st14-engine-status-label');
+      const st14Indicator = document.getElementById('st14-engine-status-indicator');
+      const st14ToggleModeBtn = document.getElementById('st14-toggle-mode-btn');
+      const st14ToggleAutoBtn = document.getElementById('st14-toggle-auto-btn');
+      const st14StatusPill = document.getElementById('st14-status-pill');
+      const st14StatusTxt = document.getElementById('st14-status-txt');
+      const st14StatusDot = document.getElementById('st14-status-dot');
+
+      if (isSt14EngineActive) {
+        if (st14Btn) {
+          st14Btn.className = 'px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-500/50 bg-emerald-950/70 text-emerald-300 hover:bg-emerald-900 active:scale-95 cursor-pointer';
+          st14Btn.setAttribute('title', 'ST-14 Engine is ACTIVE. Click to Pause (suspends 1-Hr scan & 5-Min breakout monitor).');
+        }
+        if (st14Label) st14Label.textContent = 'ENGINE: ACTIVE';
+        if (st14Indicator) st14Indicator.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+
+        if (st14ToggleModeBtn) {
+          st14ToggleModeBtn.disabled = false;
+          st14ToggleModeBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+          st14ToggleModeBtn.setAttribute('title', 'Click to toggle between VIRTUAL (Paper Trading) and LIVE TRADING');
+        }
+        if (st14ToggleAutoBtn) {
+          st14ToggleAutoBtn.disabled = false;
+          st14ToggleAutoBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+          st14ToggleAutoBtn.setAttribute('title', 'Toggle Automated 1-OTM CE Super Order Placement');
+        }
+
+        if (st14StatusPill) st14StatusPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5';
+        if (st14StatusTxt) st14StatusTxt.textContent = 'ACTIVE';
+        if (st14StatusDot) st14StatusDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse';
+      } else {
+        if (st14Btn) {
+          st14Btn.className = 'px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/50 bg-amber-950/70 text-amber-300 hover:bg-amber-900 active:scale-95 cursor-pointer animate-pulse-subtle';
+          st14Btn.setAttribute('title', 'ST-14 Engine is PAUSED. Click to Start/Resume.');
+        }
+        if (st14Label) st14Label.textContent = 'ENGINE: PAUSED';
+        if (st14Indicator) st14Indicator.className = 'w-2 h-2 rounded-full bg-amber-400';
+
+        if (st14ToggleModeBtn) {
+          st14ToggleModeBtn.disabled = true;
+          st14ToggleModeBtn.classList.add('opacity-40', 'cursor-not-allowed');
+          st14ToggleModeBtn.setAttribute('title', 'ST-14 engine is paused. Start engine to change mode.');
+        }
+        if (st14ToggleAutoBtn) {
+          st14ToggleAutoBtn.disabled = true;
+          st14ToggleAutoBtn.classList.add('opacity-40', 'cursor-not-allowed');
+          st14ToggleAutoBtn.setAttribute('title', 'ST-14 engine is paused. Start engine to change auto-order.');
+        }
+
+        if (st14StatusPill) st14StatusPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5';
+        if (st14StatusTxt) st14StatusTxt.textContent = 'PAUSED';
+        if (st14StatusDot) st14StatusDot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+      }
+
+      if (typeof updateSt14TelemetryUI === 'function' && st14Telemetry) {
+        updateSt14TelemetryUI(st14Telemetry);
       }
     }
 
@@ -2813,31 +2910,55 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     function updateExecutionModeUI() {
+      // 1. ST-NEWS Elements
       const btn = document.getElementById('toggle-mode-btn');
       const label = document.getElementById('mode-status-label');
       const indicator = document.getElementById('mode-status-indicator');
       const modeText = document.getElementById('mode-text');
 
-      if (!btn || !label || !indicator) return;
-
-      const currentDryRun = (activeStrategyId === 'st14_bullish_ce') ? isSt14DryRun : isNewsDryRun;
-      const currentActive = (activeStrategyId === 'st14_bullish_ce') ? isSt14EngineActive : isNewsEngineActive;
-
-      if (currentDryRun) {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
-        label.textContent = 'VIRTUAL';
-        indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
-        if (modeText) {
-          modeText.textContent = 'VIRTUAL (Simulated)';
-          modeText.className = 'text-amber-400 font-mono font-semibold';
+      if (btn && label && indicator) {
+        if (isNewsDryRun) {
+          btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow bg-amber-600/90 text-amber-100 hover:bg-amber-600 border border-amber-500/40 ${!isNewsEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          label.textContent = 'VIRTUAL';
+          indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
+          if (modeText) {
+            modeText.textContent = 'VIRTUAL (Simulated)';
+            modeText.className = 'text-amber-400 font-mono font-semibold';
+          }
+        } else {
+          btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle ${!isNewsEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          label.textContent = 'LIVE';
+          indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
+          if (modeText) {
+            modeText.textContent = 'LIVE (Real Orders)';
+            modeText.className = 'text-emerald-400 font-mono font-bold';
+          }
         }
-      } else {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition flex items-center gap-1.5 shadow bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 animate-pulse-subtle ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
-        label.textContent = 'LIVE';
-        indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
-        if (modeText) {
-          modeText.textContent = 'LIVE (Real Orders)';
-          modeText.className = 'text-emerald-400 font-mono font-bold';
+      }
+
+      // 2. ST-14 Elements
+      const st14Btn = document.getElementById('st14-toggle-mode-btn');
+      const st14Label = document.getElementById('st14-mode-status-label');
+      const st14Indicator = document.getElementById('st14-mode-status-indicator');
+      const st14ModeBadge = document.getElementById('st14-mode-badge');
+
+      if (st14Btn && st14Label && st14Indicator) {
+        if (isSt14DryRun) {
+          st14Btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-amber-500/40 bg-amber-600/90 text-amber-100 hover:bg-amber-600 active:scale-95 cursor-pointer ${!isSt14EngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          st14Label.textContent = 'VIRTUAL';
+          st14Indicator.className = 'w-2 h-2 rounded-full bg-amber-300';
+          if (st14ModeBadge) {
+            st14ModeBadge.textContent = 'VIRTUAL';
+            st14ModeBadge.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800';
+          }
+        } else {
+          st14Btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow border border-emerald-400/40 bg-emerald-600 text-white hover:bg-emerald-500 animate-pulse-subtle active:scale-95 cursor-pointer ${!isSt14EngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          st14Label.textContent = 'LIVE';
+          st14Indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
+          if (st14ModeBadge) {
+            st14ModeBadge.textContent = 'LIVE';
+            st14ModeBadge.className = 'px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 animate-pulse';
+          }
         }
       }
     }
@@ -3157,23 +3278,47 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     }
 
     function updateAutoOrderUI() {
+      // 1. ST-NEWS Elements
       const btn = document.getElementById('toggle-auto-btn');
       const label = document.getElementById('auto-status-label');
       const indicator = document.getElementById('auto-status-indicator');
       
-      if (!btn || !label || !indicator) return;
+      if (btn && label && indicator) {
+        if (isNewsAutoOrder) {
+          btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition bg-emerald-600 text-white hover:bg-emerald-500 border border-emerald-400/40 shadow flex items-center gap-1.5 ${!isNewsEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          label.textContent = 'ENABLED (Auto-Place)';
+          indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
+        } else {
+          btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition bg-amber-600 text-white hover:bg-amber-500 border border-amber-400/40 shadow flex items-center gap-1.5 ${!isNewsEngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          label.textContent = 'MANUAL (Prompt Approval)';
+          indicator.className = 'w-2 h-2 rounded-full bg-amber-200';
+        }
+      }
 
-      const currentAuto = (activeStrategyId === 'st14_bullish_ce') ? isSt14AutoOrder : isNewsAutoOrder;
-      const currentActive = (activeStrategyId === 'st14_bullish_ce') ? isSt14EngineActive : isNewsEngineActive;
+      // 2. ST-14 Elements
+      const st14Btn = document.getElementById('st14-toggle-auto-btn');
+      const st14Label = document.getElementById('st14-auto-status-label');
+      const st14Indicator = document.getElementById('st14-auto-status-indicator');
+      const st14AutoEl = document.getElementById('st14-auto-order-text');
 
-      if (currentAuto) {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
-        label.textContent = 'ENABLED (Auto-Place)';
-        indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
-      } else {
-        btn.className = `px-2.5 py-1 text-xs font-bold rounded transition bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5 ${!currentActive ? 'opacity-40 cursor-not-allowed' : ''}`;
-        label.textContent = 'MANUAL (Prompt Approval)';
-        indicator.className = 'w-2 h-2 rounded-full bg-amber-200';
+      if (st14Btn && st14Label && st14Indicator) {
+        if (isSt14AutoOrder) {
+          st14Btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition border border-emerald-400/40 bg-emerald-600 text-white hover:bg-emerald-500 shadow flex items-center gap-1.5 active:scale-95 cursor-pointer ${!isSt14EngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          st14Label.textContent = 'ENABLED (Auto-Place)';
+          st14Indicator.className = 'w-2 h-2 rounded-full bg-white animate-pulse';
+          if (st14AutoEl) {
+            st14AutoEl.textContent = 'ON';
+            st14AutoEl.className = 'text-emerald-400 font-bold';
+          }
+        } else {
+          st14Btn.className = `px-2.5 py-1 text-xs font-bold rounded-lg transition border border-amber-400/40 bg-amber-600 text-white hover:bg-amber-500 shadow flex items-center gap-1.5 active:scale-95 cursor-pointer ${!isSt14EngineActive ? 'opacity-40 cursor-not-allowed' : ''}`;
+          st14Label.textContent = 'MANUAL (Prompt Approval)';
+          st14Indicator.className = 'w-2 h-2 rounded-full bg-amber-200';
+          if (st14AutoEl) {
+            st14AutoEl.textContent = 'OFF';
+            st14AutoEl.className = 'text-amber-400 font-bold';
+          }
+        }
       }
     }
 
