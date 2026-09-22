@@ -2337,7 +2337,7 @@ function renderEodWatchlistTable() {
       !query ||
       s.symbol.toLowerCase().includes(query) ||
       (s.company_name && s.company_name.toLowerCase().includes(query)) ||
-      (s.strategies || []).some((st) => st.scanner_name.toLowerCase().includes(query) || st.level_desc.toLowerCase().includes(query) || getCleanEodStrategyLevel(st).toLowerCase().includes(query));
+      (s.strategies || []).some((st) => st.scanner_name.toLowerCase().includes(query) || (st.level_desc || '').toLowerCase().includes(query) || getCleanEodStrategyLevel(st).toLowerCase().includes(query));
 
     return matchesCat && matchesLevel && matchesSearch;
   });
@@ -2432,6 +2432,7 @@ window.onEodDateSelected = onEodDateSelected;
 function openEodConfirmModal() {
   const modal = document.getElementById("modal-eod-confirm");
   if (modal) {
+    modal.style.display = "flex";
     modal.classList.remove("hidden");
     initLucide();
   }
@@ -2442,6 +2443,7 @@ function closeEodConfirmModal() {
   const modal = document.getElementById("modal-eod-confirm");
   if (modal) {
     modal.classList.add("hidden");
+    modal.style.display = "none";
   }
 }
 window.closeEodConfirmModal = closeEodConfirmModal;

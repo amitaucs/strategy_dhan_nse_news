@@ -251,63 +251,62 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 <body class="bg-[#0b0f19] text-gray-200 font-sans antialiased min-h-screen flex flex-col custom-scrollbar">
 
   <!-- TOP APP BAR -->
-  <header class="bg-[#111827] border-b border-gray-800 sticky top-0 z-50 px-5 py-2.5 shadow-md">
-    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-3">
+  <header class="bg-[#111827] border-b border-gray-800 sticky top-0 z-40 px-4 sm:px-6 py-2 shadow-md">
+    <div class="max-w-[1600px] mx-auto flex items-center justify-between gap-3">
       
-      <!-- Brand & Strategy Selector Hub -->
-      <div class="flex items-center gap-3">
+      <!-- Left: Brand & Market Status -->
+      <div class="flex items-center gap-2 sm:gap-3 shrink-0">
         <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black text-lg shadow-sm">
           ⚡
         </div>
-        
         <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-xs font-bold text-white tracking-wider uppercase">NSE TERMINAL</h1>
-            <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-blue-950/80 text-blue-400 border border-blue-800/60 rounded shadow-sm" title="Application Version 1.0.0">v1.0.0</span>
+          <div class="flex items-center gap-1.5 sm:gap-2">
+            <h1 class="text-xs font-bold text-white tracking-wider uppercase whitespace-nowrap">NSE TERMINAL</h1>
+            <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-blue-950/80 text-blue-400 border border-blue-800/60 rounded shadow-sm hidden sm:inline" title="Application Version 1.0.0">v1.0.0</span>
             <!-- Dynamic Market Status Badge -->
-            <span id="market-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full flex items-center gap-1 shadow-sm transition-all" title="NSE Trading Hours (Mon-Fri 09:15 - 15:30 IST)">
+            <span id="market-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-full flex items-center gap-1 shadow-sm transition-all whitespace-nowrap" title="NSE Trading Hours (Mon-Fri 09:15 - 15:30 IST)">
               <span id="market-status-dot" class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
               <span id="market-status-text">MARKET CLOSED</span>
             </span>
             <!-- Dynamic Cutoff Status Badge -->
-            <span id="cutoff-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full flex items-center gap-1 shadow-sm transition-all" title="Cutoff 14:45 | Square-Off 15:00">
+            <span id="cutoff-status-badge" class="px-2 py-0.5 text-[10px] font-bold bg-gray-800 text-gray-300 border border-gray-700 rounded-full hidden md:flex items-center gap-1 shadow-sm transition-all whitespace-nowrap" title="Cutoff 14:45 | Square-Off 15:00">
               <span id="cutoff-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               <span id="cutoff-status-text">CUTOFF 14:45</span>
             </span>
           </div>
         </div>
+      </div>
 
-        <!-- Vertical Divider -->
-        <div class="h-6 w-px bg-gray-800 hidden sm:block"></div>
-
+      <!-- Center: Navigation Pill Switcher & Strategy Dropdown -->
+      <div class="flex items-center gap-2 shrink-0">
         <!-- Navigation Tabs Switcher (Scanner vs EOD Digest vs Strategies) -->
-        <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800">
-          <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5">
+        <div class="flex items-center gap-1 bg-[#0b0f19] p-1 rounded-xl border border-gray-800 shadow-inner">
+          <button id="nav-tab-scanner" onclick="switchMainTab('scanner')" type="button" class="px-3 py-1 rounded-lg text-xs font-bold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <span>🔭</span> <span>Scanner</span>
           </button>
-          <button id="nav-tab-eod" onclick="switchMainTab('eod')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+          <button id="nav-tab-eod" onclick="switchMainTab('eod')" type="button" class="px-3 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <span>🌆</span> <span>EOD Digest</span>
           </button>
-          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" class="px-2.5 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5">
+          <button id="nav-tab-strategies" onclick="switchMainTab('strategies')" type="button" class="px-3 py-1 rounded-lg text-xs font-bold transition text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
             <span>⚡</span> <span>Strategies</span>
           </button>
         </div>
 
-        <!-- Strategy Quick-Selector Dropdown (Right of Strategies) -->
-        <div class="relative" id="strategy-selector-container">
-          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" class="bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2.5 active:scale-95 cursor-pointer" title="Switch Active Quantitative Strategy">
+        <!-- Strategy Quick-Selector Dropdown -->
+        <div class="relative shrink-0" id="strategy-selector-container">
+          <button onclick="toggleStrategyMenu()" id="btn-strategy-selector" type="button" class="bg-[#162032] hover:bg-[#1f293d] border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2 active:scale-95 cursor-pointer whitespace-nowrap" title="Switch Active Quantitative Strategy">
             <span id="header-strat-icon" class="text-base">⚡</span>
             <div class="text-left">
               <div class="flex items-center gap-1.5">
                 <span id="header-strat-code" class="text-[10px] font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-800/80 px-1.5 py-0.2 rounded">ST-NEWS</span>
-                <span id="header-strat-name" class="text-xs font-bold text-white max-w-[170px] truncate">NSE Catalyst News Engine</span>
+                <span id="header-strat-name" class="text-xs font-bold text-white max-w-[150px] truncate hidden sm:inline">NSE Catalyst News Engine</span>
               </div>
             </div>
             <span class="text-[10px] text-gray-400 ml-0.5">▼</span>
           </button>
 
           <!-- Floating Strategy Popover Menu -->
-          <div id="strategy-menu-dropdown" class="hidden absolute left-0 top-12 w-80 sm:w-96 bg-[#111827] border border-gray-700/90 rounded-2xl shadow-2xl p-3.5 z-50 space-y-2.5">
+          <div id="strategy-menu-dropdown" class="hidden absolute left-0 top-12 w-80 sm:w-96 bg-[#111827] border border-gray-700/90 rounded-2xl shadow-2xl p-3.5 z-50 space-y-2.5" style="display: none;">
             <div class="flex items-center justify-between border-b border-gray-800 pb-2">
               <span class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Select Quantitative Strategy</span>
               <span id="strategies-count-badge" class="text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">5 Registered</span>
@@ -315,12 +314,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
             
             <!-- Category Filter Pills inside popover -->
             <div class="flex items-center gap-1 overflow-x-auto pb-1 custom-scrollbar text-[10px]">
-              <button onclick="filterStrategyCategory('ALL')" data-strat-cat="ALL" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition bg-emerald-600 text-white">All (5)</button>
-              <button onclick="filterStrategyCategory('event_news')" data-strat-cat="event_news" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">News</button>
-              <button onclick="filterStrategyCategory('trend_momentum')" data-strat-cat="trend_momentum" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Momentum</button>
-              <button onclick="filterStrategyCategory('breakouts')" data-strat-cat="breakouts" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Breakouts</button>
-              <button onclick="filterStrategyCategory('reversals')" data-strat-cat="reversals" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Reversals</button>
-              <button onclick="filterStrategyCategory('smart_money')" data-strat-cat="smart_money" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800">Smart Money</button>
+              <button onclick="filterStrategyCategory('ALL')" data-strat-cat="ALL" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition bg-emerald-600 text-white cursor-pointer">All (5)</button>
+              <button onclick="filterStrategyCategory('event_news')" data-strat-cat="event_news" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800 cursor-pointer">News</button>
+              <button onclick="filterStrategyCategory('trend_momentum')" data-strat-cat="trend_momentum" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800 cursor-pointer">Momentum</button>
+              <button onclick="filterStrategyCategory('breakouts')" data-strat-cat="breakouts" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800 cursor-pointer">Breakouts</button>
+              <button onclick="filterStrategyCategory('reversals')" data-strat-cat="reversals" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800 cursor-pointer">Reversals</button>
+              <button onclick="filterStrategyCategory('smart_money')" data-strat-cat="smart_money" type="button" class="strat-cat-pill px-2 py-0.5 rounded-md font-semibold transition text-gray-400 hover:bg-gray-800 cursor-pointer">Smart Money</button>
             </div>
 
             <!-- List of strategies -->
@@ -331,66 +330,63 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
         </div>
 
         <!-- Global EOD Scan Live Progress Pill -->
-        <div id="global-eod-scan-badge" class="hidden items-center gap-2 px-3 py-1.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-semibold cursor-pointer animate-pulse transition hover:bg-amber-500/25 shadow-sm" onclick="switchMainTab('eod')" title="EOD Batch Scan in progress (~5-10 min). Click to view live progress on EOD tab.">
+        <div id="global-eod-scan-badge" class="hidden items-center gap-2 px-3 py-1.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 text-xs font-semibold cursor-pointer animate-pulse transition hover:bg-amber-500/25 shadow-sm whitespace-nowrap" onclick="switchMainTab('eod')" title="EOD Batch Scan in progress (~5-10 min). Click to view live progress on EOD tab.">
           <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
           <span id="global-eod-scan-text">⚡ EOD Scan: 0%</span>
         </div>
-
       </div>
 
-      <!-- RIGHT-TOP USER LOGIN & ACCOUNT WIDGET (Pinned to Extreme Top-Right) -->
-      <div class="flex items-center gap-2.5 flex-shrink-0">
-        <div class="relative" id="user-account-container">
-          <!-- Unauthenticated Login Button -->
-          <button onclick="openLoginScreen()" id="btn-header-login" class="hidden bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center gap-2 transition active:scale-95">
-            <span>🔐</span>
-            <span>Login with Dhan</span>
+      <!-- Right: Pinned User Login & Account Widget -->
+      <div class="relative flex items-center gap-2.5 shrink-0" id="user-account-container">
+        <!-- Unauthenticated Login Button -->
+        <button onclick="openLoginScreen()" id="btn-header-login" type="button" class="hidden bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-lg shadow-emerald-700/30 border border-emerald-400/40 flex items-center gap-2 transition active:scale-95 cursor-pointer whitespace-nowrap">
+          <span>🔐</span>
+          <span>Login with Dhan</span>
+        </button>
+
+        <!-- Authenticated User Profile Button -->
+        <div id="user-profile-widget" class="flex items-center gap-2">
+          <button onclick="toggleUserMenu()" id="token-btn" type="button" class="group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer whitespace-nowrap" title="Manage Dhan Account & Session">
+            <div class="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-inner">
+              👤
+            </div>
+            <div class="text-left">
+              <div class="text-[9px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1">
+                <span id="user-client-id-label">DHAN</span>
+                <span id="token-indicator-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              </div>
+              <div id="header-token-mask" class="text-[11px] font-mono font-bold text-emerald-400 group-hover:text-emerald-300">
+                Active
+              </div>
+            </div>
+            <span class="text-[10px] text-gray-400 group-hover:text-white transition ml-0.5">▼</span>
           </button>
 
-          <!-- Authenticated User Profile Button -->
-          <div id="user-profile-widget" class="flex items-center gap-2">
-            <button onclick="toggleUserMenu()" id="token-btn" class="group bg-[#162032] hover:bg-[#1f293d] active:scale-95 border border-emerald-500/40 hover:border-emerald-400/70 px-3 py-1.5 rounded-xl transition-all shadow-md flex items-center gap-2" title="Manage Dhan Account & Session">
-              <div class="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xs shadow-inner">
-                👤
-              </div>
-              <div class="text-left">
-                <div class="text-[9px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1">
-                  <span id="user-client-id-label">DHAN</span>
-                  <span id="token-indicator-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                </div>
-                <div id="header-token-mask" class="text-[11px] font-mono font-bold text-emerald-400 group-hover:text-emerald-300">
-                  Active
-                </div>
-              </div>
-              <span class="text-[10px] text-gray-400 group-hover:text-white transition ml-0.5">▼</span>
-            </button>
-
-            <!-- User Menu Dropdown -->
-            <div id="user-menu-dropdown" class="hidden absolute right-0 top-12 w-64 bg-[#111827] border border-gray-700/80 rounded-xl shadow-2xl p-3 z-50 space-y-2.5 text-xs">
-              <div class="border-b border-gray-800 pb-2">
-                <div class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Trading Account (Broker)</div>
-                <div id="menu-client-id" class="text-xs font-mono font-bold text-white mt-0.5">Client ID: --</div>
-                <div id="menu-expiry-info" class="text-[10px] text-emerald-400 font-mono mt-0.5">Active Session</div>
-              </div>
-              <div class="space-y-1">
-                <button onclick="openLoginScreen(); toggleUserMenu();" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white flex items-center gap-2 transition">
-                  <span>🔄</span> Manage Dhan Token
-                </button>
-                <button onclick="logoutDhan(); toggleUserMenu();" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/40 text-rose-400 hover:text-rose-300 flex items-center gap-2 transition font-semibold">
-                  <span>🚪</span> Disconnect Dhan Token
-                </button>
-              </div>
-              <div class="border-t border-gray-800 pt-2 space-y-1">
-                <div class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">App User Session</div>
-                <button onclick="logoutApp();" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-900/50 bg-rose-950/30 text-rose-300 hover:text-white flex items-center gap-2 transition font-bold border border-rose-500/20">
-                  <span>🔒</span> Sign Out (App Logout)
-                </button>
-              </div>
+          <!-- User Menu Dropdown -->
+          <div id="user-menu-dropdown" class="hidden absolute right-0 top-12 w-64 bg-[#111827] border border-gray-700/80 rounded-xl shadow-2xl p-3 z-50 space-y-2.5 text-xs" style="display: none;">
+            <div class="border-b border-gray-800 pb-2">
+              <div class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Trading Account (Broker)</div>
+              <div id="menu-client-id" class="text-xs font-mono font-bold text-white mt-0.5">Client ID: --</div>
+              <div id="menu-expiry-info" class="text-[10px] text-emerald-400 font-mono mt-0.5">Active Session</div>
+            </div>
+            <div class="space-y-1">
+              <button onclick="openLoginScreen(); toggleUserMenu();" type="button" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-gray-800 text-gray-300 hover:text-white flex items-center gap-2 transition cursor-pointer">
+                <span>🔄</span> Manage Dhan Token
+              </button>
+              <button onclick="logoutDhan(); toggleUserMenu();" type="button" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-950/40 text-rose-400 hover:text-rose-300 flex items-center gap-2 transition font-semibold cursor-pointer">
+                <span>🚪</span> Disconnect Dhan Token
+              </button>
+            </div>
+            <div class="border-t border-gray-800 pt-2 space-y-1">
+              <div class="text-[10px] uppercase font-bold text-gray-400 tracking-wider">App User Session</div>
+              <button onclick="logoutApp();" type="button" class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-900/50 bg-rose-950/30 text-rose-300 hover:text-white flex items-center gap-2 transition font-bold border border-rose-500/20 cursor-pointer">
+                <span>🔒</span> Sign Out (App Logout)
+              </button>
             </div>
           </div>
         </div>
-
       </div>
+
     </div>
   </header>
 
@@ -1443,7 +1439,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div>
 
   <!-- EMBEDDED REAL-TIME INTERACTIVE CHART MODAL -->
-  <div id="chart-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6">
+  <div id="chart-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-6" style="display: none;">
     <div class="bg-[#111827] border border-gray-700/90 rounded-2xl w-full max-w-6xl h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
       
       <!-- Chart Modal Header -->
@@ -1480,8 +1476,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div>
 
   <!-- SLIDE-OUT DETAILS DRAWER (RIGHT OVERLAY) -->
-  <div id="details-drawer-backdrop" onclick="closeDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 opacity-0 pointer-events-none transition-opacity duration-300"></div>
-  <aside id="details-drawer" class="fixed inset-y-0 right-0 w-full sm:w-[540px] bg-[#111827] border-l border-gray-700/80 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
+  <div id="details-drawer-backdrop" onclick="closeDrawer()" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 opacity-0 pointer-events-none transition-opacity duration-300" style="display: none;"></div>
+  <aside id="details-drawer" class="hidden fixed inset-y-0 right-0 w-full sm:w-[540px] bg-[#111827] border-l border-gray-700/80 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col" style="display: none;">
     <!-- Drawer Header -->
     <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between bg-[#162032]/80">
       <div class="flex items-center gap-2.5">
@@ -1589,7 +1585,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </aside>
 
   <!-- SAFETY EMERGENCY SQUARE-OFF MODAL -->
-  <div id="squareoff-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+  <div id="squareoff-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300" style="display: none;">
     <div class="bg-[#111827] border border-rose-600/70 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 transform scale-95 transition-all duration-300 ring-2 ring-rose-500/30" id="squareoff-modal-card">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 font-black text-xl">
@@ -1615,7 +1611,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div>
 
   <!-- KEYBOARD SHORTCUTS MODAL -->
-  <div id="hotkeys-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+  <div id="hotkeys-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300" style="display: none;">
     <div class="bg-[#111827] border border-gray-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 transform scale-95 transition-all duration-300" id="hotkeys-modal-card">
       <div class="flex items-center justify-between border-b border-gray-800 pb-3">
         <div class="flex items-center gap-2.5">
@@ -1665,7 +1661,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div>
 
   <!-- EOD BATCH SCAN CONFIRMATION MODAL -->
-  <div id="modal-eod-confirm" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4">
+  <div id="modal-eod-confirm" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" style="display: none;">
     <div class="bg-slate-900 border border-slate-700 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-5 animate-in fade-in zoom-in duration-200" id="modal-eod-confirm-card">
       <div class="flex items-start space-x-4">
         <div class="p-3.5 bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 rounded-2xl shrink-0">
@@ -1707,7 +1703,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
   </div>
 
   <!-- DHAN LOGIN & AUTHENTICATION MODAL / SCREEN -->
-  <div id="token-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300">
+  <div id="token-modal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-all duration-300" style="display: none;">
     <div class="bg-[#111827] border border-gray-700/90 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 transform scale-95 transition-all duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar" id="token-modal-card">
       
       <!-- Modal Header -->
@@ -2123,7 +2119,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const modal = document.getElementById('hotkeys-modal');
       const card = document.getElementById('hotkeys-modal-card');
       if (!modal || !card) return;
-      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.style.display = 'flex';
+      modal.classList.remove('opacity-0', 'pointer-events-none', 'hidden');
       modal.classList.add('opacity-100');
       card.classList.remove('scale-95');
       card.classList.add('scale-100');
@@ -2137,6 +2134,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       modal.classList.remove('opacity-100');
       card.classList.add('scale-95');
       card.classList.remove('scale-100');
+      setTimeout(() => { modal.style.display = 'none'; }, 300);
     }
 
     function openSquareOffModal() {
@@ -2144,7 +2142,8 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       const card = document.getElementById('squareoff-modal-card');
       if (!modal || !card) return;
       synth.playWarningChime();
-      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.style.display = 'flex';
+      modal.classList.remove('opacity-0', 'pointer-events-none', 'hidden');
       modal.classList.add('opacity-100');
       card.classList.remove('scale-95');
       card.classList.add('scale-100');
@@ -2158,6 +2157,7 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       modal.classList.remove('opacity-100');
       card.classList.add('scale-95');
       card.classList.remove('scale-100');
+      setTimeout(() => { modal.style.display = 'none'; }, 300);
     }
 
     async function executeConfirmedSquareOff() {
@@ -2333,17 +2333,24 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
       }
       
       drawer.classList.remove('translate-x-full');
-      backdrop.classList.remove('opacity-0', 'pointer-events-none');
+      backdrop.style.display = 'block';
+      backdrop.classList.remove('opacity-0', 'pointer-events-none', 'hidden');
       backdrop.classList.add('opacity-100');
+      drawer.style.display = 'flex';
+      drawer.classList.remove('hidden');
     }
 
     function closeDrawer() {
       const drawer = document.getElementById('details-drawer');
       const backdrop = document.getElementById('details-drawer-backdrop');
-      if (drawer) drawer.classList.add('translate-x-full');
+      if (drawer) {
+        drawer.classList.add('translate-x-full');
+        setTimeout(() => { drawer.style.display = 'none'; }, 310);
+      }
       if (backdrop) {
         backdrop.classList.remove('opacity-100');
         backdrop.classList.add('opacity-0', 'pointer-events-none');
+        setTimeout(() => { backdrop.style.display = 'none'; }, 310);
       }
       activeDrawerItem = null;
     }
@@ -2359,7 +2366,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
       if (symBadge) symBadge.textContent = cleanSym;
       if (tvLink) tvLink.href = `https://in.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(cleanSym)}`;
-      if (modal) modal.classList.remove('hidden');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.remove('hidden');
+      }
 
       if (container) {
         container.innerHTML = `
@@ -2374,7 +2384,10 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
 
     function closeChartModal() {
       const modal = document.getElementById('chart-modal');
-      if (modal) modal.classList.add('hidden');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+      }
       const container = document.getElementById('chart-modal-container');
       if (container) container.innerHTML = '';
     }
@@ -2655,10 +2668,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     function openTokenModal() {
       const modal = document.getElementById('token-modal');
       const card = document.getElementById('token-modal-card');
+      if (!modal || !card) return;
       const feedback = document.getElementById('modal-feedback');
       if (feedback) feedback.className = 'hidden text-xs p-2.5 rounded-lg';
       fetchTokenStatus();
-      modal.classList.remove('opacity-0', 'pointer-events-none');
+      modal.style.display = 'flex';
+      modal.classList.remove('opacity-0', 'pointer-events-none', 'hidden');
       modal.classList.add('opacity-100');
       card.classList.remove('scale-95');
       card.classList.add('scale-100');
@@ -2667,10 +2682,12 @@ def get_dashboard_html(is_simulate_feed: bool = False) -> str:
     function closeTokenModal() {
       const modal = document.getElementById('token-modal');
       const card = document.getElementById('token-modal-card');
+      if (!modal || !card) return;
       modal.classList.add('opacity-0', 'pointer-events-none');
       modal.classList.remove('opacity-100');
       card.classList.add('scale-95');
       card.classList.remove('scale-100');
+      setTimeout(() => { modal.style.display = 'none'; }, 300);
     }
 
     async function saveManualToken() {
